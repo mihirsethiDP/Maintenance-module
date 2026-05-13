@@ -141,13 +141,8 @@ function renderDashboard() {
       </td>
       <td><span class="${et.cls}">${et.label}</span></td>
       <td>${statusBadge(e.status)}</td>
-      <td class="text-right">
-        <a class="icon-btn" href="#/equipment/${e.id}" title="View details">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
-        </a>
-      </td>
     </tr>`;
-  }).join('') || `<tr><td colspan="7" class="py-6 text-center text-slate-500">All equipment operational.</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="py-6 text-center text-slate-500">All equipment operational.</td></tr>`;
 
   document.getElementById('view').innerHTML = `
     <h1 class="text-2xl font-semibold mb-1">Plant Maintenance Dashboard</h1>
@@ -170,7 +165,7 @@ function renderDashboard() {
           <thead>
             <tr>
               <th>Equipment</th><th>Type / Model</th><th>Reason</th>
-              <th>Start / ETR</th><th>ETR Status</th><th>Status</th><th class="text-right">Action</th>
+              <th>Start / ETR</th><th>ETR Status</th><th>Status</th>
             </tr>
           </thead>
           <tbody>${downRows}</tbody>
@@ -205,14 +200,7 @@ function renderEquipment() {
         <div class="cell-muted">${log ? log.reason : ''}</div>
       </td>
       <td>${statusBadge(e.status)}</td>
-      <td class="text-right">
-        <div class="inline-flex items-center gap-2">
-          ${action}
-          <a class="icon-btn" href="#/equipment/${e.id}" title="View details">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
-          </a>
-        </div>
-      </td>
+      <td class="text-right">${action}</td>
     </tr>`;
   }).join('');
 
