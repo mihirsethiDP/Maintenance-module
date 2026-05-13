@@ -89,7 +89,7 @@ function renderNav() {
   const cur = location.hash || '#/dashboard';
   document.getElementById('nav').innerHTML = routes.map(r => {
     const active = cur.startsWith(r.hash);
-    return `<a href="${r.hash}" class="px-3 py-1.5 rounded-md ${active?'bg-indigo-50 text-indigo-700 font-medium':'text-slate-600 hover:bg-slate-100'}">${r.label}</a>`;
+    return `<a href="${r.hash}" class="px-3 py-1.5 rounded-md ${active?'bg-brand-50 text-brand font-medium':'text-slate-600 hover:bg-slate-100'}">${r.label}</a>`;
   }).join('');
 }
 
@@ -123,7 +123,7 @@ function renderDashboard() {
     const log = openLogFor(e.id);
     const et = etrStatus(log?.etr);
     return `<tr class="border-t border-slate-100">
-      <td class="py-2 pr-4"><a class="text-indigo-700 hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
+      <td class="py-2 pr-4"><a class="text-brand hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
       <td class="py-2 pr-4">${e.type}</td>
       <td class="py-2 pr-4">${e.make} ${e.model}</td>
       <td class="py-2 pr-4">${e.location}</td>
@@ -175,7 +175,7 @@ function renderEquipment() {
       ? `<button class="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
       : `<button class="text-xs px-2 py-1 rounded bg-green-100 text-green-800 hover:bg-green-200" onclick="markOperational('${e.id}')">Mark Operational</button>`;
     return `<tr class="border-t border-slate-100 hover:bg-slate-50">
-      <td class="py-2 px-4 font-medium"><a class="text-indigo-700 hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
+      <td class="py-2 px-4 font-medium"><a class="text-brand hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
       <td class="py-2 px-4">${e.type}</td>
       <td class="py-2 px-4">${e.make}</td>
       <td class="py-2 px-4">${e.model}</td>
@@ -222,7 +222,7 @@ function filterEq(q) {
 // ---------- Equipment detail ----------
 function renderEquipmentDetail(id) {
   const e = eqById(id);
-  if (!e) { document.getElementById('view').innerHTML = `<p>Equipment not found. <a class="text-indigo-700" href="#/equipment">Back</a></p>`; return; }
+  if (!e) { document.getElementById('view').innerHTML = `<p>Equipment not found. <a class="text-brand" href="#/equipment">Back</a></p>`; return; }
   const logs = state.logs.filter(l => l.equipmentId === id).sort((a,b) => b.startDate.localeCompare(a.startDate));
   const open = logs.find(l => !l.endDate);
 
@@ -244,7 +244,7 @@ function renderEquipmentDetail(id) {
     : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm" onclick="markOperational('${e.id}')">Mark Operational</button>`;
 
   document.getElementById('view').innerHTML = `
-    <a href="#/equipment" class="text-sm text-indigo-700 hover:underline">&larr; Back to equipment</a>
+    <a href="#/equipment" class="text-sm text-brand hover:underline">&larr; Back to equipment</a>
     <div class="bg-white rounded-xl border border-slate-200 p-6 mt-3 mb-6">
       <div class="flex items-start">
         <div>
@@ -337,7 +337,7 @@ function renderLogRows() {
   const rows = data.map(({l, e}) => {
     const dur = l.endDate ? `${daysBetween(l.startDate, l.endDate)}d` : `<span class="text-amber-600">ongoing</span>`;
     return `<tr class="border-t border-slate-100">
-      <td class="py-2 px-4"><a class="text-indigo-700 hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
+      <td class="py-2 px-4"><a class="text-brand hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
       <td class="py-2 px-4">${e.type}</td>
       <td class="py-2 px-4">${e.make} ${e.model}</td>
       <td class="py-2 px-4">${reasonBadge(l.reason)}</td>
@@ -380,7 +380,7 @@ function exportPDF() {
   doc.autoTable({
     head: [cols],
     body: rows.map(r => cols.map(c => r[c])),
-    startY: 26, styles: { fontSize: 7 }, headStyles: { fillColor: [79,70,229] },
+    startY: 26, styles: { fontSize: 7 }, headStyles: { fillColor: [25,52,88] },
   });
   doc.save(`maintenance-log-${today()}.pdf`);
 }
