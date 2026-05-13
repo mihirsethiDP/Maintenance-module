@@ -122,18 +122,32 @@ function renderDashboard() {
   const downRows = down.map(e => {
     const log = openLogFor(e.id);
     const et = etrStatus(log?.etr);
-    return `<tr class="border-t border-slate-100">
-      <td class="py-2 pr-4"><a class="text-brand hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
-      <td class="py-2 pr-4">${e.type}</td>
-      <td class="py-2 pr-4">${e.make} ${e.model}</td>
-      <td class="py-2 pr-4">${e.location}</td>
-      <td class="py-2 pr-4">${statusBadge(e.status)}</td>
-      <td class="py-2 pr-4">${log ? reasonBadge(log.reason) : '—'}</td>
-      <td class="py-2 pr-4">${fmt(log?.startDate)}</td>
-      <td class="py-2 pr-4">${fmt(log?.etr)}</td>
-      <td class="py-2 pr-4"><span class="${et.cls}">${et.label}</span></td>
+    return `<tr>
+      <td>
+        <div class="cell-primary">${e.tag}</div>
+        <div class="cell-secondary">${e.location}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${e.type}</div>
+        <div class="cell-muted">${e.make} ${e.model}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${log ? log.reason : '—'}</div>
+        <div class="cell-muted">${log ? 'Tech: ' + log.technician : ''}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${fmt(log?.startDate)}</div>
+        <div class="cell-muted">ETR: ${fmt(log?.etr)}</div>
+      </td>
+      <td><span class="${et.cls}">${et.label}</span></td>
+      <td>${statusBadge(e.status)}</td>
+      <td class="text-right">
+        <a class="icon-btn" href="#/equipment/${e.id}" title="View details">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+        </a>
+      </td>
     </tr>`;
-  }).join('') || `<tr><td colspan="9" class="py-6 text-center text-slate-500">All equipment operational.</td></tr>`;
+  }).join('') || `<tr><td colspan="7" class="py-6 text-center text-slate-500">All equipment operational.</td></tr>`;
 
   document.getElementById('view').innerHTML = `
     <h1 class="text-2xl font-semibold mb-1">Plant Maintenance Dashboard</h1>
@@ -152,12 +166,11 @@ function renderDashboard() {
         <div class="ml-auto text-sm text-slate-500">${down.length} equipment</div>
       </div>
       <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-600 text-left">
+        <table class="list-table">
+          <thead>
             <tr>
-              <th class="py-2 px-4">Tag</th><th class="py-2 px-4">Type</th><th class="py-2 px-4">Make / Model</th>
-              <th class="py-2 px-4">Location</th><th class="py-2 px-4">Status</th><th class="py-2 px-4">Reason</th>
-              <th class="py-2 px-4">Start</th><th class="py-2 px-4">ETR</th><th class="py-2 px-4">ETR Status</th>
+              <th>Equipment</th><th>Type / Model</th><th>Reason</th>
+              <th>Start / ETR</th><th>ETR Status</th><th>Status</th><th class="text-right">Action</th>
             </tr>
           </thead>
           <tbody>${downRows}</tbody>
@@ -172,17 +185,34 @@ function renderEquipment() {
   const rows = state.equipment.map(e => {
     const log = openLogFor(e.id);
     const action = e.status === 'Operational'
-      ? `<button class="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
-      : `<button class="text-xs px-2 py-1 rounded bg-green-100 text-green-800 hover:bg-green-200" onclick="markOperational('${e.id}')">Mark Operational</button>`;
-    return `<tr class="border-t border-slate-100 hover:bg-slate-50">
-      <td class="py-2 px-4 font-medium"><a class="text-brand hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
-      <td class="py-2 px-4">${e.type}</td>
-      <td class="py-2 px-4">${e.make}</td>
-      <td class="py-2 px-4">${e.model}</td>
-      <td class="py-2 px-4">${e.location}</td>
-      <td class="py-2 px-4">${statusBadge(e.status)}</td>
-      <td class="py-2 px-4">${log?.etr ? log.etr : '—'}</td>
-      <td class="py-2 px-4 text-right">${action}</td>
+      ? `<button class="text-xs px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
+      : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium" onclick="markOperational('${e.id}')">Mark Operational</button>`;
+    return `<tr>
+      <td>
+        <div class="cell-primary"><a class="hover:underline" href="#/equipment/${e.id}">${e.tag}</a></div>
+        <div class="cell-secondary">${e.location}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${e.type}</div>
+        <div class="cell-muted">${e.make} ${e.model}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${e.id}</div>
+        <div class="cell-muted">Installed ${e.installed}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${log?.etr ? log.etr : '—'}</div>
+        <div class="cell-muted">${log ? log.reason : ''}</div>
+      </td>
+      <td>${statusBadge(e.status)}</td>
+      <td class="text-right">
+        <div class="inline-flex items-center gap-2">
+          ${action}
+          <a class="icon-btn" href="#/equipment/${e.id}" title="View details">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+          </a>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 
@@ -198,12 +228,11 @@ function renderEquipment() {
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
-        <table class="w-full text-sm" id="eqTable">
-          <thead class="bg-slate-50 text-slate-600 text-left">
+        <table class="list-table" id="eqTable">
+          <thead>
             <tr>
-              <th class="py-2 px-4">Tag</th><th class="py-2 px-4">Type</th><th class="py-2 px-4">Make</th>
-              <th class="py-2 px-4">Model</th><th class="py-2 px-4">Location</th><th class="py-2 px-4">Status</th>
-              <th class="py-2 px-4">ETR</th><th class="py-2 px-4 text-right">Action</th>
+              <th>Equipment</th><th>Type / Model</th><th>ID</th>
+              <th>ETR</th><th>Status</th><th class="text-right">Action</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -246,7 +275,7 @@ function renderEquipmentDetail(id) {
   document.getElementById('view').innerHTML = `
     <a href="#/equipment" class="text-sm text-brand hover:underline">&larr; Back to equipment</a>
     <div class="bg-white rounded-xl border border-slate-200 p-6 mt-3 mb-6">
-      <div class="flex items-start">
+      <div class="flex items-start flex-wrap gap-3">
         <div>
           <div class="flex items-center gap-3">
             <h1 class="text-2xl font-semibold">${e.tag}</h1>
@@ -254,7 +283,11 @@ function renderEquipmentDetail(id) {
           </div>
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${e.make} ${e.model}</div>
         </div>
-        <div class="ml-auto">${actionBtn}</div>
+        <div class="ml-auto flex gap-2 flex-wrap">
+          <button onclick="exportXLSX('${e.id}')" class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium">Export Excel</button>
+          <button onclick="exportPDF('${e.id}')" class="px-3 py-1.5 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium">Export PDF</button>
+          ${actionBtn}
+        </div>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 text-sm">
         <div><div class="text-xs uppercase text-slate-500">Location</div><div>${e.location}</div></div>
@@ -294,13 +327,11 @@ function renderLog() {
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-600 text-left">
+        <table class="list-table">
+          <thead>
             <tr>
-              <th class="py-2 px-4">Tag</th><th class="py-2 px-4">Type</th><th class="py-2 px-4">Make / Model</th>
-              <th class="py-2 px-4">Reason</th><th class="py-2 px-4">Start</th><th class="py-2 px-4">ETR</th>
-              <th class="py-2 px-4">End</th><th class="py-2 px-4">Duration</th>
-              <th class="py-2 px-4">Technician</th><th class="py-2 px-4">Notes</th>
+              <th>Equipment</th><th>Reason</th><th>Start / End</th>
+              <th>Duration</th><th>Technician</th><th>Notes</th><th>Status</th>
             </tr>
           </thead>
           <tbody id="logRows"></tbody>
@@ -335,26 +366,38 @@ function getFilteredLogs() {
 function renderLogRows() {
   const data = getFilteredLogs();
   const rows = data.map(({l, e}) => {
-    const dur = l.endDate ? `${daysBetween(l.startDate, l.endDate)}d` : `<span class="text-amber-600">ongoing</span>`;
-    return `<tr class="border-t border-slate-100">
-      <td class="py-2 px-4"><a class="text-brand hover:underline" href="#/equipment/${e.id}">${e.tag}</a></td>
-      <td class="py-2 px-4">${e.type}</td>
-      <td class="py-2 px-4">${e.make} ${e.model}</td>
-      <td class="py-2 px-4">${reasonBadge(l.reason)}</td>
-      <td class="py-2 px-4">${l.startDate}</td>
-      <td class="py-2 px-4">${l.etr || '—'}</td>
-      <td class="py-2 px-4">${l.endDate || '—'}</td>
-      <td class="py-2 px-4">${dur}</td>
-      <td class="py-2 px-4">${l.technician}</td>
-      <td class="py-2 px-4 max-w-xs truncate" title="${l.notes.replace(/"/g,'&quot;')}">${l.notes}</td>
+    const dur = l.endDate ? `${daysBetween(l.startDate, l.endDate)} day${daysBetween(l.startDate, l.endDate)===1?'':'s'}` : `<span class="text-amber-600 font-medium">Ongoing</span>`;
+    const statusPill = l.endDate
+      ? `<span class="badge badge-op">Completed</span>`
+      : (l.reason === 'Breakdown' ? `<span class="badge badge-bd">Ongoing</span>` : `<span class="badge badge-mt">Ongoing</span>`);
+    return `<tr>
+      <td>
+        <div class="cell-primary"><a class="hover:underline" href="#/equipment/${e.id}">${e.tag}</a></div>
+        <div class="cell-secondary">${e.make} ${e.model}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${l.reason}</div>
+        <div class="cell-muted">${e.type} · ${e.location}</div>
+      </td>
+      <td>
+        <div class="cell-primary">${l.startDate}</div>
+        <div class="cell-muted">${l.endDate ? 'End: ' + l.endDate : 'ETR: ' + (l.etr || '—')}</div>
+      </td>
+      <td><div class="cell-primary">${dur}</div></td>
+      <td><div class="cell-primary">${l.technician}</div></td>
+      <td class="max-w-xs"><div class="text-slate-600 line-clamp-2" title="${l.notes.replace(/"/g,'&quot;')}">${l.notes}</div></td>
+      <td>${statusPill}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="10" class="py-6 text-center text-slate-500">No log entries match your filters.</td></tr>`;
+  }).join('') || `<tr><td colspan="7" class="py-6 text-center text-slate-500">No log entries match your filters.</td></tr>`;
   document.getElementById('logRows').innerHTML = rows;
 }
 
 // ---------- Exports ----------
-function exportRows() {
-  return getFilteredLogs().map(({l, e}) => ({
+function exportRows(eqId) {
+  const source = eqId
+    ? state.logs.filter(l => l.equipmentId === eqId).map(l => ({ l, e: eqById(eqId) })).sort((a,b) => b.l.startDate.localeCompare(a.l.startDate))
+    : getFilteredLogs();
+  return source.map(({l, e}) => ({
     Tag: e.tag, Type: e.type, Make: e.make, Model: e.model, Location: e.location,
     Reason: l.reason, Start: l.startDate, ETR: l.etr || '', End: l.endDate || '',
     'Duration (days)': l.endDate ? daysBetween(l.startDate, l.endDate) : '',
@@ -362,27 +405,31 @@ function exportRows() {
     Technician: l.technician, Notes: l.notes,
   }));
 }
-function exportXLSX() {
-  const ws = XLSX.utils.json_to_sheet(exportRows());
+function exportXLSX(eqId) {
+  const rows = exportRows(eqId);
+  const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Maintenance Log');
-  XLSX.writeFile(wb, `maintenance-log-${today()}.xlsx`);
+  const name = eqId ? `maintenance-log-${eqById(eqId).tag}-${today()}.xlsx` : `maintenance-log-${today()}.xlsx`;
+  XLSX.writeFile(wb, name);
 }
-function exportPDF() {
+function exportPDF(eqId) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'landscape' });
   doc.setFontSize(14);
-  doc.text('Maintenance Log', 14, 14);
+  const title = eqId ? `Maintenance Log — ${eqById(eqId).tag} (${eqById(eqId).make} ${eqById(eqId).model})` : 'Maintenance Log';
+  doc.text(title, 14, 14);
   doc.setFontSize(9);
   doc.text(`Generated ${today()}`, 14, 20);
-  const rows = exportRows();
+  const rows = exportRows(eqId);
   const cols = Object.keys(rows[0] || { Tag:'' });
   doc.autoTable({
     head: [cols],
     body: rows.map(r => cols.map(c => r[c])),
     startY: 26, styles: { fontSize: 7 }, headStyles: { fillColor: [25,52,88] },
   });
-  doc.save(`maintenance-log-${today()}.pdf`);
+  const name = eqId ? `maintenance-log-${eqById(eqId).tag}-${today()}.pdf` : `maintenance-log-${today()}.pdf`;
+  doc.save(name);
 }
 
 // ---------- Mutations ----------
