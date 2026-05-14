@@ -8,13 +8,23 @@ const SEED_PLANTS = [
 function defaultNotifConfig(prefs = {}) {
   const make = (ch) => ({ enabled: ch.length > 0, channels: ch });
   return {
+    recipients:  prefs.recipients  || ['U-4','U-5'],
     maintenance: make(prefs.maintenance || []),
     breakdown:   make(prefs.breakdown   || []),
     operational: make(prefs.operational || []),
     overdue:     make(prefs.overdue     || []),
   };
 }
-const CHANNELS = ['email','sms','whatsapp','slack','teams'];
+const CHANNELS = ['email','sms','whatsapp','call'];
+
+const SEED_USERS = [
+  { id: 'U-1', name: 'A. Mehta',          role: 'Maintenance Technician', email: 'amehta@plant.com',  phone: '+91 90000 11111' },
+  { id: 'U-2', name: 'R. Sharma',         role: 'Maintenance Technician', email: 'rsharma@plant.com', phone: '+91 90000 22222' },
+  { id: 'U-3', name: 'S. Iyer',           role: 'Maintenance Technician', email: 'siyer@plant.com',   phone: '+91 90000 33333' },
+  { id: 'U-4', name: 'P. Kulkarni',       role: 'Maintenance Lead',       email: 'pk@plant.com',      phone: '+91 90000 44444' },
+  { id: 'U-5', name: 'N. Rao',            role: 'Plant Manager',          email: 'nrao@plant.com',    phone: '+91 90000 55555' },
+  { id: 'U-6', name: 'Operations Desk',   role: 'Control Room',           email: 'ops@plant.com',     phone: '+91 90000 66666' },
+];
 
 const SEED_EQUIPMENT = [
   { id: 'EQ-001', tag: 'P-101A', type: 'Pump',   make: 'Grundfos',     model: 'NB 65-200',     plantId: 'PL-01', location: 'Cooling Tower Loop', installed: '2019-03-12', status: 'Operational' },
@@ -50,22 +60,25 @@ const SEED_LOGS = [
 // ---------- Storage ----------
 const LS_EQ = 'mm.equipment.v2';
 const LS_LOG = 'mm.logs.v2';
-const LS_PLANT = 'mm.plants.v1';
+const LS_PLANT = 'mm.plants.v2';
+const LS_USERS = 'mm.users.v1';
 
 function load() {
   if (!localStorage.getItem(LS_EQ))    localStorage.setItem(LS_EQ,    JSON.stringify(SEED_EQUIPMENT));
   if (!localStorage.getItem(LS_LOG))   localStorage.setItem(LS_LOG,   JSON.stringify(SEED_LOGS));
   if (!localStorage.getItem(LS_PLANT)) localStorage.setItem(LS_PLANT, JSON.stringify(SEED_PLANTS));
+  if (!localStorage.getItem(LS_USERS)) localStorage.setItem(LS_USERS, JSON.stringify(SEED_USERS));
   return {
     equipment: JSON.parse(localStorage.getItem(LS_EQ)),
     logs:      JSON.parse(localStorage.getItem(LS_LOG)),
     plants:    JSON.parse(localStorage.getItem(LS_PLANT)),
+    users:     JSON.parse(localStorage.getItem(LS_USERS)),
   };
 }
 const saveEq    = e => localStorage.setItem(LS_EQ,    JSON.stringify(e));
 const saveLog   = l => localStorage.setItem(LS_LOG,   JSON.stringify(l));
 const savePlant = p => localStorage.setItem(LS_PLANT, JSON.stringify(p));
-function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT].forEach(k => localStorage.removeItem(k)); route(); }
+function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS].forEach(k => localStorage.removeItem(k)); route(); }
 
 // ---------- Helpers ----------
 const today = () => new Date().toISOString().slice(0,10);
@@ -239,8 +252,8 @@ function renderEquipment() {
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
       <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
-      <td>${statusBadge(e.status)}</td>
-      <td class="text-right">${action}</td>
+      <td class="text-center-col">${statusBadge(e.status)}</td>
+      <td class="text-center-col">${action}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="6" class="py-6 text-center text-slate-500">No equipment for this plant.</td></tr>`;
 
@@ -261,7 +274,7 @@ function renderEquipment() {
         <table class="list-table" id="eqTable">
           <thead><tr>
             <th>Equipment</th><th>Plant</th><th>Type / Model</th>
-            <th>Expected Completion</th><th>Status</th><th class="text-right">Action</th>
+            <th>Expected Completion</th><th class="text-center-col">Status</th><th class="text-center-col">Action</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -312,8 +325,7 @@ function renderEquipmentDetail(id) {
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${e.make} ${e.model} · ${plantName(e.plantId)}</div>
         </div>
         <div class="ml-auto flex gap-2 flex-wrap">
-          <button onclick="exportXLSX('${e.id}')" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Export Excel</button>
-          <button onclick="exportPDF('${e.id}')" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Export PDF</button>
+          ${exportDropdown(`'${e.id}'`, 'detail-export')}
           ${actionBtn}
         </div>
       </div>
@@ -350,8 +362,7 @@ function renderLog() {
           <option value="">All statuses</option><option value="open">Ongoing</option><option value="closed">Completed</option>
         </select>
         <input id="fSearch" placeholder="Search…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-44" oninput="renderLogRows()" />
-        <button onclick="exportXLSX()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Export Excel</button>
-        <button onclick="exportPDF()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Export PDF</button>
+        ${exportDropdown('', 'log-export')}
       </div>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -430,7 +441,7 @@ function renderPlants() {
       <td><div class="cell-primary">${p.name}</div><div class="cell-secondary">${p.location}</div></td>
       <td><div class="cell-primary">${eqCount}</div><div class="cell-muted">equipment</div></td>
       <td><div class="cell-primary">${enabledEvents} / ${NOTIF_EVENTS.length}</div><div class="cell-muted">events enabled</div></td>
-      <td class="text-right"><button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button></td>
+      <td class="text-center-col"><button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button></td>
     </tr>`;
   }).join('');
   document.getElementById('view').innerHTML = `
@@ -439,7 +450,7 @@ function renderPlants() {
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
         <table class="list-table">
-          <thead><tr><th>Plant</th><th>Equipment</th><th>Notifications</th><th class="text-right">Action</th></tr></thead>
+          <thead><tr><th>Plant</th><th>Equipment</th><th>Notifications</th><th class="text-center-col">Action</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -449,17 +460,27 @@ function renderPlants() {
 
 function openPlantNotifModal(plantId) {
   const p = plantById(plantId);
+  const recipients = p.notifications.recipients || [];
+  const recipientBoxes = state.users.map(u => `
+    <label class="flex items-start gap-2 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
+      <input type="checkbox" name="recipient.${u.id}" ${recipients.includes(u.id)?'checked':''} class="mt-0.5" />
+      <div>
+        <div class="font-medium text-slate-800">${u.name}</div>
+        <div class="text-slate-500">${u.role}</div>
+      </div>
+    </label>`).join('');
+
   const eventBlock = NOTIF_EVENTS.map(ev => {
     const cfg = p.notifications[ev.key];
     const channelBoxes = CHANNELS.map(ch => `
       <label class="inline-flex items-center gap-1.5 text-xs">
-        <input type="checkbox" name="${ev.key}.${ch}" ${cfg.channels.includes(ch)?'checked':''} class="rounded border-slate-300 text-brand focus:ring-brand" />
-        <span class="capitalize">${ch}</span>
+        <input type="checkbox" name="${ev.key}.${ch}" ${cfg.channels.includes(ch)?'checked':''} />
+        <span class="capitalize">${ch === 'sms' ? 'SMS' : ch}</span>
       </label>`).join('');
     return `
       <div class="border border-slate-200 rounded-lg p-3">
         <label class="flex items-center gap-2">
-          <input type="checkbox" name="${ev.key}.enabled" ${cfg.enabled?'checked':''} class="rounded border-slate-300 text-brand focus:ring-brand" />
+          <input type="checkbox" name="${ev.key}.enabled" ${cfg.enabled?'checked':''} />
           <span class="font-medium text-sm">${ev.label}</span>
         </label>
         <div class="text-xs text-slate-500 mt-1 mb-2">Channels</div>
@@ -469,9 +490,17 @@ function openPlantNotifModal(plantId) {
 
   document.getElementById('modalTitle').textContent = `Notifications — ${p.name}`;
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="savePlantNotif(event, '${plantId}')" class="space-y-3">
-      ${eventBlock}
-      <div class="flex gap-2 justify-end pt-2">
+    <form onsubmit="savePlantNotif(event, '${plantId}')" class="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+      <div>
+        <div class="text-sm font-medium mb-1">Recipients</div>
+        <div class="text-xs text-slate-500 mb-2">Select users who should receive notifications for this plant.</div>
+        <div class="grid grid-cols-2 gap-2">${recipientBoxes}</div>
+      </div>
+      <div>
+        <div class="text-sm font-medium mb-2">Events &amp; channels</div>
+        <div class="space-y-2">${eventBlock}</div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
         <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Save</button>
       </div>
@@ -484,6 +513,7 @@ function savePlantNotif(ev, plantId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
   const p = plantById(plantId);
+  p.notifications.recipients = state.users.filter(u => f.get(`recipient.${u.id}`)).map(u => u.id);
   NOTIF_EVENTS.forEach(evt => {
     p.notifications[evt.key].enabled = !!f.get(`${evt.key}.enabled`);
     p.notifications[evt.key].channels = CHANNELS.filter(ch => f.get(`${evt.key}.${ch}`));
@@ -494,6 +524,26 @@ function savePlantNotif(ev, plantId) {
 }
 
 // ---------- Exports ----------
+function exportDropdown(eqArg, id) {
+  return `<div class="relative inline-block">
+    <button type="button" onclick="toggleExportMenu('${id}', event)" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1">
+      Export
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div id="${id}" class="hidden absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-md shadow-lg z-10 overflow-hidden">
+      <button type="button" onclick="closeExportMenus(); exportXLSX(${eqArg})" class="w-full text-left px-3 py-2 text-sm hover:bg-brand-50 hover:text-brand">As Excel (.xlsx)</button>
+      <button type="button" onclick="closeExportMenus(); exportPDF(${eqArg})"  class="w-full text-left px-3 py-2 text-sm hover:bg-brand-50 hover:text-brand">As PDF</button>
+    </div>
+  </div>`;
+}
+function toggleExportMenu(id, ev) {
+  ev.stopPropagation();
+  document.querySelectorAll('[id$="-export"]').forEach(m => { if (m.id !== id) m.classList.add('hidden'); });
+  document.getElementById(id).classList.toggle('hidden');
+}
+function closeExportMenus() { document.querySelectorAll('[id$="-export"]').forEach(m => m.classList.add('hidden')); }
+document.addEventListener('click', closeExportMenus);
+
 function exportRows(eqId) {
   const source = eqId
     ? state.logs.filter(l => l.equipmentId === eqId).map(l => ({ l, e: eqById(eqId) })).sort((a,b) => b.l.startDate.localeCompare(a.l.startDate))
@@ -631,7 +681,7 @@ function openAddEquipmentModal() {
     <form onsubmit="submitAddEquipment(event)" class="space-y-3 text-sm">
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-xs text-slate-600 mb-1">Tag <span class="text-red-500">*</span></label>
+          <label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
           <input name="tag" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. P-705" />
         </div>
         <div>
@@ -656,7 +706,7 @@ function openAddEquipmentModal() {
         </select>
       </div>
       <div>
-        <label class="block text-xs text-slate-600 mb-1">Location</label>
+        <label class="block text-xs text-slate-600 mb-1">Location <span class="text-slate-400">(optional)</span></label>
         <input name="location" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Cooling Tower Loop" />
       </div>
       <div>
