@@ -252,8 +252,8 @@ function renderEquipment() {
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
       <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
-      <td class="text-center-col">${statusBadge(e.status)}</td>
-      <td class="text-center-col">${action}</td>
+      <td class="col-center">${statusBadge(e.status)}</td>
+      <td class="col-center">${action}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="6" class="py-6 text-center text-slate-500">No equipment for this plant.</td></tr>`;
 
@@ -274,7 +274,7 @@ function renderEquipment() {
         <table class="list-table" id="eqTable">
           <thead><tr>
             <th>Equipment</th><th>Plant</th><th>Type / Model</th>
-            <th>Expected Completion</th><th class="text-center-col">Status</th><th class="text-center-col">Action</th>
+            <th>Expected Completion</th><th class="col-center">Status</th><th class="col-center">Action</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -441,7 +441,7 @@ function renderPlants() {
       <td><div class="cell-primary">${p.name}</div><div class="cell-secondary">${p.location}</div></td>
       <td><div class="cell-primary">${eqCount}</div><div class="cell-muted">equipment</div></td>
       <td><div class="cell-primary">${enabledEvents} / ${NOTIF_EVENTS.length}</div><div class="cell-muted">events enabled</div></td>
-      <td class="text-center-col"><button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button></td>
+      <td class="col-center"><button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button></td>
     </tr>`;
   }).join('');
   document.getElementById('view').innerHTML = `
@@ -450,7 +450,7 @@ function renderPlants() {
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
         <table class="list-table">
-          <thead><tr><th>Plant</th><th>Equipment</th><th>Notifications</th><th class="text-center-col">Action</th></tr></thead>
+          <thead><tr><th>Plant</th><th>Equipment</th><th>Notifications</th><th class="col-center">Action</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>

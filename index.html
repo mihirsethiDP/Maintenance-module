@@ -38,8 +38,10 @@
     .badge-neutral { background:#f8fafc; color:#475569; border-color:#cbd5e1; }
     .badge-brand { background:#f1f4f9; color:#193458; border-color:#bac9dc; }
     input[type="checkbox"], input[type="radio"] { accent-color: #193458; }
-    .text-center-col { text-align: center; }
-    .text-center-col > * { margin-left: auto; margin-right: auto; }
+    .list-table thead th.col-center,
+    .list-table tbody td.col-center { text-align: center !important; }
+    .list-table tbody td.col-center > * { display: inline-flex; }
+    .cell-center { display: flex; justify-content: center; align-items: center; }
     .list-table { width:100%; border-collapse:separate; border-spacing:0; }
     .list-table thead th { background:#f1f5f9; color:#475569; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; text-align:left; padding:12px 20px; border-bottom:1px solid #e2e8f0; }
     .list-table tbody td { padding:16px 20px; border-bottom:1px solid #e2e8f0; vertical-align:middle; font-size:13px; }
@@ -82,6 +84,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
