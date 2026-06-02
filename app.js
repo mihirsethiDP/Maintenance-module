@@ -106,15 +106,67 @@ const SEED_LOGS = [
   { id: 'L-010', equipmentId: 'EQ-011', reason: 'Scheduled', startDate: '2026-05-13', etr: '2026-05-15', endDate: null, technician: 'R. Sharma', notes: 'Roots blower lobe clearance check, oil change.',    completionNotes: '' },
 ];
 
+// ---------- Generated PPM logs for Ireo Grandarch (from PPM schedule) ----------
+const IREO_SLOTS = {
+  'EQ-101':'W1','EQ-102':'W3','EQ-103':'W1','EQ-104':'W2','EQ-105':'W3',
+  'EQ-106':'W1','EQ-107':'W2','EQ-108':'W1','EQ-109':'W1','EQ-110':'W3',
+  'EQ-111':'W1','EQ-112':'W2','EQ-113':'W1','EQ-114':'W3','EQ-115':'W1',
+  'EQ-116':'W2','EQ-117':'W3','EQ-118':'W1','EQ-119':'W2','EQ-120':'W3',
+  'EQ-121':'W1','EQ-122':'W2','EQ-123':'W2','EQ-124':'W4','EQ-125':'W1',
+  'EQ-126':'W2','EQ-127':'W3','EQ-128':'W1','EQ-129':'W3','EQ-130':'W2',
+  'EQ-131':'W3','EQ-132':'W4',
+  'EQ-133':'W1','EQ-134':'W2','EQ-135':'W3','EQ-136':'W4',
+  'EQ-137':'weekly','EQ-138':'weekly',
+  'EQ-139':'W1','EQ-140':'W2','EQ-141':'W3','EQ-142':'W2','EQ-143':'W4',
+};
+function generateIreoLogs() {
+  const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
+  const TECHS = ['A. Mehta','R. Sharma','S. Iyer','P. Kulkarni'];
+  const NOTES = {
+    Pump:       { sched: 'Monthly PPM — vibration, leak and seal check.',  done: 'Bearings greased, alignment verified, no abnormalities.' },
+    Blower:     { sched: 'Weekly PPM — oil and filter inspection.',         done: 'Oil level normal, intake filter cleaned.' },
+    Filter:     { sched: 'Monthly PPM — media inspection / backwash check.', done: 'Backwash performed; differential pressure within limits.' },
+    Centrifuge: { sched: 'Monthly PPM — bowl and scroll inspection.',       done: 'Bowl cleaned; vibration normal.' },
+    'UV System':{ sched: 'Monthly PPM — lamp intensity and quartz sleeve.', done: 'Quartz sleeve cleaned; intensity within spec.' },
+  };
+  const NOW = new Date();
+  const yearStart = new Date('2026-01-01');
+  const fmt = (d) => d.toISOString().slice(0,10);
+  const out = [];
+  let seq = 0;
+  const eqMap = Object.fromEntries(SEED_EQUIPMENT.map(e => [e.id, e]));
+  for (const [eqId, slot] of Object.entries(IREO_SLOTS)) {
+    const eq = eqMap[eqId]; if (!eq) continue;
+    const noteSet = NOTES[eq.type] || NOTES.Pump;
+    if (slot === 'weekly') {
+      let d = new Date(yearStart); let i = 0;
+      while (d <= NOW) {
+        const ds = fmt(d);
+        out.push({ id:`L-PPM-${++seq}`, equipmentId: eqId, reason:'Scheduled', startDate: ds, etr: ds, endDate: ds, technician: TECHS[i%TECHS.length], notes: noteSet.sched, completionNotes: noteSet.done });
+        d = new Date(d); d.setDate(d.getDate() + 7); i++;
+      }
+    } else {
+      const day = SLOT_DAY[slot];
+      for (let m = 0; m < 12; m++) {
+        const d = new Date(2026, m, day);
+        if (d > NOW) break;
+        const ds = fmt(d);
+        out.push({ id:`L-PPM-${++seq}`, equipmentId: eqId, reason:'Scheduled', startDate: ds, etr: ds, endDate: ds, technician: TECHS[seq%TECHS.length], notes: noteSet.sched, completionNotes: noteSet.done });
+      }
+    }
+  }
+  return out;
+}
+
 // ---------- Storage ----------
 const LS_EQ = 'mm.equipment.v4';
-const LS_LOG = 'mm.logs.v3';
+const LS_LOG = 'mm.logs.v4';
 const LS_PLANT = 'mm.plants.v3';
 const LS_USERS = 'mm.users.v1';
 
 function load() {
   if (!localStorage.getItem(LS_EQ))    localStorage.setItem(LS_EQ,    JSON.stringify(SEED_EQUIPMENT));
-  if (!localStorage.getItem(LS_LOG))   localStorage.setItem(LS_LOG,   JSON.stringify(SEED_LOGS));
+  if (!localStorage.getItem(LS_LOG))   localStorage.setItem(LS_LOG,   JSON.stringify(SEED_LOGS.concat(generateIreoLogs())));
   if (!localStorage.getItem(LS_PLANT)) localStorage.setItem(LS_PLANT, JSON.stringify(SEED_PLANTS));
   if (!localStorage.getItem(LS_USERS)) localStorage.setItem(LS_USERS, JSON.stringify(SEED_USERS));
   return {
@@ -411,6 +463,14 @@ function renderLog() {
           <option value="">All statuses</option><option value="open">Ongoing</option><option value="closed">Completed</option>
         </select>
         <input id="fSearch" placeholder="Search…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-44" oninput="renderLogRows()" />
+        <div class="inline-flex items-center gap-1 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-600">
+          <span>From</span>
+          <input type="date" id="fFrom" class="text-xs outline-none" onchange="renderLogRows()" />
+          <span>To</span>
+          <input type="date" id="fTo"   class="text-xs outline-none" onchange="renderLogRows()" />
+          <button type="button" onclick="document.getElementById('fFrom').value=''; document.getElementById('fTo').value=''; renderLogRows()" class="text-slate-400 hover:text-slate-700 ml-1" title="Clear">&times;</button>
+        </div>
+        <button onclick="openServiceReportModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Service Report</button>
         ${exportDropdown('', 'log-export')}
       </div>
     </div>
@@ -434,6 +494,8 @@ function getFilteredLogs() {
   const fReason = document.getElementById('fReason')?.value || '';
   const fStatus = document.getElementById('fStatus')?.value || '';
   const fSearch = (document.getElementById('fSearch')?.value || '').toLowerCase();
+  const fFrom = document.getElementById('fFrom')?.value || '';
+  const fTo   = document.getElementById('fTo')?.value   || '';
   return state.logs
     .map(l => ({ l, e: eqById(l.equipmentId) }))
     .filter(({l, e}) => {
@@ -443,6 +505,8 @@ function getFilteredLogs() {
       if (fReason && l.reason !== fReason) return false;
       if (fStatus === 'open' && l.endDate) return false;
       if (fStatus === 'closed' && !l.endDate) return false;
+      if (fFrom && l.startDate < fFrom) return false;
+      if (fTo   && l.startDate > fTo)   return false;
       if (fSearch) {
         const blob = `${e.tag} ${e.make} ${e.model} ${e.location} ${plantName(e.plantId)} ${l.notes} ${l.completionNotes||''} ${l.technician}`.toLowerCase();
         if (!blob.includes(fSearch)) return false;
@@ -626,6 +690,165 @@ function exportPDF(eqId) {
   doc.autoTable({ head: [cols], body: rows.map(r => cols.map(c => r[c])), startY: 26, styles: { fontSize: 7 }, headStyles: { fillColor: [25,52,88] } });
   const name = eqId ? `maintenance-log-${eqById(eqId).tag}-${today()}.pdf` : `maintenance-log-${today()}.pdf`;
   doc.save(name);
+}
+
+// ---------- Service Report ----------
+function openServiceReportModal() {
+  const plantGroups = state.plants.map(p => {
+    const eqs = state.equipment.filter(e => e.plantId === p.id);
+    if (!eqs.length) return '';
+    const items = eqs.map(e => `
+      <label class="flex items-center gap-2 text-xs px-2 py-1 hover:bg-slate-50 rounded">
+        <input type="checkbox" name="sr-eq" value="${e.id}" />
+        <span class="font-medium text-slate-800">${e.tag}</span>
+        <span class="text-slate-500">· ${e.type}${e.make?' · '+e.make:''}</span>
+      </label>`).join('');
+    return `<div class="border border-slate-200 rounded-lg p-2">
+      <div class="flex items-center gap-2 mb-1 px-1">
+        <input type="checkbox" onchange="toggleGroupCheck(this, '${p.id}')" />
+        <span class="text-xs font-semibold text-slate-700">${p.name}</span>
+        <span class="text-xs text-slate-400">(${eqs.length})</span>
+      </div>
+      <div data-plant="${p.id}" class="grid grid-cols-2 gap-x-2">${items}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('modalTitle').textContent = 'Generate Service Report';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="generateServiceReport(event)" class="space-y-4 max-h-[75vh] overflow-y-auto pr-1 text-sm">
+      <div>
+        <div class="text-sm font-medium mb-1">Reporting period</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-slate-600 mb-1">From</label>
+            <input type="date" name="from" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-600 mb-1">To</label>
+            <input type="date" name="to" class="w-full border border-slate-300 rounded-md px-2 py-1.5" value="${today()}" />
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="text-sm font-medium mb-1">Sign-off</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" placeholder="Technician name" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+          <div><label class="block text-xs text-slate-600 mb-1">Approved by</label><input name="approvedBy" placeholder="Maintenance lead" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+          <div class="col-span-2"><label class="block text-xs text-slate-600 mb-1">Customer / client representative</label><input name="customer" placeholder="Customer name (optional)" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+        </div>
+      </div>
+      <div>
+        <div class="text-sm font-medium mb-1">Equipment <span class="text-xs text-slate-500 font-normal">(select one or more)</span></div>
+        <div class="space-y-2">${plantGroups}</div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Generate PDF</button>
+      </div>
+    </form>
+  `;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function toggleGroupCheck(master, plantId) {
+  const wrap = document.querySelector(`[data-plant="${plantId}"]`);
+  wrap.querySelectorAll('input[name="sr-eq"]').forEach(cb => cb.checked = master.checked);
+}
+function generateServiceReport(ev) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const ids = f.getAll('sr-eq');
+  if (!ids.length) { alert('Please select at least one equipment.'); return; }
+  const from = f.get('from') || '';
+  const to   = f.get('to')   || today();
+  const preparedBy = f.get('preparedBy') || '';
+  const approvedBy = f.get('approvedBy') || '';
+  const customer   = f.get('customer')   || '';
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait' });
+  const W = doc.internal.pageSize.getWidth();
+
+  // Header band
+  doc.setFillColor(25,52,88);
+  doc.rect(0, 0, W, 22, 'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(16); doc.text('Maintenance Service Report', 14, 14);
+  doc.setFontSize(9);  doc.text(`Generated ${today()}`, W - 14, 14, { align: 'right' });
+  doc.setTextColor(15,23,42);
+
+  let y = 30;
+  doc.setFontSize(10);
+  doc.text(`Period:  ${from || '—'}  to  ${to}`, 14, y); y += 6;
+  doc.text(`Equipment count:  ${ids.length}`, 14, y); y += 6;
+  if (preparedBy) { doc.text(`Prepared by:  ${preparedBy}`, 14, y); y += 6; }
+  if (approvedBy) { doc.text(`Approved by:  ${approvedBy}`, 14, y); y += 6; }
+  if (customer)   { doc.text(`Customer:  ${customer}`, 14, y); y += 6; }
+  y += 2;
+
+  // Per-equipment section
+  ids.forEach((eqId, idx) => {
+    const eq = eqById(eqId); if (!eq) return;
+    const plant = plantById(eq.plantId);
+    let logs = state.logs.filter(l => l.equipmentId === eqId);
+    if (from) logs = logs.filter(l => l.startDate >= from);
+    if (to)   logs = logs.filter(l => l.startDate <= to);
+    logs.sort((a,b) => a.startDate.localeCompare(b.startDate));
+
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setFillColor(241,244,249);
+    doc.rect(14, y - 4, W - 28, 8, 'F');
+    doc.setFontSize(11); doc.setFont(undefined, 'bold');
+    doc.text(`${idx + 1}. ${eq.tag}`, 16, y + 1);
+    doc.setFont(undefined, 'normal'); doc.setFontSize(8);
+    doc.text(`${eq.type} · ${eq.make || '—'} ${eq.model || ''} · ${plant ? plant.name : ''}`, W - 16, y + 1, { align: 'right' });
+    y += 8;
+
+    if (!logs.length) {
+      doc.setFontSize(9); doc.setTextColor(120,120,120);
+      doc.text('No maintenance activity in this period.', 16, y + 4);
+      doc.setTextColor(15,23,42);
+      y += 10;
+    } else {
+      doc.autoTable({
+        startY: y,
+        head: [['Date', 'Reason', 'Duration', 'Technician', 'Work performed']],
+        body: logs.map(l => [
+          l.startDate + (l.endDate && l.endDate !== l.startDate ? ' → '+l.endDate : ''),
+          l.reason,
+          l.endDate ? `${daysBetween(l.startDate, l.endDate)}d` : 'ongoing',
+          l.technician,
+          l.completionNotes || l.notes || ''
+        ]),
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [25,52,88], textColor: 255 },
+        margin: { left: 14, right: 14 },
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+  });
+
+  // Sign-off block
+  if (y > 240) { doc.addPage(); y = 20; }
+  y += 6;
+  doc.setDrawColor(200,200,200);
+  doc.line(14, y, W - 14, y); y += 8;
+  doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.text('Sign-off', 14, y); y += 8;
+  doc.setFont(undefined, 'normal'); doc.setFontSize(9);
+  const colW = (W - 28) / 3;
+  const sigBlock = (label, name, x) => {
+    doc.text(label, x, y);
+    doc.line(x, y + 14, x + colW - 4, y + 14);
+    doc.setFontSize(8); doc.setTextColor(120,120,120);
+    doc.text(name || '________________________', x, y + 19);
+    doc.text('Signature & Date', x, y + 23);
+    doc.setFontSize(9); doc.setTextColor(15,23,42);
+  };
+  sigBlock('Prepared by', preparedBy, 14);
+  sigBlock('Approved by', approvedBy, 14 + colW);
+  sigBlock('Customer',    customer,   14 + 2 * colW);
+
+  closeModal();
+  doc.save(`service-report-${today()}.pdf`);
 }
 
 // ---------- Modals & mutations ----------
