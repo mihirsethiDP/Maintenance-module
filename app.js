@@ -3,7 +3,8 @@ const SEED_PLANTS = [
   { id: 'PL-01', name: 'Adani Mumbai',       location: 'Mumbai, MH',     notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','sms'], operational:[], overdue:['email'] }) },
   { id: 'PL-02', name: 'Hindalco Mahaan',    location: 'Singrauli, MP',  notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp'], operational:[], overdue:['email','sms'] }) },
   { id: 'PL-03', name: 'Tata Jamshedpur',    location: 'Jamshedpur, JH', notifications: defaultNotifConfig({ maintenance:[], breakdown:['email'], operational:[], overdue:['email'] }) },
-  { id: 'PL-04', name: 'Reliance Jamnagar',  location: 'Jamnagar, GJ',   notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','sms','teams'], operational:['email'], overdue:['email','sms'] }) },
+  { id: 'PL-04', name: 'Reliance Jamnagar',  location: 'Jamnagar, GJ',   notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','sms'], operational:['email'], overdue:['email','sms'] }) },
+  { id: 'PL-05', name: 'Ireo Grandarch STP', location: 'Gurugram, HR',   notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }) },
 ];
 function defaultNotifConfig(prefs = {}) {
   const make = (ch) => ({ enabled: ch.length > 0, channels: ch });
@@ -41,6 +42,63 @@ const SEED_EQUIPMENT = [
   { id: 'EQ-012', tag: 'B-501',  type: 'Blower', make: 'Aerzen',       model: 'GM 25S',        plantId: 'PL-01', location: 'Bag Filter House',   installed: '2022-10-11', status: 'Operational' },
   { id: 'EQ-013', tag: 'P-705',  type: 'Pump',   make: 'KSB',          model: 'Megachem 65',   plantId: 'PL-03', location: 'Chemical Dosing',    installed: '2020-12-05', status: 'Operational' },
   { id: 'EQ-014', tag: 'B-602',  type: 'Blower', make: 'Kaeser',       model: 'CBS 121',       plantId: 'PL-01', location: 'Instrument Air',     installed: '2021-03-28', status: 'Operational' },
+
+  // ---- Ireo Grandarch STP (imported from PPM list) ----
+  // Pumps (32)
+  { id: 'EQ-101', tag: 'Raw Submersible Pump-1',              type: 'Pump',      make: 'KSB',           model: '4.2 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-102', tag: 'Raw Submersible Pump-2',              type: 'Pump',      make: 'KSB',           model: '4.2 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-103', tag: 'Raw Sewage Monobloc Pump-1 (Small)',  type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-104', tag: 'Raw Sewage Monobloc Pump-2 (Small)',  type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-105', tag: 'Raw Sewage Monobloc Pump-3 (Small)',  type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-106', tag: 'Raw Sewage Monobloc Pump-4 (Big)',    type: 'Pump',      make: 'Kirloskar',     model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-107', tag: 'Raw Sewage Monobloc Pump-5 (Big)',    type: 'Pump',      make: 'Kirloskar',     model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-108', tag: 'Equalization Bypass Pump',            type: 'Pump',      make: 'Kirloskar',     model: '10 HP',   plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-109', tag: 'Sludge Recirculation Pump-1 (Str-1)', type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-110', tag: 'Sludge Recirculation Pump-2 (Str-2)', type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-111', tag: 'Filter Feed Pump-1',                  type: 'Pump',      make: 'Grundfos-X',    model: '10 HP',   plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-112', tag: 'Filter Feed Pump-2',                  type: 'Pump',      make: 'Grundfos-X',    model: '10 HP',   plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-113', tag: 'CCT Bypass Pump-1',                   type: 'Pump',      make: 'Kirloskar',     model: '5 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-114', tag: 'CCT Bypass Pump-2',                   type: 'Pump',      make: 'Kirloskar',     model: '5 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-115', tag: 'High Rise Pump-1',                    type: 'Pump',      make: 'Grundfos-X',    model: '18.5 kW', plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-116', tag: 'High Rise Pump-2',                    type: 'Pump',      make: 'Grundfos-X',    model: '18.5 kW', plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-117', tag: 'High Rise Pump-3',                    type: 'Pump',      make: 'Grundfos-X',    model: '18.5 kW', plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-118', tag: 'Low Rise Pump-1',                     type: 'Pump',      make: 'Grundfos-X',    model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-119', tag: 'Low Rise Pump-2',                     type: 'Pump',      make: 'Grundfos-X',    model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-120', tag: 'Low Rise Pump-3',                     type: 'Pump',      make: 'Grundfos-X',    model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-121', tag: 'Softener Feed Pump-1',                type: 'Pump',      make: 'Grundfos-X',    model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-122', tag: 'Softener Feed Pump-2',                type: 'Pump',      make: 'Grundfos-X',    model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-123', tag: 'Softener Transfer Pump-1',            type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-124', tag: 'Softener Transfer Pump-2',            type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-125', tag: 'TWT Garden Pump-1',                   type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-126', tag: 'TWT Garden Pump-2',                   type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-127', tag: 'TWT Garden Pump-3',                   type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-128', tag: 'Centrifuge Feed Pump-1',              type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-129', tag: 'Centrifuge Feed Pump-2',              type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-130', tag: 'Sump Pit Pump',                       type: 'Pump',      make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-131', tag: 'Chlorine Dosing Pump',                type: 'Pump',      make: 'Milton Roy',    model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-132', tag: 'Drain Pit Pump',                      type: 'Pump',      make: '',              model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  // Blowers (6)
+  { id: 'EQ-133', tag: 'Air Blower-1',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-134', tag: 'Air Blower-2',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-135', tag: 'Air Blower-3',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-136', tag: 'Air Blower-4',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-137', tag: 'Sludge Recirc. Air Lifting-1 (Str-1)',type: 'Blower',    make: 'Via Blower',    model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-138', tag: 'Sludge Recirc. Air Lifting-2 (Str-2)',type: 'Blower',    make: 'Via Blower',    model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  // Filters & Treatment Units (5)
+  { id: 'EQ-139', tag: 'MGF (Multi-Grade Filter)',            type: 'Filter',    make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-140', tag: 'ACF-1 (Activated Carbon Filter)',     type: 'Filter',    make: 'Floysis',       model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-141', tag: 'ACF-2 (Activated Carbon Filter)',     type: 'Filter',    make: 'Floysis',       model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-142', tag: 'Centrifuge',                          type: 'Centrifuge',make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-143', tag: 'UV System',                           type: 'UV System', make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  // Sensors & Flowmeters (5)
+  { id: 'EQ-144', tag: 'Turbidity Sensor',                    type: 'Sensor',    make: 'Bhoomi',        model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-145', tag: 'Floc Detector',                       type: 'Sensor',    make: 'Digital Paani', model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-146', tag: 'Inlet Flowmeter',                     type: 'Flowmeter', make: 'UPC',           model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-147', tag: 'Outlet Flowmeter',                    type: 'Flowmeter', make: 'UPC',           model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-148', tag: 'CCT Garden/Bypass Flowmeter',         type: 'Flowmeter', make: 'Peltek (EM)',   model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  // Cameras (2)
+  { id: 'EQ-149', tag: 'Camera-1 (Ground Floor)',             type: 'Camera',    make: '',              model: '2 MP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
+  { id: 'EQ-150', tag: 'Camera-2 (MBBR View)',                type: 'Camera',    make: '',              model: '2 MP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
 ];
 
 const SEED_LOGS = [
@@ -58,9 +116,9 @@ const SEED_LOGS = [
 ];
 
 // ---------- Storage ----------
-const LS_EQ = 'mm.equipment.v2';
-const LS_LOG = 'mm.logs.v2';
-const LS_PLANT = 'mm.plants.v2';
+const LS_EQ = 'mm.equipment.v3';
+const LS_LOG = 'mm.logs.v3';
+const LS_PLANT = 'mm.plants.v3';
 const LS_USERS = 'mm.users.v1';
 
 function load() {
@@ -687,7 +745,7 @@ function openAddEquipmentModal() {
         <div>
           <label class="block text-xs text-slate-600 mb-1">Type <span class="text-red-500">*</span></label>
           <select name="type" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
-            <option value="">Select…</option><option>Pump</option><option>Blower</option>
+            <option value="">Select…</option><option>Pump</option><option>Blower</option><option>Filter</option><option>Centrifuge</option><option>UV System</option><option>Sensor</option><option>Flowmeter</option><option>Camera</option>
           </select>
         </div>
         <div>
