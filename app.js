@@ -925,9 +925,10 @@ function openCompleteModal(eqId) {
         <label class="block text-xs text-slate-600 mb-1">Completion notes <span class="text-red-500">*</span></label>
         <textarea name="completionNotes" rows="4" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Summarise work performed, parts replaced, test results, and any follow-ups."></textarea>
       </div>
-      <div class="flex gap-2 justify-end pt-2">
+      <div class="flex gap-2 justify-end pt-2 flex-wrap">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white">Confirm</button>
+        <button type="submit" name="action" value="confirm" class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white">Confirm</button>
+        <button type="submit" name="action" value="confirm-report" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Confirm &amp; Generate Service Report</button>
       </div>
     </form>
   `;
@@ -943,7 +944,91 @@ function submitComplete(ev, eqId) {
   }
   eqById(eqId).status = 'Operational';
   saveLog(state.logs); saveEq(state.equipment);
+  const wantReport = (ev.submitter && ev.submitter.value === 'confirm-report');
   closeModal(); route();
+  if (wantReport && log) generateSingleServiceReport(eqId, log);
+}
+
+function generateSingleServiceReport(eqId, log) {
+  const eq = eqById(eqId); if (!eq) return;
+  const plant = plantById(eq.plantId);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait' });
+  const W = doc.internal.pageSize.getWidth();
+
+  // Header band
+  doc.setFillColor(25, 52, 88);
+  doc.rect(0, 0, W, 24, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16); doc.text('Maintenance Service Report', 14, 14);
+  doc.setFontSize(9);  doc.text(`Report #SR-${eq.id}-${log.endDate.replace(/-/g,'')}`, 14, 20);
+  doc.text(`Generated ${today()}`, W - 14, 14, { align: 'right' });
+  doc.setTextColor(15, 23, 42);
+
+  let y = 34;
+  doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.text('Equipment summary', 14, y); y += 5;
+  doc.setDrawColor(220,225,232); doc.line(14, y, W-14, y); y += 4;
+
+  const kv = (k, v) => {
+    doc.setFont(undefined,'bold'); doc.setFontSize(9); doc.text(k, 14, y);
+    doc.setFont(undefined,'normal'); doc.text(String(v || '—'), 55, y);
+    y += 6;
+  };
+  kv('Equipment',     eq.tag);
+  kv('Equipment ID',  eq.id);
+  kv('Type',          eq.type);
+  kv('Make / Model',  `${eq.make || '—'} ${eq.model || ''}`.trim());
+  kv('Plant',         plant ? `${plant.name} — ${plant.location}` : '—');
+  kv('Installed on',  eq.installed);
+  y += 4;
+
+  doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.text('Maintenance details', 14, y); y += 3;
+  doc.autoTable({
+    startY: y + 2,
+    head: [['Field', 'Value']],
+    body: [
+      ['Reason',           log.reason],
+      ['Start date',       log.startDate],
+      ['Expected return',  log.etr || '—'],
+      ['Completion date',  log.endDate],
+      ['Duration',         `${daysBetween(log.startDate, log.endDate)} day${daysBetween(log.startDate, log.endDate)===1?'':'s'}`],
+      ['Technician',       log.technician || '—'],
+      ['Scope of work',    log.notes || '—'],
+      ['Work performed',   log.completionNotes || '—'],
+      ['Post-service status', 'Operational'],
+    ],
+    styles:    { fontSize: 9, cellPadding: 2.5, valign: 'top' },
+    headStyles:{ fillColor: [25,52,88], textColor: 255 },
+    columnStyles: { 0: { cellWidth: 42, fontStyle: 'bold', fillColor: [241,244,249] } },
+    margin: { left: 14, right: 14 },
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Sign-off (dummy)
+  if (y > 230) { doc.addPage(); y = 24; }
+  doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Sign-off', 14, y); y += 5;
+  doc.setDrawColor(220,225,232); doc.line(14, y, W-14, y); y += 12;
+  doc.setFontSize(9); doc.setFont(undefined,'normal');
+  const cW = (W - 28) / 3;
+  const sig = (label, name, role, x) => {
+    doc.setFont(undefined,'bold'); doc.text(label, x, y);
+    doc.setFont(undefined,'normal');
+    doc.setDrawColor(160,160,160); doc.line(x, y + 16, x + cW - 6, y + 16);
+    doc.setFontSize(9); doc.text(name, x, y + 21);
+    doc.setFontSize(7); doc.setTextColor(120,120,120);
+    doc.text(role, x, y + 25);
+    doc.text(`Date: ${log.endDate}`, x, y + 29);
+    doc.setFontSize(9); doc.setTextColor(15,23,42);
+  };
+  sig('Prepared by', log.technician || 'A. Mehta',  'Maintenance Technician',  14);
+  sig('Approved by', 'P. Kulkarni',                  'Maintenance Lead',        14 + cW);
+  sig('Customer',    `${plant ? plant.name : 'Client'} Representative`, 'Authorised Signatory', 14 + 2*cW);
+
+  // Footer
+  doc.setFontSize(7); doc.setTextColor(140,140,140);
+  doc.text('This is a system-generated service report. Signatures above attest to the work described.', 14, doc.internal.pageSize.getHeight() - 8);
+
+  doc.save(`service-report-${eq.tag.replace(/[^a-zA-Z0-9]+/g,'-')}-${log.endDate}.pdf`);
 }
 
 function openAddEquipmentModal() {
