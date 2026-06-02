@@ -90,15 +90,6 @@ const SEED_EQUIPMENT = [
   { id: 'EQ-141', tag: 'ACF-2 (Activated Carbon Filter)',     type: 'Filter',    make: 'Floysis',       model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
   { id: 'EQ-142', tag: 'Centrifuge',                          type: 'Centrifuge',make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
   { id: 'EQ-143', tag: 'UV System',                           type: 'UV System', make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  // Sensors & Flowmeters (5)
-  { id: 'EQ-144', tag: 'Turbidity Sensor',                    type: 'Sensor',    make: 'Bhoomi',        model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-145', tag: 'Floc Detector',                       type: 'Sensor',    make: 'Digital Paani', model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-146', tag: 'Inlet Flowmeter',                     type: 'Flowmeter', make: 'UPC',           model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-147', tag: 'Outlet Flowmeter',                    type: 'Flowmeter', make: 'UPC',           model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-148', tag: 'CCT Garden/Bypass Flowmeter',         type: 'Flowmeter', make: 'Peltek (EM)',   model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  // Cameras (2)
-  { id: 'EQ-149', tag: 'Camera-1 (Ground Floor)',             type: 'Camera',    make: '',              model: '2 MP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-150', tag: 'Camera-2 (MBBR View)',                type: 'Camera',    make: '',              model: '2 MP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
 ];
 
 const SEED_LOGS = [
@@ -116,7 +107,7 @@ const SEED_LOGS = [
 ];
 
 // ---------- Storage ----------
-const LS_EQ = 'mm.equipment.v3';
+const LS_EQ = 'mm.equipment.v4';
 const LS_LOG = 'mm.logs.v3';
 const LS_PLANT = 'mm.plants.v3';
 const LS_USERS = 'mm.users.v1';
@@ -745,7 +736,7 @@ function openAddEquipmentModal() {
         <div>
           <label class="block text-xs text-slate-600 mb-1">Type <span class="text-red-500">*</span></label>
           <select name="type" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
-            <option value="">Select…</option><option>Pump</option><option>Blower</option><option>Filter</option><option>Centrifuge</option><option>UV System</option><option>Sensor</option><option>Flowmeter</option><option>Camera</option>
+            <option value="">Select…</option><option>Pump</option><option>Blower</option><option>Filter</option><option>Centrifuge</option><option>UV System</option>
           </select>
         </div>
         <div>
