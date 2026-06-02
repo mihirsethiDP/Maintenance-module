@@ -407,7 +407,7 @@ function renderEquipmentDetail(id) {
           ? `<span class="text-xs text-slate-400">(${daysBetween(l.startDate, l.endDate)} day${daysBetween(l.startDate,l.endDate)===1?'':'s'})</span>`
           : `<span class="text-xs ${isOverdue(l)?'text-red-600 font-medium':'text-brand'}">Expected ${l.etr || '—'}</span>`}
       </div>
-      <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Scope:</span> ${l.notes || '—'}</div>
+      <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${l.notes || '—'}</div>
       ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${l.completionNotes}</div>` : ''}
       <div class="text-xs text-slate-500 mt-1">Technician: ${l.technician}</div>
     </div>
@@ -666,7 +666,7 @@ function exportRows(eqId) {
     Reason: l.reason, Start: l.startDate, 'Expected Completion': l.etr || '', End: l.endDate || '',
     'Duration (days)': l.endDate ? daysBetween(l.startDate, l.endDate) : '',
     Status: l.endDate ? 'Completed' : (isOverdue(l) ? 'Overdue' : 'Ongoing'),
-    Technician: l.technician, 'Scope / Notes': l.notes, 'Completion Notes': l.completionNotes || '',
+    Technician: l.technician, 'Reason / Notes': l.notes, 'Completion Notes': l.completionNotes || '',
   }));
 }
 function exportXLSX(eqId) {
@@ -915,7 +915,7 @@ function openCompleteModal(eqId) {
       ${log ? `<div class="p-3 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
         <div><span class="font-medium">Reason:</span> ${log.reason}</div>
         <div><span class="font-medium">Started:</span> ${log.startDate} · <span class="font-medium">Expected:</span> ${log.etr}</div>
-        <div class="mt-1"><span class="font-medium">Scope:</span> ${log.notes||'—'}</div>
+        <div class="mt-1"><span class="font-medium">Reason:</span> ${log.notes||'—'}</div>
       </div>` : ''}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion date <span class="text-red-500">*</span></label>
@@ -993,7 +993,7 @@ function generateSingleServiceReport(eqId, log) {
       ['Completion date',  log.endDate],
       ['Duration',         `${daysBetween(log.startDate, log.endDate)} day${daysBetween(log.startDate, log.endDate)===1?'':'s'}`],
       ['Technician',       log.technician || '—'],
-      ['Scope of work',    log.notes || '—'],
+      ['Reason / notes',   log.notes || '—'],
       ['Work performed',   log.completionNotes || '—'],
       ['Post-service status', 'Operational'],
     ],
