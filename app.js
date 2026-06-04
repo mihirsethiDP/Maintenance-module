@@ -477,6 +477,7 @@ function renderLog() {
       </div>
     </div>
     <div class="flex items-center mb-4 gap-2 flex-nowrap overflow-x-auto pb-1">
+      <input id="fSearch" placeholder="Search…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-48 flex-shrink-0" oninput="renderLogRows()" />
       ${plantFilterControl()}
       <select id="fType" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white flex-shrink-0" onchange="renderLogRows()">
         <option value="">All types</option>${EQ_TYPES.map(t=>`<option>${t}</option>`).join('')}
@@ -497,7 +498,6 @@ function renderLog() {
         <input type="date" id="fTo"   class="text-xs outline-none" onchange="renderLogRows()" />
         <button type="button" onclick="document.getElementById('fFrom').value=''; document.getElementById('fTo').value=''; renderLogRows()" class="text-slate-400 hover:text-slate-700 ml-1" title="Clear">&times;</button>
       </div>
-      <input id="fSearch" placeholder="Search…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-48 flex-shrink-0 ml-auto" oninput="renderLogRows()" />
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
