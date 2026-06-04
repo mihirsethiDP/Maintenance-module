@@ -55,6 +55,22 @@
     .tag-chip svg { opacity:0.65; flex-shrink:0; }
     .list-table tbody td .cell-primary:has(.tag-chip) { display:block; }
     .list-table tbody td:has(> .cell-primary > .tag-chip) { padding-top:10px; padding-bottom:10px; }
+    .recip-picker { position:relative; }
+    .picker-wrap { display:flex; flex-wrap:wrap; gap:4px; align-items:center; border:1px solid #cbd5e1; border-radius:6px; padding:4px 6px; background:white; min-height:34px; }
+    .picker-wrap:focus-within { border-color:#193458; box-shadow:0 0 0 2px #f1f4f9; }
+    .recip-chip { display:inline-flex; align-items:center; gap:4px; background:#f1f4f9; color:#193458; padding:2px 4px 2px 8px; border-radius:9999px; font-size:11px; font-weight:500; border:1px solid #dde4ee; }
+    .recip-chip button { color:#475569; font-size:15px; line-height:1; padding:0 4px; border-radius:9999px; }
+    .recip-chip button:hover { color:#193458; background:#dde4ee; }
+    .picker-input { flex:1; min-width:100px; border:none; outline:none; font-size:12px; padding:3px 4px; background:transparent; }
+    .picker-dropdown { position:absolute; left:0; right:0; top:100%; background:white; border:1px solid #cbd5e1; border-radius:6px; box-shadow:0 6px 16px rgba(15,23,42,0.08); margin-top:2px; max-height:200px; overflow-y:auto; z-index:50; }
+    .picker-dropdown.hidden { display:none; }
+    .picker-dropdown > div { padding:6px 10px; cursor:pointer; font-size:12px; display:flex; flex-direction:column; }
+    .picker-dropdown > div:hover { background:#f1f4f9; color:#193458; }
+    .picker-dropdown .pd-name { font-weight:500; color:#0f172a; }
+    .picker-dropdown > div:hover .pd-name { color:#193458; }
+    .picker-dropdown .pd-role { font-size:11px; color:#64748b; }
+    .picker-dropdown .pd-empty { color:#94a3b8; cursor:default; font-style:italic; padding:8px 10px; }
+    .picker-dropdown .pd-empty:hover { background:transparent; color:#94a3b8; }
     .icon-btn { width:32px; height:32px; display:inline-grid; place-items:center; border-radius:8px; border:1px solid #e2e8f0; color:#475569; background:#fff; }
     .icon-btn:hover { background:#f1f5f9; color:#193458; }
   </style>
@@ -89,6 +105,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>

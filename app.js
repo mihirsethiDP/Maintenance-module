@@ -218,10 +218,10 @@ const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', eng
 const EQ_TYPES = ['Pump','Blower','Filter','Centrifuge','UV System'];
 
 const routes = [
-  { hash: '#/dashboard',  label: 'Dashboard' },
-  { hash: '#/engineer',   label: 'Engineering Corner' },
+  { hash: '#/dashboard', label: 'Dashboard' },
   { hash: '#/equipment', label: 'Equipment' },
   { hash: '#/log',       label: 'Maintenance Log' },
+  { hash: '#/engineer',  label: 'Engineering Corner' },
   { hash: '#/plants',    label: 'Plants' },
 ];
 
@@ -437,6 +437,10 @@ function renderEquipmentDetail(id) {
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${e.make} ${e.model} · ${plantName(e.plantId)}</div>
         </div>
         <div class="ml-auto flex gap-2 flex-wrap">
+          <button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            Edit
+          </button>
           ${exportDropdown(`'${e.id}'`, 'detail-export')}
           ${actionBtn}
         </div>
@@ -580,21 +584,78 @@ function renderPlants() {
   `;
 }
 
+window._recipState = {};
+function renderRecipPicker(eventKey) {
+  const ids = window._recipState[eventKey] || [];
+  const chips = ids.map(uid => {
+    const u = state.users.find(x => x.id === uid); if (!u) return '';
+    return `<span class="recip-chip">${u.name}<button type="button" onclick="removeRecipient('${eventKey}','${uid}')" aria-label="Remove ${u.name}">&times;</button></span>`;
+  }).join('');
+  return `
+    <div class="recip-picker">
+      <div class="picker-wrap" id="picker-wrap-${eventKey}">
+        ${chips}
+        <input type="text" class="picker-input" id="recip-input-${eventKey}"
+          placeholder="${ids.length ? 'Add more…' : 'Type a name to add…'}"
+          oninput="onRecipInput('${eventKey}', this.value)"
+          onfocus="onRecipInput('${eventKey}', this.value)"
+          onblur="setTimeout(()=>hideRecipDropdown('${eventKey}'), 150)" />
+      </div>
+      <div class="picker-dropdown hidden" id="recip-dd-${eventKey}"></div>
+    </div>`;
+}
+function onRecipInput(eventKey, query) {
+  const q = (query || '').trim().toLowerCase();
+  const selected = window._recipState[eventKey] || [];
+  const matches = state.users
+    .filter(u => !selected.includes(u.id))
+    .filter(u => !q || u.name.toLowerCase().includes(q) || u.role.toLowerCase().includes(q));
+  const dd = document.getElementById(`recip-dd-${eventKey}`);
+  if (!matches.length) {
+    dd.innerHTML = `<div class="pd-empty">No matching users</div>`;
+  } else {
+    dd.innerHTML = matches.map(u => `
+      <div onmousedown="event.preventDefault()" onclick="addRecipient('${eventKey}','${u.id}')">
+        <span class="pd-name">${u.name}</span>
+        <span class="pd-role">${u.role}</span>
+      </div>`).join('');
+  }
+  dd.classList.remove('hidden');
+}
+function hideRecipDropdown(eventKey) {
+  const dd = document.getElementById(`recip-dd-${eventKey}`);
+  if (dd) dd.classList.add('hidden');
+}
+function addRecipient(eventKey, uid) {
+  window._recipState[eventKey] = window._recipState[eventKey] || [];
+  if (!window._recipState[eventKey].includes(uid)) window._recipState[eventKey].push(uid);
+  refreshRecipPicker(eventKey);
+  const inp = document.getElementById(`recip-input-${eventKey}`);
+  if (inp) { inp.value = ''; inp.focus(); onRecipInput(eventKey, ''); }
+}
+function removeRecipient(eventKey, uid) {
+  window._recipState[eventKey] = (window._recipState[eventKey] || []).filter(x => x !== uid);
+  refreshRecipPicker(eventKey);
+}
+function refreshRecipPicker(eventKey) {
+  const wrap = document.getElementById(`recip-wrap-host-${eventKey}`);
+  if (wrap) wrap.innerHTML = renderRecipPicker(eventKey);
+}
+
 function openPlantNotifModal(plantId) {
   const p = plantById(plantId);
+  // Initialize per-event recipient state
+  window._recipState = {};
+  NOTIF_EVENTS.forEach(ev => {
+    window._recipState[ev.key] = (p.notifications[ev.key].recipients || []).slice();
+  });
 
   const eventBlock = NOTIF_EVENTS.map(ev => {
     const cfg = p.notifications[ev.key];
-    const recipients = cfg.recipients || [];
     const channelBoxes = CHANNELS.map(ch => `
       <label class="inline-flex items-center gap-1.5 text-xs">
         <input type="checkbox" name="${ev.key}.${ch}" ${cfg.channels.includes(ch)?'checked':''} />
         <span class="capitalize">${ch === 'sms' ? 'SMS' : ch}</span>
-      </label>`).join('');
-    const recipBoxes = state.users.map(u => `
-      <label class="flex items-center gap-1.5 text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 cursor-pointer">
-        <input type="checkbox" name="${ev.key}.recip.${u.id}" ${recipients.includes(u.id)?'checked':''} />
-        <span><span class="font-medium text-slate-800">${u.name}</span> <span class="text-slate-500">· ${u.role}</span></span>
       </label>`).join('');
     return `
       <div class="border border-slate-200 rounded-lg p-3 bg-white">
@@ -602,14 +663,14 @@ function openPlantNotifModal(plantId) {
           <input type="checkbox" name="${ev.key}.enabled" ${cfg.enabled?'checked':''} />
           <span class="font-medium text-sm">${ev.label}</span>
         </label>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+        <div class="mt-3 space-y-3">
           <div>
             <div class="text-xs text-slate-500 mb-1.5">Channels</div>
             <div class="flex flex-wrap gap-x-3 gap-y-1.5">${channelBoxes}</div>
           </div>
           <div>
             <div class="text-xs text-slate-500 mb-1.5">Recipients</div>
-            <div class="grid grid-cols-1 gap-1">${recipBoxes}</div>
+            <div id="recip-wrap-host-${ev.key}">${renderRecipPicker(ev.key)}</div>
           </div>
         </div>
       </div>`;
@@ -636,7 +697,7 @@ function savePlantNotif(ev, plantId) {
   NOTIF_EVENTS.forEach(evt => {
     p.notifications[evt.key].enabled    = !!f.get(`${evt.key}.enabled`);
     p.notifications[evt.key].channels   = CHANNELS.filter(ch => f.get(`${evt.key}.${ch}`));
-    p.notifications[evt.key].recipients = state.users.filter(u => f.get(`${evt.key}.recip.${u.id}`)).map(u => u.id);
+    p.notifications[evt.key].recipients = (window._recipState[evt.key] || []).slice();
   });
   savePlant(state.plants);
   closeModal();
@@ -711,28 +772,47 @@ function getPendingTasks() {
 }
 
 function getUpcomingPPM(days = 30) {
-  const now = new Date(); now.setHours(0,0,0,0);
+  const todayStr = today();
+  const now = new Date(todayStr + 'T00:00:00');
   const horizon = new Date(now); horizon.setDate(horizon.getDate() + days);
   const out = [];
   for (const [eqId, slot] of Object.entries(IREO_SLOTS)) {
     const e = eqById(eqId); if (!e) continue;
     if (slot === 'weekly') {
-      // Next weekly date — find next 7-day interval after today
-      let d = new Date('2026-01-01');
+      let d = new Date('2026-01-01T00:00:00');
       while (d < now) { d.setDate(d.getDate() + 7); }
       while (d <= horizon) {
         out.push({ e, date: new Date(d), slot: 'Weekly' });
         d = new Date(d); d.setDate(d.getDate() + 7);
       }
     } else {
-      // Next monthly date in this slot
       const day = SLOT_DAY[slot];
       let m = now.getMonth(), y = now.getFullYear();
-      for (let i = 0; i < 2; i++) { // look ahead up to 2 months
+      for (let i = 0; i < 2; i++) {
         const d = new Date(y, m + i, day);
         if (d >= now && d <= horizon) out.push({ e, date: d, slot: `Monthly · ${slot}` });
       }
     }
+  }
+  return out.sort((a,b) => a.date - b.date);
+}
+
+function getOverduePPM() {
+  // PPM slots whose date is in the past but no completion log exists at-or-after that date in this month.
+  const todayStr = today();
+  const now = new Date(todayStr + 'T00:00:00');
+  const out = [];
+  for (const [eqId, slot] of Object.entries(IREO_SLOTS)) {
+    const e = eqById(eqId); if (!e) continue;
+    if (slot === 'weekly') continue; // weekly noise — skip from "overdue"
+    const day = SLOT_DAY[slot];
+    const m = now.getMonth(), y = now.getFullYear();
+    const slotDate = new Date(y, m, day);
+    if (slotDate >= now) continue; // not yet due
+    const slotStr = slotDate.toISOString().slice(0,10);
+    const monthPrefix = slotStr.slice(0,7);
+    const done = state.logs.some(l => l.equipmentId === eqId && l.endDate && l.endDate.startsWith(monthPrefix));
+    if (!done) out.push({ e, date: slotDate, slot: `Monthly · ${slot}` });
   }
   return out.sort((a,b) => a.date - b.date);
 }
@@ -765,11 +845,12 @@ function renderEngineer() {
     </button>`;
 
   const pending  = getPendingTasks();
+  const overdue  = getOverduePPM();
   const upcoming = getUpcomingPPM(30);
   const visits   = getVisits();
 
   let body = '';
-  if (tab === 'pending') body = renderPendingTab(pending);
+  if (tab === 'pending') body = renderPendingTab(pending, overdue);
   else if (tab === 'upcoming') body = renderUpcomingTab(upcoming);
   else body = renderVisitsTab(visits);
 
@@ -780,7 +861,7 @@ function renderEngineer() {
     </div>
     <p class="text-slate-500 mb-5">For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports.</p>
     <div class="flex gap-2 mb-5 flex-wrap">
-      ${tabBtn('pending',  'Pending', pending.length)}
+      ${tabBtn('pending',  'Pending', pending.length + overdue.length)}
       ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}
       ${tabBtn('visits',   'Visit Reports', visits.length)}
     </div>
@@ -788,14 +869,14 @@ function renderEngineer() {
   `;
 }
 
-function renderPendingTab(pending) {
-  // Apply filters
-  const filtered = pending.filter(({e}) =>
-    (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) &&
-    (ui.typeFilter  === 'all' || e.type    === ui.typeFilter)
-  );
-  if (!filtered.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing pending — every equipment is operational.</div>`;
-  const rows = filtered.map(({l, e}) => {
+function renderPendingTab(pending, overdue) {
+  const fEq = e => (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) && (ui.typeFilter === 'all' || e.type === ui.typeFilter);
+  const fOngoing = pending.filter(({e}) => fEq(e));
+  const fOverdue = overdue.filter(({e}) => fEq(e));
+
+  if (!fOngoing.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing pending — every equipment is operational and no PPM is overdue.</div>`;
+
+  const ongoingRows = fOngoing.map(({l, e}) => {
     const et = ecStatus(l.etr, null);
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
@@ -806,13 +887,43 @@ function renderPendingTab(pending) {
       <td class="col-center"><button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium">Mark Complete</button></td>
     </tr>`;
   }).join('');
-  return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Pending tasks — equipment currently under maintenance</div>
-    <div class="overflow-x-auto"><table class="list-table">
-      <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>ETR Status</th><th class="col-center">Action</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
-  </div>`;
+
+  const todayD = new Date(today() + 'T00:00:00');
+  const overdueRows = fOverdue.map(({e, date, slot}) => {
+    const ds = date.toISOString().slice(0,10);
+    const overdueBy = Math.round((todayD - date) / 86400000);
+    return `<tr>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">Scheduled PPM</div><div class="cell-muted">${slot}</div></td>
+      <td><div class="cell-primary">${ds}</div><div class="cell-muted">Planned date</div></td>
+      <td><span class="badge badge-bd">Overdue by ${overdueBy}d</span></td>
+      <td class="col-center"><button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Put in Maintenance</button></td>
+    </tr>`;
+  }).join('');
+
+  const ongoingSection = fOngoing.length ? `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-400 font-normal">(${fOngoing.length})</span></div>
+      <div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>ETR Status</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${ongoingRows}</tbody>
+      </table></div>
+    </div>` : '';
+
+  const overdueSection = fOverdue.length ? `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+        <span>Overdue PPM <span class="text-slate-400 font-normal">(${fOverdue.length})</span></span>
+        <span class="ml-auto text-xs text-slate-500 font-normal">Scheduled service dates that have passed without completion</span>
+      </div>
+      <div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Task</th><th>Date</th><th>Status</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${overdueRows}</tbody>
+      </table></div>
+    </div>` : '';
+
+  return ongoingSection + overdueSection;
 }
 
 function renderUpcomingTab(upcoming) {
@@ -826,13 +937,14 @@ function renderUpcomingTab(upcoming) {
   const rows = filtered.map(({ e, date, slot }) => {
     const ds = fmtD(date);
     const isToday = ds === todayStr;
-    const dueLabel = isToday ? `<span class="badge badge-mt">Due today</span>` : (ds < todayStr ? `<span class="badge badge-bd">Overdue</span>` : `<span class="badge badge-brand">In ${Math.round((date - new Date(todayStr)) / 86400000)}d</span>`);
+    const daysAway = Math.round((date - new Date(todayStr + 'T00:00:00')) / 86400000);
+    const dueLabel = isToday ? `<span class="badge badge-mt">Due today</span>` : `<span class="badge badge-brand">In ${daysAway}d</span>`;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
       <td><div class="cell-primary">${ds}</div><div class="cell-muted">${slot}</div></td>
       <td>${dueLabel}</td>
-      <td class="col-center"><button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Start Task</button></td>
+      <td class="col-center"><button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Put in Maintenance</button></td>
     </tr>`;
   }).join('');
   return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -1295,29 +1407,32 @@ function generateSingleServiceReport(eqId, log) {
   doc.save(`service-report-${eq.tag.replace(/[^a-zA-Z0-9]+/g,'-')}-${log.endDate}.pdf`);
 }
 
-function openAddEquipmentModal() {
-  const plantOpts = state.plants.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-  document.getElementById('modalTitle').textContent = 'Add Equipment';
+function openEquipmentFormModal(mode, eqId) {
+  const isEdit = mode === 'edit';
+  const e = isEdit ? eqById(eqId) : null;
+  const plantOpts = state.plants.map(p => `<option value="${p.id}" ${e && e.plantId === p.id ? 'selected' : ''}>${p.name}</option>`).join('');
+  const typeOpts = EQ_TYPES.map(t => `<option ${e && e.type === t ? 'selected' : ''}>${t}</option>`).join('');
+  document.getElementById('modalTitle').textContent = isEdit ? `Edit ${e.tag}` : 'Add Equipment';
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="submitAddEquipment(event)" class="space-y-3 text-sm">
+    <form onsubmit="submitEquipmentForm(event, '${mode}', '${eqId||''}')" class="space-y-3 text-sm">
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
-          <input name="tag" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. P-705" />
+          <input name="tag" required value="${e ? e.tag.replace(/"/g,'&quot;') : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. P-705" />
         </div>
         <div>
           <label class="block text-xs text-slate-600 mb-1">Type <span class="text-red-500">*</span></label>
           <select name="type" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
-            <option value="">Select…</option><option>Pump</option><option>Blower</option><option>Filter</option><option>Centrifuge</option><option>UV System</option>
+            <option value="">Select…</option>${typeOpts}
           </select>
         </div>
         <div>
           <label class="block text-xs text-slate-600 mb-1">Make</label>
-          <input name="make" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Grundfos" />
+          <input name="make" value="${e ? (e.make||'').replace(/"/g,'&quot;') : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Grundfos" />
         </div>
         <div>
           <label class="block text-xs text-slate-600 mb-1">Model</label>
-          <input name="model" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. NB 65-200" />
+          <input name="model" value="${e ? (e.model||'').replace(/"/g,'&quot;') : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. NB 65-200" />
         </div>
       </div>
       <div>
@@ -1327,31 +1442,37 @@ function openAddEquipmentModal() {
         </select>
       </div>
       <div>
-        <label class="block text-xs text-slate-600 mb-1">Location <span class="text-slate-400">(optional)</span></label>
-        <input name="location" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Cooling Tower Loop" />
-      </div>
-      <div>
         <label class="block text-xs text-slate-600 mb-1">Installed</label>
-        <input type="date" name="installed" value="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+        <input type="date" name="installed" value="${e ? e.installed : today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${isEdit ? 'Save changes' : 'Add'}</button>
       </div>
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
 }
-function submitAddEquipment(ev) {
+function openAddEquipmentModal() { openEquipmentFormModal('add'); }
+function openEditEquipmentModal(eqId) { openEquipmentFormModal('edit', eqId); }
+function submitEquipmentForm(ev, mode, eqId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
-  const id = 'EQ-' + String(Date.now()).slice(-6);
-  state.equipment.push({
-    id, tag: f.get('tag'), type: f.get('type'),
-    make: f.get('make') || '', model: f.get('model') || '',
-    plantId: f.get('plantId'), location: f.get('location') || '',
-    installed: f.get('installed') || today(), status: 'Operational',
-  });
+  if (mode === 'edit') {
+    const e = eqById(eqId); if (!e) return;
+    e.tag = f.get('tag'); e.type = f.get('type');
+    e.make = f.get('make') || ''; e.model = f.get('model') || '';
+    e.plantId = f.get('plantId');
+    e.installed = f.get('installed') || e.installed;
+  } else {
+    const id = 'EQ-' + String(Date.now()).slice(-6);
+    state.equipment.push({
+      id, tag: f.get('tag'), type: f.get('type'),
+      make: f.get('make') || '', model: f.get('model') || '',
+      plantId: f.get('plantId'), location: '',
+      installed: f.get('installed') || today(), status: 'Operational',
+    });
+  }
   saveEq(state.equipment);
   closeModal(); route();
 }
