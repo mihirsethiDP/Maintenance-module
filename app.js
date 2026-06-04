@@ -321,7 +321,7 @@ function renderDashboard() {
 
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-1 flex-wrap gap-3">
-      <h1 class="text-2xl font-semibold">Plant Maintenance Dashboard</h1>
+      <h1 class="text-2xl font-semibold" data-tour="dashboard-h1">Plant Maintenance Dashboard</h1>
       <div class="ml-auto flex gap-2 flex-wrap">
         ${plantFilterControl()}
         ${typeFilterControl()}
@@ -330,14 +330,14 @@ function renderDashboard() {
     </div>
     <p class="text-slate-500 mb-6">Live status of plant equipment. Click any card below to filter the table.</p>
 
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div data-tour="kpi-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
       ${card('total','Total Equipment', total, 'text-slate-800')}
       ${card('op','Operational',         op,    'text-green-700')}
       ${card('mt','In Maintenance',      mt,    'text-brand')}
       ${card('bd','Broken Down',         bd,    'text-red-600')}
     </div>
 
-    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div data-tour="out-of-service" class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-200 flex items-center">
         <div class="font-semibold">${heading}</div>
         <div class="ml-auto text-sm text-slate-500">${down.length} equipment</div>
@@ -441,7 +441,7 @@ function renderEquipmentDetail(id) {
           <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${e.tag}</h1>${statusBadge(e.status)}</div>
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${e.make} ${e.model} · ${plantName(e.plantId)}</div>
         </div>
-        <div class="ml-auto flex gap-2 flex-wrap">
+        <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
           <button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
             Edit
@@ -468,10 +468,10 @@ function renderLog() {
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-4 gap-3 flex-wrap">
       <div>
-        <h1 class="text-2xl font-semibold">Maintenance Log</h1>
+        <h1 class="text-2xl font-semibold" data-tour="log-h1">Maintenance Log</h1>
         <p class="text-slate-500 text-sm">Full history across all equipment.</p>
       </div>
-      <div class="ml-auto flex items-center gap-2">
+      <div data-tour="log-actions" class="ml-auto flex items-center gap-2">
         <button onclick="openServiceReportModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Service Report</button>
         ${exportDropdown('', 'log-export')}
       </div>
@@ -585,7 +585,7 @@ function renderPlants() {
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-1 flex-wrap gap-3">
       <div>
-        <h1 class="text-2xl font-semibold">Plants</h1>
+        <h1 class="text-2xl font-semibold" data-tour="plants-h1">Plants</h1>
         <p class="text-slate-500 text-sm mt-1">Per-plant notification settings and admin actions.</p>
       </div>
       <div class="ml-auto">
@@ -861,7 +861,7 @@ function getVisits() {
 function renderEngineer() {
   const tab = ui.engineerTab;
   const tabBtn = (key, label, count) => `
-    <button onclick="ui.engineerTab='${key}'; renderEngineer()"
+    <button data-tour="tab-${key}" onclick="ui.engineerTab='${key}'; renderEngineer()"
       class="px-4 py-2 rounded-md text-sm font-medium border ${tab===key?'border-brand bg-brand text-white':'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}">
       ${label} ${count!==undefined?`<span class="ml-1 text-xs ${tab===key?'opacity-80':'text-slate-500'}">(${count})</span>`:''}
     </button>`;
@@ -878,7 +878,7 @@ function renderEngineer() {
 
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-1 flex-wrap gap-3">
-      <h1 class="text-2xl font-semibold">Engineering Corner</h1>
+      <h1 class="text-2xl font-semibold" data-tour="engineer-h1">Engineering Corner</h1>
       <div class="ml-auto flex gap-2 flex-wrap">${plantFilterControl()}${typeFilterControl()}</div>
     </div>
     <p class="text-slate-500 mb-5">For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports.</p>
@@ -1797,9 +1797,277 @@ function submitImportPPM(ev) {
   route();
 }
 
+// ---------- Guide-me tour ----------
+const TOUR_LANGS = [
+  { code: 'en-US', label: 'English' },
+  { code: 'hi-IN', label: 'हिन्दी' },
+  { code: 'es-ES', label: 'Español' },
+];
+
+const TOURS = {
+  engineer: {
+    label: { 'en-US': 'Engineer tour', 'hi-IN': 'Engineer का tour', 'es-ES': 'Tour para ingenieros' },
+    sub:   { 'en-US': 'For service engineers on the field', 'hi-IN': 'Field पर service engineers के लिए', 'es-ES': 'Para ingenieros de servicio en campo' },
+    steps: [
+      { setup: () => { location.hash='#/engineer'; ui.engineerTab='pending'; route(); },
+        target: '[data-tour="engineer-h1"]',
+        title: { 'en-US':'Welcome, Engineer', 'hi-IN':'स्वागत है, Engineer', 'es-ES':'Bienvenido, Ingeniero' },
+        body:  { 'en-US':"Welcome to the Engineering Corner. This is the workspace built for service engineers on the field.",
+                 'hi-IN':"Engineering Corner में आपका स्वागत है। यह field पर काम करने वाले service engineers के लिए बनाया गया workspace है।",
+                 'es-ES':"Bienvenido al rincón de ingeniería. Este es el espacio diseñado para los ingenieros de servicio en campo." } },
+      { setup: () => { ui.engineerTab='pending'; route(); },
+        target: '[data-tour="tab-pending"]',
+        title: { 'en-US':'Pending tasks', 'hi-IN':'Pending tasks', 'es-ES':'Tareas pendientes' },
+        body:  { 'en-US':"Pending shows what needs your attention today — ongoing maintenance plus any scheduled work that's now overdue.",
+                 'hi-IN':"Pending tab में आज जो काम करने हैं वो सब हैं — चल रहा maintenance और कोई भी delayed scheduled काम।",
+                 'es-ES':"Pendientes muestra lo urgente del día: mantenimiento en curso y tareas programadas atrasadas." } },
+      { setup: () => { ui.engineerTab='upcoming'; route(); },
+        target: '[data-tour="tab-upcoming"]',
+        title: { 'en-US':'Upcoming PPM', 'hi-IN':'Upcoming PPM', 'es-ES':'Próximo PPM' },
+        body:  { 'en-US':"Upcoming PPM lists scheduled service for the next thirty days, pulled from each plant's planned maintenance schedule.",
+                 'hi-IN':"Upcoming PPM tab अगले तीस दिनों के scheduled tasks दिखाता है, हर plant के planned maintenance schedule से।",
+                 'es-ES':"Próximo PPM lista el servicio planificado para los próximos treinta días, según el calendario de cada planta." } },
+      { setup: () => { ui.engineerTab='upcoming'; route(); },
+        target: 'table button[onclick^="openMaintModal"]',
+        title: { 'en-US':'Start a task on site', 'hi-IN':'Site पर task शुरू करें', 'es-ES':'Iniciar una tarea en sitio' },
+        body:  { 'en-US':"When you begin work on an equipment, click Put in Maintenance. Log the reason, expected return date, and notes — the equipment is now flagged across the system.",
+                 'hi-IN':"किसी equipment पर काम शुरू करते समय Put in Maintenance पर click करें — reason, expected return date, और notes भरें। पूरे system में equipment flag हो जाएगा।",
+                 'es-ES':"Cuando empiece a trabajar en un equipo, toque Poner en mantenimiento e ingrese el motivo, la fecha estimada de retorno y notas. El equipo queda marcado en todo el sistema." } },
+      { setup: () => { ui.engineerTab='visits'; route(); },
+        target: '[data-tour="tab-visits"]',
+        title: { 'en-US':'Visit Reports', 'hi-IN':'Visit Reports', 'es-ES':'Reportes de visita' },
+        body:  { 'en-US':"After a site visit, open Visit Reports. Pick a quick date filter, then Generate Report produces a sign-off PDF covering everything you completed that day.",
+                 'hi-IN':"Site visit के बाद Visit Reports tab खोलें। quick date filter चुनें, फिर Generate Report से उस दिन के completed कामों का sign-off PDF बनेगा।",
+                 'es-ES':"Tras una visita, abra Reportes de visita. Use un filtro rápido y Generar reporte crea un PDF de cierre con todo lo realizado ese día." } },
+      { setup: () => { location.hash='#/equipment/EQ-002'; route(); },
+        target: '[data-tour="detail-actions"]',
+        title: { 'en-US':"Close out the work", 'hi-IN':'काम complete करें', 'es-ES':'Cerrar el trabajo' },
+        body:  { 'en-US':"From any equipment detail page you can mark it operational and instantly generate a single-event service report for sign-off. You're all set!",
+                 'hi-IN':"किसी भी equipment detail page से उसे Operational mark करें और तुरंत single-event service report sign-off के लिए generate करें। बस इतना ही!",
+                 'es-ES':"Desde la página de cualquier equipo puede marcarlo como Operativo y generar al instante un reporte de servicio para firma. ¡Listo!" } },
+    ],
+  },
+  manager: {
+    label: { 'en-US': 'Manager tour', 'hi-IN': 'Manager का tour', 'es-ES': 'Tour para gerentes' },
+    sub:   { 'en-US': 'For plant and maintenance managers', 'hi-IN': 'Plant और maintenance managers के लिए', 'es-ES': 'Para gerentes de planta y mantenimiento' },
+    steps: [
+      { setup: () => { location.hash='#/dashboard'; route(); },
+        target: '[data-tour="dashboard-h1"]',
+        title: { 'en-US':"Welcome, Manager", 'hi-IN':'स्वागत है, Manager', 'es-ES':'Bienvenido, Gerente' },
+        body:  { 'en-US':"Welcome. The Dashboard gives you a live pulse of every plant under your care.",
+                 'hi-IN':"स्वागत है। Dashboard आपको हर plant की live status एक नज़र में दिखाता है।",
+                 'es-ES':"Bienvenido. El panel ofrece una vista en vivo de cada planta bajo su responsabilidad." } },
+      { setup: () => { route(); },
+        target: '[data-tour="kpi-cards"]',
+        title: { 'en-US':"Live KPI cards", 'hi-IN':'Live KPI cards', 'es-ES':'Tarjetas KPI en vivo' },
+        body:  { 'en-US':"These cards show real-time equipment counts. Click any card to filter the table below — for example, In Maintenance shows exactly what's down right now.",
+                 'hi-IN':"ये cards real-time equipment counts दिखाते हैं। किसी भी card पर click करें — नीचे का table filter हो जाएगा। जैसे In Maintenance click करें तो अभी जो equipment down हैं वो दिखेंगे।",
+                 'es-ES':"Estas tarjetas muestran conteos en vivo de equipos. Toque cualquiera para filtrar la tabla — por ejemplo, En mantenimiento muestra justo lo que está fuera de servicio." } },
+      { setup: () => { route(); },
+        target: '[data-tour="out-of-service"]',
+        title: { 'en-US':"What's out of service", 'hi-IN':'क्या-क्या out of service है', 'es-ES':'Qué está fuera de servicio' },
+        body:  { 'en-US':"Each row shows the equipment, the reason it's down, the expected return date, and how overdue it is. Click any equipment tag to drill into its full history.",
+                 'hi-IN':"हर row में equipment, down होने का reason, expected return date, और कितना overdue है दिखता है। किसी भी equipment tag पर click करें — पूरी maintenance history खुलेगी।",
+                 'es-ES':"Cada fila muestra el equipo, el motivo, la fecha estimada de retorno y cuánto se ha retrasado. Toque cualquier etiqueta para ver el historial completo." } },
+      { setup: () => { location.hash='#/log'; route(); },
+        target: '[data-tour="log-h1"]',
+        title: { 'en-US':"Maintenance Log", 'hi-IN':'Maintenance Log', 'es-ES':'Registro de mantenimiento' },
+        body:  { 'en-US':"The Maintenance Log is a complete audit trail across every plant. Filter by plant, type, reason, technician or date range to pinpoint what you need.",
+                 'hi-IN':"Maintenance Log सब plants की complete audit trail है। plant, type, reason, technician, या date range से filter करें — जो चाहिए वो ढूंढ लें।",
+                 'es-ES':"El registro de mantenimiento es la traza completa de todas las plantas. Filtre por planta, tipo, motivo, técnico o rango de fechas para encontrar lo que necesite." } },
+      { setup: () => { route(); },
+        target: '[data-tour="log-actions"]',
+        title: { 'en-US':"Service reports & exports", 'hi-IN':'Service Reports और exports', 'es-ES':'Reportes y exportación' },
+        body:  { 'en-US':"Generate consolidated Service Reports — filtered or full — for sign-off, and export the underlying log to Excel or PDF for reporting.",
+                 'hi-IN':"Filtered या full Service Reports sign-off के लिए generate करें, और log को Excel या PDF में export करें reporting के लिए।",
+                 'es-ES':"Genere reportes de servicio consolidados — filtrados o completos — para firma, y exporte el registro a Excel o PDF." } },
+      { setup: () => { location.hash='#/plants'; route(); },
+        target: '[data-tour="plants-h1"]',
+        title: { 'en-US':"Plants & notifications", 'hi-IN':'Plants और notifications', 'es-ES':'Plantas y notificaciones' },
+        body:  { 'en-US':"On the Plants page, configure who gets notified for which event and through which channel — Email, SMS, WhatsApp, or Call. You stay in control of every alert.",
+                 'hi-IN':"Plants page पर configure करें — किसको कौन से event पर और किस channel से notify किया जाए: Email, SMS, WhatsApp, या Call। हर alert आपके control में।",
+                 'es-ES':"En la página Plantas configure quién recibe cada notificación y por qué canal — Email, SMS, WhatsApp o llamada. Usted controla cada alerta." } },
+    ],
+  },
+};
+
+window._tour = { active: false, name: null, idx: 0, lang: 'en-US', chooserOpen: false };
+
+function tourFAB() {
+  return `<button class="tour-fab" onclick="toggleTourChooser()" aria-label="Guide me">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+  </button><span class="tour-fab-label">Guide me</span>`;
+}
+
+function toggleTourChooser() {
+  if (window._tour.active) { exitTour(); return; }
+  window._tour.chooserOpen = !window._tour.chooserOpen;
+  renderTourChooser();
+}
+
+function renderTourChooser() {
+  const existing = document.getElementById('tour-chooser');
+  if (existing) existing.remove();
+  if (!window._tour.chooserOpen) return;
+  const langOpts = TOUR_LANGS.map(l => `<option value="${l.code}" ${window._tour.lang===l.code?'selected':''}>${l.label}</option>`).join('');
+  const lang = window._tour.lang;
+  const html = `
+    <div id="tour-chooser" class="tour-chooser">
+      <h4>${ {'en-US':'Take a guided tour','hi-IN':'Guided tour लें','es-ES':'Hacer un tour guiado'}[lang] }</h4>
+      <div class="ch-sub">${ {'en-US':'Pick a role and language.','hi-IN':'अपनी role और भाषा चुनें।','es-ES':'Elija un rol y un idioma.'}[lang] }</div>
+      <label class="block text-[11px] text-slate-600 mb-1">${ {'en-US':'Language','hi-IN':'भाषा','es-ES':'Idioma'}[lang] }</label>
+      <select onchange="window._tour.lang=this.value; renderTourChooser()">${langOpts}</select>
+      <button class="ch-card" onclick="startTour('engineer')">
+        <span style="font-size:20px">🛠️</span>
+        <div>
+          <div class="ch-card-title">${TOURS.engineer.label[lang]}</div>
+          <div class="ch-card-sub">${TOURS.engineer.sub[lang]}</div>
+        </div>
+      </button>
+      <button class="ch-card" onclick="startTour('manager')">
+        <span style="font-size:20px">📊</span>
+        <div>
+          <div class="ch-card-title">${TOURS.manager.label[lang]}</div>
+          <div class="ch-card-sub">${TOURS.manager.sub[lang]}</div>
+        </div>
+      </button>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function startTour(name) {
+  window._tour.chooserOpen = false;
+  document.getElementById('tour-chooser')?.remove();
+  window._tour.active = true;
+  window._tour.name = name;
+  window._tour.idx = 0;
+  showTourStep();
+}
+
+function showTourStep() {
+  const tour = TOURS[window._tour.name];
+  const step = tour.steps[window._tour.idx];
+  if (step.setup) step.setup();
+  setTimeout(() => paintTourStep(step, tour.steps.length), 220);
+}
+
+function paintTourStep(step, total) {
+  document.querySelectorAll('.tour-backdrop, .tour-spotlight, .tour-card').forEach(el => el.remove());
+  const target = document.querySelector(step.target);
+  const lang = window._tour.lang;
+  if (!target) {
+    // Fallback to centered card if target missing
+    document.body.insertAdjacentHTML('beforeend', `<div class="tour-backdrop" style="background:rgba(15,23,42,0.55)" onclick="exitTour()"></div>`);
+    document.body.insertAdjacentHTML('beforeend', renderTourCard(step, total, null, lang));
+    speakTour(step.body[lang], lang);
+    return;
+  }
+
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => {
+    const rect = target.getBoundingClientRect();
+    document.body.insertAdjacentHTML('beforeend', `<div class="tour-backdrop" onclick="exitTour()"></div>`);
+    document.body.insertAdjacentHTML('beforeend', `<div class="tour-spotlight" id="tour-spot"></div>`);
+    document.body.insertAdjacentHTML('beforeend', renderTourCard(step, total, rect, lang));
+    const spot = document.getElementById('tour-spot');
+    spot.style.top    = (rect.top - 6) + 'px';
+    spot.style.left   = (rect.left - 6) + 'px';
+    spot.style.width  = (rect.width + 12) + 'px';
+    spot.style.height = (rect.height + 12) + 'px';
+    positionTourCard(rect);
+    speakTour(step.body[lang], lang);
+  }, 280);
+}
+
+function positionTourCard(rect) {
+  const card = document.querySelector('.tour-card');
+  if (!card) return;
+  const cw = card.offsetWidth || 360;
+  const ch = card.offsetHeight || 200;
+  const margin = 16;
+  let top = rect.bottom + margin;
+  if (top + ch > window.innerHeight - 16) top = Math.max(16, rect.top - ch - margin);
+  let left = rect.left + (rect.width / 2) - (cw / 2);
+  left = Math.max(16, Math.min(window.innerWidth - cw - 16, left));
+  card.style.top = top + 'px';
+  card.style.left = left + 'px';
+}
+
+function renderTourCard(step, total, rect, lang) {
+  const idx = window._tour.idx;
+  const isLast = idx === total - 1;
+  const prevDisabled = idx === 0 ? 'disabled style="opacity:0.4;cursor:not-allowed"' : '';
+  const labels = {
+    'en-US': { step:'Step', of:'of', prev:'Back', next:'Next', finish:'Finish', exit:'Exit', replay:'Replay' },
+    'hi-IN': { step:'Step', of:'/', prev:'पीछे', next:'आगे', finish:'समाप्त', exit:'बंद', replay:'दोबारा' },
+    'es-ES': { step:'Paso', of:'de', prev:'Atrás', next:'Siguiente', finish:'Finalizar', exit:'Salir', replay:'Repetir' },
+  }[lang];
+  const progress = Math.round(((idx + 1) / total) * 100);
+  return `<div class="tour-card">
+    <div class="tour-step">${labels.step} ${idx + 1} ${labels.of} ${total}</div>
+    <div class="tour-title">${step.title[lang]}</div>
+    <div class="tour-body">${step.body[lang]}</div>
+    <div class="tour-progress"><div style="width:${progress}%"></div></div>
+    <div class="tour-controls">
+      <button class="tour-btn tour-icon" onclick="replaySpeak()" title="${labels.replay}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+      </button>
+      <button class="tour-btn" onclick="exitTour()">${labels.exit}</button>
+      <div class="spacer"></div>
+      <button class="tour-btn" ${prevDisabled} onclick="prevTourStep()">${labels.prev}</button>
+      <button class="tour-btn tour-btn-primary" onclick="${isLast?'exitTour()':'nextTourStep()'}">${isLast ? labels.finish : labels.next}</button>
+    </div>
+  </div>`;
+}
+
+function nextTourStep() {
+  const total = TOURS[window._tour.name].steps.length;
+  if (window._tour.idx >= total - 1) { exitTour(); return; }
+  window._tour.idx++;
+  showTourStep();
+}
+function prevTourStep() {
+  if (window._tour.idx <= 0) return;
+  window._tour.idx--;
+  showTourStep();
+}
+function exitTour() {
+  window._tour.active = false;
+  window._tour.chooserOpen = false;
+  document.querySelectorAll('.tour-backdrop, .tour-spotlight, .tour-card, #tour-chooser').forEach(el => el.remove());
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+}
+function replaySpeak() {
+  const step = TOURS[window._tour.name].steps[window._tour.idx];
+  speakTour(step.body[window._tour.lang], window._tour.lang);
+}
+function speakTour(text, lang) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang;
+  u.rate = 0.95;
+  // Try to pick a voice matching the language
+  const voices = window.speechSynthesis.getVoices();
+  const match = voices.find(v => v.lang === lang) || voices.find(v => v.lang && v.lang.startsWith(lang.split('-')[0]));
+  if (match) u.voice = match;
+  window.speechSynthesis.speak(u);
+}
+window.addEventListener('hashchange', () => { if (window._tour.active) { /* preserve tour */ } });
+
+// Mount FAB after first render
+function mountTourFAB() {
+  if (document.querySelector('.tour-fab')) return;
+  document.body.insertAdjacentHTML('beforeend', tourFAB());
+}
+
 // ---------- Boot ----------
 document.getElementById('resetBtn').addEventListener('click', () => {
   if (confirm('Reset all data back to the seed demo?')) resetDemo();
 });
 if (!location.hash) location.hash = '#/dashboard';
 route();
+mountTourFAB();
+// preload voices so TTS works on first click
+if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
