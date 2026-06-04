@@ -7,13 +7,12 @@ const SEED_PLANTS = [
   { id: 'PL-05', name: 'Ireo Grandarch STP', location: 'Gurugram, HR',   notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }) },
 ];
 function defaultNotifConfig(prefs = {}) {
-  const make = (ch) => ({ enabled: ch.length > 0, channels: ch });
+  const make = (ch, recips) => ({ enabled: (ch||[]).length > 0, channels: ch || [], recipients: recips || (ch && ch.length ? ['U-4','U-5'] : []) });
   return {
-    recipients:  prefs.recipients  || ['U-4','U-5'],
-    maintenance: make(prefs.maintenance || []),
-    breakdown:   make(prefs.breakdown   || []),
-    operational: make(prefs.operational || []),
-    overdue:     make(prefs.overdue     || []),
+    maintenance: make(prefs.maintenance, prefs.maintenanceTo),
+    breakdown:   make(prefs.breakdown,   prefs.breakdownTo),
+    operational: make(prefs.operational, prefs.operationalTo),
+    overdue:     make(prefs.overdue,     prefs.overdueTo),
   };
 }
 const CHANNELS = ['email','sms','whatsapp','call'];
@@ -161,7 +160,7 @@ function generateIreoLogs() {
 // ---------- Storage ----------
 const LS_EQ = 'mm.equipment.v4';
 const LS_LOG = 'mm.logs.v4';
-const LS_PLANT = 'mm.plants.v3';
+const LS_PLANT = 'mm.plants.v4';
 const LS_USERS = 'mm.users.v1';
 
 function load() {
@@ -210,15 +209,17 @@ function ecStatus(etr, endDate) {
   return { label: `In ${d}d`, cls: 'text-[#193458]' };
 }
 function tagLink(e) {
-  return `<a class="text-brand font-semibold hover:underline inline-flex items-center gap-1" href="#/equipment/${e.id}">${e.tag}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>`;
+  return `<a class="tag-chip" href="#/equipment/${e.id}">${e.tag}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>`;
 }
 
 // ---------- State / routing / filters ----------
 let state = load();
-const ui = { plantFilter: 'all', dashStatusFilter: 'all' };
+const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending' };
+const EQ_TYPES = ['Pump','Blower','Filter','Centrifuge','UV System'];
 
 const routes = [
-  { hash: '#/dashboard', label: 'Dashboard' },
+  { hash: '#/dashboard',  label: 'Dashboard' },
+  { hash: '#/engineer',   label: 'Engineering Corner' },
   { hash: '#/equipment', label: 'Equipment' },
   { hash: '#/log',       label: 'Maintenance Log' },
   { hash: '#/plants',    label: 'Plants' },
@@ -240,6 +241,7 @@ function route() {
   if (h === '#/equipment') return renderEquipment();
   if (h === '#/log')       return renderLog();
   if (h === '#/plants')    return renderPlants();
+  if (h === '#/engineer')  return renderEngineer();
   return renderDashboard();
 }
 window.addEventListener('hashchange', route);
@@ -252,6 +254,13 @@ function plantFilterControl() {
   return `<select onchange="ui.plantFilter=this.value; route()" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">${opts}</select>`;
 }
 function applyPlantFilter(eq) { return ui.plantFilter === 'all' ? eq : eq.filter(e => e.plantId === ui.plantFilter); }
+function applyTypeFilter(eq)  { return ui.typeFilter  === 'all' ? eq : eq.filter(e => e.type      === ui.typeFilter);  }
+function typeFilterControl() {
+  const opts = ['<option value="all">All types</option>'].concat(
+    EQ_TYPES.map(t => `<option value="${t}" ${ui.typeFilter===t?'selected':''}>${t}</option>`)
+  ).join('');
+  return `<select onchange="ui.typeFilter=this.value; route()" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">${opts}</select>`;
+}
 function addEquipmentBtn() {
   return `<button onclick="openAddEquipmentModal()" class="px-3 py-1.5 rounded-md bg-brand text-white hover:bg-brand-800 text-sm font-medium inline-flex items-center gap-1">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -261,7 +270,7 @@ function addEquipmentBtn() {
 
 // ---------- Dashboard ----------
 function renderDashboard() {
-  let eq = applyPlantFilter(state.equipment);
+  let eq = applyTypeFilter(applyPlantFilter(state.equipment));
   const total = eq.length;
   const op = eq.filter(e => e.status === 'Operational').length;
   const mt = eq.filter(e => e.status === 'In Maintenance').length;
@@ -310,10 +319,11 @@ function renderDashboard() {
       <h1 class="text-2xl font-semibold">Plant Maintenance Dashboard</h1>
       <div class="ml-auto flex gap-2 flex-wrap">
         ${plantFilterControl()}
+        ${typeFilterControl()}
         ${addEquipmentBtn()}
       </div>
     </div>
-    <p class="text-slate-500 mb-6">Live status of pumps and blowers. Click any card below to filter the table.</p>
+    <p class="text-slate-500 mb-6">Live status of plant equipment. Click any card below to filter the table.</p>
 
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
       ${card('total','Total Equipment', total, 'text-slate-800')}
@@ -342,7 +352,7 @@ function renderDashboard() {
 
 // ---------- Equipment list ----------
 function renderEquipment() {
-  const eq = applyPlantFilter(state.equipment);
+  const eq = applyTypeFilter(applyPlantFilter(state.equipment));
   const rows = eq.map(e => {
     const log = openLogFor(e.id);
     const action = e.status === 'Operational'
@@ -366,6 +376,7 @@ function renderEquipment() {
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
         ${plantFilterControl()}
+        ${typeFilterControl()}
         <input id="eqSearch" placeholder="Filter…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-56" oninput="filterEq(this.value)" />
         ${addEquipmentBtn()}
       </div>
@@ -454,7 +465,7 @@ function renderLog() {
       <div class="ml-auto flex gap-2 flex-wrap">
         ${plantFilterControl()}
         <select id="fType" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white" onchange="renderLogRows()">
-          <option value="">All types</option><option>Pump</option><option>Blower</option>
+          <option value="">All types</option>${EQ_TYPES.map(t=>`<option>${t}</option>`).join('')}
         </select>
         <select id="fReason" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white" onchange="renderLogRows()">
           <option value="">All reasons</option><option>Scheduled</option><option>Breakdown</option>
@@ -549,11 +560,9 @@ const NOTIF_EVENTS = [
 function renderPlants() {
   const rows = state.plants.map(p => {
     const eqCount = state.equipment.filter(e => e.plantId === p.id).length;
-    const enabledEvents = NOTIF_EVENTS.filter(ev => p.notifications[ev.key].enabled).length;
     return `<tr>
       <td><div class="cell-primary">${p.name}</div><div class="cell-secondary">${p.location}</div></td>
       <td><div class="cell-primary">${eqCount}</div><div class="cell-muted">equipment</div></td>
-      <td><div class="cell-primary">${enabledEvents} / ${NOTIF_EVENTS.length}</div><div class="cell-muted">events enabled</div></td>
       <td class="col-center"><button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button></td>
     </tr>`;
   }).join('');
@@ -563,7 +572,7 @@ function renderPlants() {
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
         <table class="list-table">
-          <thead><tr><th>Plant</th><th>Equipment</th><th>Notifications</th><th class="col-center">Action</th></tr></thead>
+          <thead><tr><th>Plant</th><th>Equipment</th><th class="col-center">Action</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -573,46 +582,44 @@ function renderPlants() {
 
 function openPlantNotifModal(plantId) {
   const p = plantById(plantId);
-  const recipients = p.notifications.recipients || [];
-  const recipientBoxes = state.users.map(u => `
-    <label class="flex items-start gap-2 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
-      <input type="checkbox" name="recipient.${u.id}" ${recipients.includes(u.id)?'checked':''} class="mt-0.5" />
-      <div>
-        <div class="font-medium text-slate-800">${u.name}</div>
-        <div class="text-slate-500">${u.role}</div>
-      </div>
-    </label>`).join('');
 
   const eventBlock = NOTIF_EVENTS.map(ev => {
     const cfg = p.notifications[ev.key];
+    const recipients = cfg.recipients || [];
     const channelBoxes = CHANNELS.map(ch => `
       <label class="inline-flex items-center gap-1.5 text-xs">
         <input type="checkbox" name="${ev.key}.${ch}" ${cfg.channels.includes(ch)?'checked':''} />
         <span class="capitalize">${ch === 'sms' ? 'SMS' : ch}</span>
       </label>`).join('');
+    const recipBoxes = state.users.map(u => `
+      <label class="flex items-center gap-1.5 text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 cursor-pointer">
+        <input type="checkbox" name="${ev.key}.recip.${u.id}" ${recipients.includes(u.id)?'checked':''} />
+        <span><span class="font-medium text-slate-800">${u.name}</span> <span class="text-slate-500">· ${u.role}</span></span>
+      </label>`).join('');
     return `
-      <div class="border border-slate-200 rounded-lg p-3">
+      <div class="border border-slate-200 rounded-lg p-3 bg-white">
         <label class="flex items-center gap-2">
           <input type="checkbox" name="${ev.key}.enabled" ${cfg.enabled?'checked':''} />
           <span class="font-medium text-sm">${ev.label}</span>
         </label>
-        <div class="text-xs text-slate-500 mt-1 mb-2">Channels</div>
-        <div class="flex flex-wrap gap-x-3 gap-y-1.5">${channelBoxes}</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+          <div>
+            <div class="text-xs text-slate-500 mb-1.5">Channels</div>
+            <div class="flex flex-wrap gap-x-3 gap-y-1.5">${channelBoxes}</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-500 mb-1.5">Recipients</div>
+            <div class="grid grid-cols-1 gap-1">${recipBoxes}</div>
+          </div>
+        </div>
       </div>`;
   }).join('');
 
   document.getElementById('modalTitle').textContent = `Notifications — ${p.name}`;
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="savePlantNotif(event, '${plantId}')" class="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-      <div>
-        <div class="text-sm font-medium mb-1">Recipients</div>
-        <div class="text-xs text-slate-500 mb-2">Select users who should receive notifications for this plant.</div>
-        <div class="grid grid-cols-2 gap-2">${recipientBoxes}</div>
-      </div>
-      <div>
-        <div class="text-sm font-medium mb-2">Events &amp; channels</div>
-        <div class="space-y-2">${eventBlock}</div>
-      </div>
+    <form onsubmit="savePlantNotif(event, '${plantId}')" class="space-y-3 max-h-[75vh] overflow-y-auto pr-1">
+      <div class="text-xs text-slate-500">For each event, enable it, choose how to notify, and pick who should receive it.</div>
+      <div class="space-y-2">${eventBlock}</div>
       <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
         <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Save</button>
@@ -626,10 +633,10 @@ function savePlantNotif(ev, plantId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
   const p = plantById(plantId);
-  p.notifications.recipients = state.users.filter(u => f.get(`recipient.${u.id}`)).map(u => u.id);
   NOTIF_EVENTS.forEach(evt => {
-    p.notifications[evt.key].enabled = !!f.get(`${evt.key}.enabled`);
-    p.notifications[evt.key].channels = CHANNELS.filter(ch => f.get(`${evt.key}.${ch}`));
+    p.notifications[evt.key].enabled    = !!f.get(`${evt.key}.enabled`);
+    p.notifications[evt.key].channels   = CHANNELS.filter(ch => f.get(`${evt.key}.${ch}`));
+    p.notifications[evt.key].recipients = state.users.filter(u => f.get(`${evt.key}.recip.${u.id}`)).map(u => u.id);
   });
   savePlant(state.plants);
   closeModal();
@@ -690,6 +697,263 @@ function exportPDF(eqId) {
   doc.autoTable({ head: [cols], body: rows.map(r => cols.map(c => r[c])), startY: 26, styles: { fontSize: 7 }, headStyles: { fillColor: [25,52,88] } });
   const name = eqId ? `maintenance-log-${eqById(eqId).tag}-${today()}.pdf` : `maintenance-log-${today()}.pdf`;
   doc.save(name);
+}
+
+// ---------- Engineering Corner ----------
+const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
+
+function getPendingTasks() {
+  return state.logs
+    .filter(l => !l.endDate)
+    .map(l => ({ l, e: eqById(l.equipmentId) }))
+    .filter(x => x.e)
+    .sort((a,b) => a.l.startDate.localeCompare(b.l.startDate));
+}
+
+function getUpcomingPPM(days = 30) {
+  const now = new Date(); now.setHours(0,0,0,0);
+  const horizon = new Date(now); horizon.setDate(horizon.getDate() + days);
+  const out = [];
+  for (const [eqId, slot] of Object.entries(IREO_SLOTS)) {
+    const e = eqById(eqId); if (!e) continue;
+    if (slot === 'weekly') {
+      // Next weekly date — find next 7-day interval after today
+      let d = new Date('2026-01-01');
+      while (d < now) { d.setDate(d.getDate() + 7); }
+      while (d <= horizon) {
+        out.push({ e, date: new Date(d), slot: 'Weekly' });
+        d = new Date(d); d.setDate(d.getDate() + 7);
+      }
+    } else {
+      // Next monthly date in this slot
+      const day = SLOT_DAY[slot];
+      let m = now.getMonth(), y = now.getFullYear();
+      for (let i = 0; i < 2; i++) { // look ahead up to 2 months
+        const d = new Date(y, m + i, day);
+        if (d >= now && d <= horizon) out.push({ e, date: d, slot: `Monthly · ${slot}` });
+      }
+    }
+  }
+  return out.sort((a,b) => a.date - b.date);
+}
+
+function getVisits() {
+  // Group completed logs by endDate (= visit day)
+  const map = new Map();
+  for (const l of state.logs) {
+    if (!l.endDate) continue;
+    if (!map.has(l.endDate)) map.set(l.endDate, []);
+    map.get(l.endDate).push(l);
+  }
+  const visits = [];
+  for (const [date, logs] of map) {
+    const eqIds = [...new Set(logs.map(l => l.equipmentId))];
+    const equipment = eqIds.map(id => eqById(id)).filter(Boolean);
+    const plants = [...new Set(equipment.map(e => e.plantId))].map(plantById).filter(Boolean);
+    const technicians = [...new Set(logs.map(l => l.technician))];
+    visits.push({ date, logs, equipment, plants, technicians });
+  }
+  return visits.sort((a,b) => b.date.localeCompare(a.date));
+}
+
+function renderEngineer() {
+  const tab = ui.engineerTab;
+  const tabBtn = (key, label, count) => `
+    <button onclick="ui.engineerTab='${key}'; renderEngineer()"
+      class="px-4 py-2 rounded-md text-sm font-medium border ${tab===key?'border-brand bg-brand text-white':'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}">
+      ${label} ${count!==undefined?`<span class="ml-1 text-xs ${tab===key?'opacity-80':'text-slate-500'}">(${count})</span>`:''}
+    </button>`;
+
+  const pending  = getPendingTasks();
+  const upcoming = getUpcomingPPM(30);
+  const visits   = getVisits();
+
+  let body = '';
+  if (tab === 'pending') body = renderPendingTab(pending);
+  else if (tab === 'upcoming') body = renderUpcomingTab(upcoming);
+  else body = renderVisitsTab(visits);
+
+  document.getElementById('view').innerHTML = `
+    <div class="flex items-center mb-1 flex-wrap gap-3">
+      <h1 class="text-2xl font-semibold">Engineering Corner</h1>
+      <div class="ml-auto flex gap-2 flex-wrap">${plantFilterControl()}${typeFilterControl()}</div>
+    </div>
+    <p class="text-slate-500 mb-5">For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports.</p>
+    <div class="flex gap-2 mb-5 flex-wrap">
+      ${tabBtn('pending',  'Pending', pending.length)}
+      ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}
+      ${tabBtn('visits',   'Visit Reports', visits.length)}
+    </div>
+    ${body}
+  `;
+}
+
+function renderPendingTab(pending) {
+  // Apply filters
+  const filtered = pending.filter(({e}) =>
+    (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) &&
+    (ui.typeFilter  === 'all' || e.type    === ui.typeFilter)
+  );
+  if (!filtered.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing pending — every equipment is operational.</div>`;
+  const rows = filtered.map(({l, e}) => {
+    const et = ecStatus(l.etr, null);
+    return `<tr>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">Tech: ${l.technician}</div></td>
+      <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">Expected: ${l.etr||'—'}</div></td>
+      <td><span class="${et.cls}">${et.label}</span></td>
+      <td class="col-center"><button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium">Mark Complete</button></td>
+    </tr>`;
+  }).join('');
+  return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Pending tasks — equipment currently under maintenance</div>
+    <div class="overflow-x-auto"><table class="list-table">
+      <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>ETR Status</th><th class="col-center">Action</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderUpcomingTab(upcoming) {
+  const filtered = upcoming.filter(({e}) =>
+    (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) &&
+    (ui.typeFilter  === 'all' || e.type    === ui.typeFilter)
+  );
+  if (!filtered.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">No scheduled PPM tasks in the next 30 days for this filter.</div>`;
+  const fmtD = (d) => d.toISOString().slice(0,10);
+  const todayStr = today();
+  const rows = filtered.map(({ e, date, slot }) => {
+    const ds = fmtD(date);
+    const isToday = ds === todayStr;
+    const dueLabel = isToday ? `<span class="badge badge-mt">Due today</span>` : (ds < todayStr ? `<span class="badge badge-bd">Overdue</span>` : `<span class="badge badge-brand">In ${Math.round((date - new Date(todayStr)) / 86400000)}d</span>`);
+    return `<tr>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">${ds}</div><div class="cell-muted">${slot}</div></td>
+      <td>${dueLabel}</td>
+      <td class="col-center"><button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Start Task</button></td>
+    </tr>`;
+  }).join('');
+  return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+      <span>Upcoming PPM tasks — next 30 days</span>
+      <span class="ml-auto text-xs text-slate-500 font-normal">From the planned PPM schedule</span>
+    </div>
+    <div class="overflow-x-auto"><table class="list-table">
+      <thead><tr><th>Equipment</th><th>Type / Model</th><th>Scheduled</th><th>Status</th><th class="col-center">Action</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderVisitsTab(visits) {
+  // Filter visits by plant/type using contained equipment
+  const filtered = visits.map(v => {
+    const eq = v.equipment.filter(e =>
+      (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) &&
+      (ui.typeFilter  === 'all' || e.type    === ui.typeFilter)
+    );
+    const logs = v.logs.filter(l => eq.find(e => e.id === l.equipmentId));
+    return { ...v, equipment: eq, logs };
+  }).filter(v => v.equipment.length);
+
+  if (!filtered.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">No completed visits found for this filter.</div>`;
+
+  const rows = filtered.map(v => {
+    const plantNames = v.plants.map(p => p.name).join(', ');
+    return `<tr>
+      <td><div class="cell-primary">${v.date}</div><div class="cell-muted">${v.technicians.join(', ')}</div></td>
+      <td><div class="cell-primary">${v.equipment.length} equipment</div><div class="cell-muted">${v.logs.length} task${v.logs.length===1?'':'s'} completed</div></td>
+      <td><div class="cell-primary">${plantNames}</div></td>
+      <td><div class="text-xs text-slate-600 max-w-md truncate" title="${v.equipment.map(e=>e.tag).join(', ').replace(/"/g,'&quot;')}">${v.equipment.map(e=>e.tag).join(', ')}</div></td>
+      <td class="col-center"><button onclick="generateVisitReport('${v.date}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Generate Report</button></td>
+    </tr>`;
+  }).join('');
+  return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Visit reports — grouped by completion date</div>
+    <div class="overflow-x-auto"><table class="list-table">
+      <thead><tr><th>Visit date</th><th>Coverage</th><th>Plant(s)</th><th>Equipment serviced</th><th class="col-center">Action</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function generateVisitReport(date) {
+  const logs = state.logs.filter(l => l.endDate === date);
+  if (!logs.length) { alert('No completed tasks on this date.'); return; }
+  const equipment = [...new Set(logs.map(l => l.equipmentId))].map(eqById).filter(Boolean);
+  const plants = [...new Set(equipment.map(e => e.plantId))].map(plantById).filter(Boolean);
+  const technicians = [...new Set(logs.map(l => l.technician))];
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait' });
+  const W = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(25,52,88);
+  doc.rect(0, 0, W, 24, 'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(16); doc.text('Service Engineer Visit Report', 14, 14);
+  doc.setFontSize(9);  doc.text(`Visit date: ${date}`, 14, 20);
+  doc.text(`Generated ${today()}`, W - 14, 14, { align: 'right' });
+  doc.setTextColor(15,23,42);
+
+  let y = 34;
+  doc.setFontSize(10);
+  doc.text(`Plant(s):  ${plants.map(p => p.name).join(', ') || '—'}`, 14, y); y += 6;
+  doc.text(`Engineer(s):  ${technicians.join(', ') || '—'}`, 14, y); y += 6;
+  doc.text(`Equipment serviced:  ${equipment.length}`, 14, y); y += 6;
+  doc.text(`Tasks completed:  ${logs.length}`, 14, y); y += 8;
+
+  doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Tasks performed', 14, y); y += 2;
+  doc.autoTable({
+    startY: y + 2,
+    head: [['Equipment', 'Plant', 'Reason', 'Start', 'Duration', 'Technician', 'Work performed']],
+    body: logs.map(l => {
+      const e = eqById(l.equipmentId);
+      const p = plantById(e?.plantId);
+      const dur = `${daysBetween(l.startDate, l.endDate)}d`;
+      return [
+        `${e.tag}\n${e.type} · ${e.make||''} ${e.model||''}`,
+        p ? p.name : '—',
+        l.reason,
+        l.startDate,
+        dur,
+        l.technician,
+        l.completionNotes || l.notes || '—'
+      ];
+    }),
+    styles:    { fontSize: 7.5, cellPadding: 2, valign: 'top' },
+    headStyles:{ fillColor: [25,52,88], textColor: 255 },
+    columnStyles: { 6: { cellWidth: 60 } },
+    margin: { left: 14, right: 14 },
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Sign-off block
+  if (y > 230) { doc.addPage(); y = 24; }
+  doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Sign-off', 14, y); y += 5;
+  doc.setDrawColor(220,225,232); doc.line(14, y, W-14, y); y += 12;
+  doc.setFontSize(9); doc.setFont(undefined,'normal');
+  const cW = (W - 28) / 3;
+  const sig = (label, name, role, x) => {
+    doc.setFont(undefined,'bold'); doc.text(label, x, y);
+    doc.setFont(undefined,'normal');
+    doc.setDrawColor(160,160,160); doc.line(x, y + 16, x + cW - 6, y + 16);
+    doc.setFontSize(9); doc.text(name, x, y + 21);
+    doc.setFontSize(7); doc.setTextColor(120,120,120);
+    doc.text(role, x, y + 25);
+    doc.text(`Date: ${date}`, x, y + 29);
+    doc.setFontSize(9); doc.setTextColor(15,23,42);
+  };
+  sig('Service Engineer', technicians[0] || 'A. Mehta', 'Field Service', 14);
+  sig('Maintenance Lead', 'P. Kulkarni',                'Plant Maintenance Lead', 14 + cW);
+  sig('Customer',         `${plants[0] ? plants[0].name : 'Client'} Representative`, 'Authorised Signatory', 14 + 2*cW);
+
+  doc.setFontSize(7); doc.setTextColor(140,140,140);
+  doc.text('This visit report is system-generated from completed maintenance log entries.', 14, doc.internal.pageSize.getHeight() - 8);
+
+  doc.save(`visit-report-${date}.pdf`);
 }
 
 // ---------- Service Report ----------
