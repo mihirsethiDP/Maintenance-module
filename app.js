@@ -1059,7 +1059,7 @@ function renderVisitsTabInner(visits, pills, customPanel) {
       <td><div class="cell-primary">${v.equipment.length} equipment</div><div class="cell-muted">${v.logs.length} task${v.logs.length===1?'':'s'} completed</div></td>
       <td><div class="cell-primary">${plantNames}</div></td>
       <td><div class="text-xs text-slate-600 max-w-md truncate" title="${v.equipment.map(e=>e.tag).join(', ').replace(/"/g,'&quot;')}">${v.equipment.map(e=>e.tag).join(', ')}</div></td>
-      <td class="col-center"><button onclick="generateVisitReport('${v.date}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Generate Report</button></td>
+      <td class="col-center"><button onclick="openVisitReportModal('${v.date}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Generate Report</button></td>
     </tr>`;
   }).join('');
   return filterHeader + `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -1071,12 +1071,43 @@ function renderVisitsTabInner(visits, pills, customPanel) {
   </div>`;
 }
 
-function generateVisitReport(date) {
+function openVisitReportModal(date) {
+  const logs = state.logs.filter(l => l.endDate === date);
+  if (!logs.length) { alert('No completed tasks on this date.'); return; }
+  const technicians = [...new Set(logs.map(l => l.technician))];
+  document.getElementById('modalTitle').textContent = `Visit Report — ${date}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitVisitReport(event, '${date}')" class="space-y-3 text-sm">
+      <div class="p-3 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
+        <div><span class="font-medium">Visit date:</span> ${date}</div>
+        <div><span class="font-medium">Tasks:</span> ${logs.length} · <span class="font-medium">Technicians on record:</span> ${technicians.join(', ') || '—'}</div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" placeholder="Service engineer" value="${technicians[0]||''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+        <div><label class="block text-xs text-slate-600 mb-1">Approved by</label><input name="approvedBy" placeholder="Maintenance lead" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Generate PDF</button>
+      </div>
+    </form>
+  `;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function submitVisitReport(ev, date) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  closeModal();
+  generateVisitReport(date, f.get('preparedBy') || '', f.get('approvedBy') || '');
+}
+function generateVisitReport(date, preparedByIn, approvedByIn) {
   const logs = state.logs.filter(l => l.endDate === date);
   if (!logs.length) { alert('No completed tasks on this date.'); return; }
   const equipment = [...new Set(logs.map(l => l.equipmentId))].map(eqById).filter(Boolean);
   const plants = [...new Set(equipment.map(e => e.plantId))].map(plantById).filter(Boolean);
   const technicians = [...new Set(logs.map(l => l.technician))];
+  const preparedBy = preparedByIn || technicians[0] || 'A. Mehta';
+  const approvedBy = approvedByIn || 'P. Kulkarni';
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait' });
@@ -1127,7 +1158,7 @@ function generateVisitReport(date) {
   doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Sign-off', 14, y); y += 5;
   doc.setDrawColor(220,225,232); doc.line(14, y, W-14, y); y += 12;
   doc.setFontSize(9); doc.setFont(undefined,'normal');
-  const cW = (W - 28) / 3;
+  const cW = (W - 28) / 2;
   const sig = (label, name, role, x) => {
     doc.setFont(undefined,'bold'); doc.text(label, x, y);
     doc.setFont(undefined,'normal');
@@ -1138,9 +1169,8 @@ function generateVisitReport(date) {
     doc.text(`Date: ${date}`, x, y + 29);
     doc.setFontSize(9); doc.setTextColor(15,23,42);
   };
-  sig('Service Engineer', technicians[0] || 'A. Mehta', 'Field Service', 14);
-  sig('Maintenance Lead', 'P. Kulkarni',                'Plant Maintenance Lead', 14 + cW);
-  sig('Customer',         `${plants[0] ? plants[0].name : 'Client'} Representative`, 'Authorised Signatory', 14 + 2*cW);
+  sig('Prepared by', preparedBy, 'Service Engineer',       14);
+  sig('Approved by', approvedBy, 'Plant Maintenance Lead', 14 + cW);
 
   doc.setFontSize(7); doc.setTextColor(140,140,140);
   doc.text('This visit report is system-generated from completed maintenance log entries.', 14, doc.internal.pageSize.getHeight() - 8);
@@ -1150,30 +1180,35 @@ function generateVisitReport(date) {
 
 // ---------- Service Report ----------
 function openServiceReportModal() {
-  const plantGroups = state.plants.map(p => {
-    const eqs = state.equipment.filter(e => e.plantId === p.id);
-    if (!eqs.length) return '';
-    const items = eqs.map(e => `
-      <label class="flex items-center gap-2 text-xs px-2 py-1 hover:bg-slate-50 rounded">
-        <input type="checkbox" name="sr-eq" value="${e.id}" />
-        <span class="font-medium text-slate-800">${e.tag}</span>
-        <span class="text-slate-500">· ${e.type}${e.make?' · '+e.make:''}</span>
-      </label>`).join('');
-    return `<div class="border border-slate-200 rounded-lg p-2">
-      <div class="flex items-center gap-2 mb-1 px-1">
-        <input type="checkbox" onchange="toggleGroupCheck(this, '${p.id}')" />
-        <span class="text-xs font-semibold text-slate-700">${p.name}</span>
-        <span class="text-xs text-slate-400">(${eqs.length})</span>
-      </div>
-      <div data-plant="${p.id}" class="grid grid-cols-2 gap-x-2">${items}</div>
-    </div>`;
-  }).join('');
+  const filtered = getFilteredLogs();
+  const filteredEqIds = [...new Set(filtered.map(({l}) => l.equipmentId))];
+  const filteredCount = filteredEqIds.length;
+  const allCount = state.equipment.length;
 
   document.getElementById('modalTitle').textContent = 'Generate Service Report';
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="generateServiceReport(event)" class="space-y-4 max-h-[75vh] overflow-y-auto pr-1 text-sm">
       <div>
-        <div class="text-sm font-medium mb-1">Reporting period</div>
+        <div class="text-sm font-medium mb-2">Scope</div>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="scope" value="filtered" checked class="mt-1" />
+            <div>
+              <div class="font-medium text-slate-800 text-sm">Filtered</div>
+              <div class="text-xs text-slate-500">Use the current Maintenance Log filters. ${filteredCount} equipment · ${filtered.length} log entr${filtered.length===1?'y':'ies'}.</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="scope" value="all" class="mt-1" />
+            <div>
+              <div class="font-medium text-slate-800 text-sm">All</div>
+              <div class="text-xs text-slate-500">Every equipment on record · ${allCount} equipment.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div>
+        <div class="text-sm font-medium mb-1">Reporting period <span class="text-xs text-slate-500 font-normal">(optional)</span></div>
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs text-slate-600 mb-1">From</label>
@@ -1190,12 +1225,7 @@ function openServiceReportModal() {
         <div class="grid grid-cols-2 gap-3">
           <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" placeholder="Technician name" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
           <div><label class="block text-xs text-slate-600 mb-1">Approved by</label><input name="approvedBy" placeholder="Maintenance lead" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
-          <div class="col-span-2"><label class="block text-xs text-slate-600 mb-1">Customer / client representative</label><input name="customer" placeholder="Customer name (optional)" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
         </div>
-      </div>
-      <div>
-        <div class="text-sm font-medium mb-1">Equipment <span class="text-xs text-slate-500 font-normal">(select one or more)</span></div>
-        <div class="space-y-2">${plantGroups}</div>
       </div>
       <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -1205,20 +1235,23 @@ function openServiceReportModal() {
   `;
   document.getElementById('modal').classList.remove('hidden');
 }
-function toggleGroupCheck(master, plantId) {
-  const wrap = document.querySelector(`[data-plant="${plantId}"]`);
-  wrap.querySelectorAll('input[name="sr-eq"]').forEach(cb => cb.checked = master.checked);
-}
 function generateServiceReport(ev) {
   ev.preventDefault();
   const f = new FormData(ev.target);
-  const ids = f.getAll('sr-eq');
-  if (!ids.length) { alert('Please select at least one equipment.'); return; }
+  const scope = f.get('scope') || 'filtered';
   const from = f.get('from') || '';
   const to   = f.get('to')   || today();
   const preparedBy = f.get('preparedBy') || '';
   const approvedBy = f.get('approvedBy') || '';
-  const customer   = f.get('customer')   || '';
+
+  let ids;
+  if (scope === 'filtered') {
+    const filtered = getFilteredLogs();
+    ids = [...new Set(filtered.map(({l}) => l.equipmentId))];
+  } else {
+    ids = state.equipment.map(e => e.id);
+  }
+  if (!ids.length) { alert('No equipment matches the chosen scope.'); return; }
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait' });
@@ -1234,11 +1267,11 @@ function generateServiceReport(ev) {
 
   let y = 30;
   doc.setFontSize(10);
+  doc.text(`Scope:  ${scope === 'filtered' ? 'Filtered (current Maintenance Log filters)' : 'All equipment'}`, 14, y); y += 6;
   doc.text(`Period:  ${from || '—'}  to  ${to}`, 14, y); y += 6;
   doc.text(`Equipment count:  ${ids.length}`, 14, y); y += 6;
   if (preparedBy) { doc.text(`Prepared by:  ${preparedBy}`, 14, y); y += 6; }
   if (approvedBy) { doc.text(`Approved by:  ${approvedBy}`, 14, y); y += 6; }
-  if (customer)   { doc.text(`Customer:  ${customer}`, 14, y); y += 6; }
   y += 2;
 
   // Per-equipment section
@@ -1290,7 +1323,7 @@ function generateServiceReport(ev) {
   doc.line(14, y, W - 14, y); y += 8;
   doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.text('Sign-off', 14, y); y += 8;
   doc.setFont(undefined, 'normal'); doc.setFontSize(9);
-  const colW = (W - 28) / 3;
+  const colW = (W - 28) / 2;
   const sigBlock = (label, name, x) => {
     doc.text(label, x, y);
     doc.line(x, y + 14, x + colW - 4, y + 14);
@@ -1301,7 +1334,6 @@ function generateServiceReport(ev) {
   };
   sigBlock('Prepared by', preparedBy, 14);
   sigBlock('Approved by', approvedBy, 14 + colW);
-  sigBlock('Customer',    customer,   14 + 2 * colW);
 
   closeModal();
   doc.save(`service-report-${today()}.pdf`);
@@ -1465,7 +1497,7 @@ function generateSingleServiceReport(eqId, log) {
   doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Sign-off', 14, y); y += 5;
   doc.setDrawColor(220,225,232); doc.line(14, y, W-14, y); y += 12;
   doc.setFontSize(9); doc.setFont(undefined,'normal');
-  const cW = (W - 28) / 3;
+  const cW = (W - 28) / 2;
   const sig = (label, name, role, x) => {
     doc.setFont(undefined,'bold'); doc.text(label, x, y);
     doc.setFont(undefined,'normal');
@@ -1478,7 +1510,6 @@ function generateSingleServiceReport(eqId, log) {
   };
   sig('Prepared by', log.technician || 'A. Mehta',  'Maintenance Technician',  14);
   sig('Approved by', 'P. Kulkarni',                  'Maintenance Lead',        14 + cW);
-  sig('Customer',    `${plant ? plant.name : 'Client'} Representative`, 'Authorised Signatory', 14 + 2*cW);
 
   // Footer
   doc.setFontSize(7); doc.setTextColor(140,140,140);
