@@ -118,30 +118,31 @@ const IREO_SLOTS = {
   'EQ-137':'weekly','EQ-138':'weekly',
   'EQ-139':'W1','EQ-140':'W2','EQ-141':'W3','EQ-142':'W2','EQ-143':'W4',
 };
-function generateIreoLogs() {
+const PPM_NOTES = {
+  Pump:       { sched: 'Monthly PPM — vibration, leak and seal check.',  done: 'Bearings greased, alignment verified, no abnormalities.' },
+  Blower:     { sched: 'Weekly PPM — oil and filter inspection.',         done: 'Oil level normal, intake filter cleaned.' },
+  Filter:     { sched: 'Monthly PPM — media inspection / backwash check.', done: 'Backwash performed; differential pressure within limits.' },
+  Centrifuge: { sched: 'Monthly PPM — bowl and scroll inspection.',       done: 'Bowl cleaned; vibration normal.' },
+  'UV System':{ sched: 'Monthly PPM — lamp intensity and quartz sleeve.', done: 'Quartz sleeve cleaned; intensity within spec.' },
+};
+function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
   const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
   const TECHS = ['A. Mehta','R. Sharma','S. Iyer','P. Kulkarni'];
-  const NOTES = {
-    Pump:       { sched: 'Monthly PPM — vibration, leak and seal check.',  done: 'Bearings greased, alignment verified, no abnormalities.' },
-    Blower:     { sched: 'Weekly PPM — oil and filter inspection.',         done: 'Oil level normal, intake filter cleaned.' },
-    Filter:     { sched: 'Monthly PPM — media inspection / backwash check.', done: 'Backwash performed; differential pressure within limits.' },
-    Centrifuge: { sched: 'Monthly PPM — bowl and scroll inspection.',       done: 'Bowl cleaned; vibration normal.' },
-    'UV System':{ sched: 'Monthly PPM — lamp intensity and quartz sleeve.', done: 'Quartz sleeve cleaned; intensity within spec.' },
-  };
   const NOW = new Date();
   const yearStart = new Date('2026-01-01');
   const fmt = (d) => d.toISOString().slice(0,10);
   const out = [];
   let seq = 0;
-  const eqMap = Object.fromEntries(SEED_EQUIPMENT.map(e => [e.id, e]));
-  for (const [eqId, slot] of Object.entries(IREO_SLOTS)) {
+  const eqMap = Object.fromEntries(equipmentList.map(e => [e.id, e]));
+  for (const [eqId, slot] of Object.entries(slotsMap)) {
     const eq = eqMap[eqId]; if (!eq) continue;
-    const noteSet = NOTES[eq.type] || NOTES.Pump;
+    const noteSet = PPM_NOTES[eq.type] || PPM_NOTES.Pump;
+    const prefix = idPrefix || 'PPM';
     if (slot === 'weekly') {
       let d = new Date(yearStart); let i = 0;
       while (d <= NOW) {
         const ds = fmt(d);
-        out.push({ id:`L-PPM-${++seq}`, equipmentId: eqId, reason:'Scheduled', startDate: ds, etr: ds, endDate: ds, technician: TECHS[i%TECHS.length], notes: noteSet.sched, completionNotes: noteSet.done });
+        out.push({ id:`L-${prefix}-${++seq}-${eqId}`, equipmentId: eqId, reason:'Scheduled', startDate: ds, etr: ds, endDate: ds, technician: TECHS[i%TECHS.length], notes: noteSet.sched, completionNotes: noteSet.done });
         d = new Date(d); d.setDate(d.getDate() + 7); i++;
       }
     } else {
@@ -150,7 +151,7 @@ function generateIreoLogs() {
         const d = new Date(2026, m, day);
         if (d > NOW) break;
         const ds = fmt(d);
-        out.push({ id:`L-PPM-${++seq}`, equipmentId: eqId, reason:'Scheduled', startDate: ds, etr: ds, endDate: ds, technician: TECHS[seq%TECHS.length], notes: noteSet.sched, completionNotes: noteSet.done });
+        out.push({ id:`L-${prefix}-${++seq}-${eqId}`, equipmentId: eqId, reason:'Scheduled', startDate: ds, etr: ds, endDate: ds, technician: TECHS[seq%TECHS.length], notes: noteSet.sched, completionNotes: noteSet.done });
       }
     }
   }
@@ -162,10 +163,12 @@ const LS_EQ = 'mm.equipment.v4';
 const LS_LOG = 'mm.logs.v4';
 const LS_PLANT = 'mm.plants.v4';
 const LS_USERS = 'mm.users.v1';
+const LS_SLOTS = 'mm.slots.v1';
 
 function load() {
   if (!localStorage.getItem(LS_EQ))    localStorage.setItem(LS_EQ,    JSON.stringify(SEED_EQUIPMENT));
-  if (!localStorage.getItem(LS_LOG))   localStorage.setItem(LS_LOG,   JSON.stringify(SEED_LOGS.concat(generateIreoLogs())));
+  if (!localStorage.getItem(LS_SLOTS)) localStorage.setItem(LS_SLOTS, JSON.stringify(IREO_SLOTS));
+  if (!localStorage.getItem(LS_LOG))   localStorage.setItem(LS_LOG,   JSON.stringify(SEED_LOGS.concat(generatePastPPMLogs(IREO_SLOTS, SEED_EQUIPMENT, 'PPM'))));
   if (!localStorage.getItem(LS_PLANT)) localStorage.setItem(LS_PLANT, JSON.stringify(SEED_PLANTS));
   if (!localStorage.getItem(LS_USERS)) localStorage.setItem(LS_USERS, JSON.stringify(SEED_USERS));
   return {
@@ -173,12 +176,14 @@ function load() {
     logs:      JSON.parse(localStorage.getItem(LS_LOG)),
     plants:    JSON.parse(localStorage.getItem(LS_PLANT)),
     users:     JSON.parse(localStorage.getItem(LS_USERS)),
+    slots:     JSON.parse(localStorage.getItem(LS_SLOTS)),
   };
 }
 const saveEq    = e => localStorage.setItem(LS_EQ,    JSON.stringify(e));
 const saveLog   = l => localStorage.setItem(LS_LOG,   JSON.stringify(l));
+const saveSlots = s => localStorage.setItem(LS_SLOTS, JSON.stringify(s));
 const savePlant = p => localStorage.setItem(LS_PLANT, JSON.stringify(p));
-function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS].forEach(k => localStorage.removeItem(k)); route(); }
+function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS].forEach(k => localStorage.removeItem(k)); route(); }
 
 // ---------- Helpers ----------
 const today = () => new Date().toISOString().slice(0,10);
@@ -214,7 +219,7 @@ function tagLink(e) {
 
 // ---------- State / routing / filters ----------
 let state = load();
-const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending' };
+const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '' };
 const EQ_TYPES = ['Pump','Blower','Filter','Centrifuge','UV System'];
 
 const routes = [
@@ -571,9 +576,19 @@ function renderPlants() {
     </tr>`;
   }).join('');
   document.getElementById('view').innerHTML = `
-    <h1 class="text-2xl font-semibold mb-1">Plants</h1>
-    <p class="text-slate-500 mb-6">Per-plant notification settings for maintenance events.</p>
-    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div class="flex items-center mb-1 flex-wrap gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold">Plants</h1>
+        <p class="text-slate-500 text-sm mt-1">Per-plant notification settings and admin actions.</p>
+      </div>
+      <div class="ml-auto">
+        <button onclick="openImportPPMModal()" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Import PPM
+        </button>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
       <div class="overflow-x-auto">
         <table class="list-table">
           <thead><tr><th>Plant</th><th>Equipment</th><th class="col-center">Action</th></tr></thead>
@@ -776,7 +791,7 @@ function getUpcomingPPM(days = 30) {
   const now = new Date(todayStr + 'T00:00:00');
   const horizon = new Date(now); horizon.setDate(horizon.getDate() + days);
   const out = [];
-  for (const [eqId, slot] of Object.entries(IREO_SLOTS)) {
+  for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e) continue;
     if (slot === 'weekly') {
       let d = new Date('2026-01-01T00:00:00');
@@ -802,7 +817,7 @@ function getOverduePPM() {
   const todayStr = today();
   const now = new Date(todayStr + 'T00:00:00');
   const out = [];
-  for (const [eqId, slot] of Object.entries(IREO_SLOTS)) {
+  for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e) continue;
     if (slot === 'weekly') continue; // weekly noise — skip from "overdue"
     const day = SLOT_DAY[slot];
@@ -959,7 +974,59 @@ function renderUpcomingTab(upcoming) {
   </div>`;
 }
 
+function computeVisitDateRange() {
+  if (ui.visitFilter === 'all') return null;
+  if (ui.visitFilter === 'custom') {
+    return { from: ui.visitFrom || '', to: ui.visitTo || today() };
+  }
+  const todayStr = today();
+  const todayD = new Date(todayStr + 'T23:59:59');
+  let start;
+  if (ui.visitFilter === 'today') {
+    return { from: todayStr, to: todayStr };
+  } else if (ui.visitFilter === '24h') {
+    start = new Date(todayD.getTime() - 24*3600*1000);
+  } else if (ui.visitFilter === '7d') {
+    start = new Date(todayD.getTime() - 7*86400000);
+  } else if (ui.visitFilter === '30d') {
+    start = new Date(todayD.getTime() - 30*86400000);
+  }
+  return { from: start.toISOString().slice(0,10), to: todayStr };
+}
+
 function renderVisitsTab(visits) {
+  // Date filter UI
+  const presets = [
+    ['all',    'All'],
+    ['today',  'Today'],
+    ['24h',    'Last 24 hours'],
+    ['7d',     'Last 7 days'],
+    ['30d',    'Last 30 days'],
+    ['custom', 'Custom'],
+  ];
+  const pills = presets.map(([key, label]) => {
+    const active = ui.visitFilter === key;
+    return `<button onclick="ui.visitFilter='${key}'; renderEngineer()" class="text-xs px-3 py-1.5 rounded-full border ${active?'border-brand bg-brand text-white':'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}">${label}</button>`;
+  }).join('');
+  const customPanel = ui.visitFilter === 'custom' ? `
+    <div class="flex items-center gap-2 mt-3 text-xs">
+      <span class="text-slate-600">From</span>
+      <input type="date" value="${ui.visitFrom}" onchange="ui.visitFrom=this.value; renderEngineer()" class="border border-slate-300 rounded-md px-2 py-1" />
+      <span class="text-slate-600">To</span>
+      <input type="date" value="${ui.visitTo}" onchange="ui.visitTo=this.value; renderEngineer()" class="border border-slate-300 rounded-md px-2 py-1" />
+    </div>` : '';
+
+  // Date-range filtering of visits
+  const range = computeVisitDateRange();
+  let dateFiltered = visits;
+  if (range) {
+    dateFiltered = visits.filter(v =>
+      (!range.from || v.date >= range.from) && (!range.to || v.date <= range.to)
+    );
+  }
+  return renderVisitsTabInner(dateFiltered, pills, customPanel);
+}
+function renderVisitsTabInner(visits, pills, customPanel) {
   // Filter visits by plant/type using contained equipment
   const filtered = visits.map(v => {
     const eq = v.equipment.filter(e =>
@@ -970,7 +1037,13 @@ function renderVisitsTab(visits) {
     return { ...v, equipment: eq, logs };
   }).filter(v => v.equipment.length);
 
-  if (!filtered.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">No completed visits found for this filter.</div>`;
+  const filterHeader = `<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+    <div class="text-xs font-medium text-slate-600 mb-2">Filter by visit date</div>
+    <div class="flex gap-2 flex-wrap">${pills}</div>
+    ${customPanel}
+  </div>`;
+
+  if (!filtered.length) return filterHeader + `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">No completed visits found for this filter.</div>`;
 
   const rows = filtered.map(v => {
     const plantNames = v.plants.map(p => p.name).join(', ');
@@ -982,7 +1055,7 @@ function renderVisitsTab(visits) {
       <td class="col-center"><button onclick="generateVisitReport('${v.date}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Generate Report</button></td>
     </tr>`;
   }).join('');
-  return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+  return filterHeader + `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
     <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Visit reports — grouped by completion date</div>
     <div class="overflow-x-auto"><table class="list-table">
       <thead><tr><th>Visit date</th><th>Coverage</th><th>Plant(s)</th><th>Equipment serviced</th><th class="col-center">Action</th></tr></thead>
@@ -1475,6 +1548,215 @@ function submitEquipmentForm(ev, mode, eqId) {
   }
   saveEq(state.equipment);
   closeModal(); route();
+}
+
+// ---------- PPM Import ----------
+const FREQ_LEGEND = [
+  ['D',  'Daily',        'every working day (logged weekly)'],
+  ['W',  'Weekly',       'every week — sometimes used as "assigned week of the month"'],
+  ['M',  'Monthly',      'once per month, on the assigned week (W1 / W2 / W3 / W4)'],
+  ['Q',  'Quarterly',    'every 3 months (Jan / Apr / Jul / Oct)'],
+  ['HY', 'Half-Yearly',  'every 6 months (Jan and Jul)'],
+  ['Y',  'Yearly',       'once a year'],
+];
+
+function openImportPPMModal() {
+  window._importedRows = null;
+  const plantOpts = state.plants.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  const legend = FREQ_LEGEND.map(([code, name, desc]) =>
+    `<div class="flex items-baseline gap-2 text-xs"><span class="inline-block min-w-[28px] text-center font-semibold text-brand bg-brand-50 border border-brand-100 rounded px-1.5 py-0.5">${code}</span><span class="font-medium text-slate-700">${name}</span><span class="text-slate-500">— ${desc}</span></div>`
+  ).join('');
+
+  document.getElementById('modalTitle').textContent = 'Import PPM schedule';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitImportPPM(event)" class="space-y-4 max-h-[78vh] overflow-y-auto pr-1 text-sm">
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Plant <span class="text-red-500">*</span></label>
+        <select name="plantId" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+          <option value="">Select a plant…</option>${plantOpts}
+        </select>
+        <div class="text-xs text-slate-500 mt-1">All equipment from this file will be added under the selected plant.</div>
+      </div>
+
+      <details class="bg-slate-50 border border-slate-200 rounded-lg p-3" open>
+        <summary class="text-xs font-semibold text-slate-700 cursor-pointer">Frequency code reference</summary>
+        <div class="mt-2 space-y-1.5">${legend}</div>
+        <div class="text-[11px] text-slate-500 mt-2">The importer reads the staggered week markers (W1–W4) to schedule each piece of equipment. Daily items become weekly logs; weekly items occur every 7 days.</div>
+      </details>
+
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">PPM schedule file <span class="text-red-500">*</span></label>
+        <input type="file" name="file" accept=".xlsx,.xls" required class="block w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-brand file:bg-brand-50 file:text-brand file:font-medium file:cursor-pointer" oninput="onPPMFileChosen(this)" />
+        <div class="text-xs text-slate-500 mt-1">Expected layout: rows of equipment with columns <code>S.No · Name · Make · Capacity · Qty</code> followed by 52 weekly slot cells marked with frequency codes.</div>
+      </div>
+
+      <div id="ppmPreview" class="hidden"></div>
+
+      <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button id="ppmImportBtn" disabled class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white disabled:opacity-40 disabled:cursor-not-allowed">Import</button>
+      </div>
+    </form>
+  `;
+  document.getElementById('modal').classList.remove('hidden');
+}
+
+function onPPMFileChosen(input) {
+  const file = input.files[0]; if (!file) return;
+  const preview = document.getElementById('ppmPreview');
+  const btn = document.getElementById('ppmImportBtn');
+  preview.classList.remove('hidden');
+  preview.innerHTML = `<div class="text-xs text-slate-500">Parsing…</div>`;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const rows = parsePPMWorkbook(ev.target.result);
+      window._importedRows = rows;
+      btn.disabled = rows.length === 0;
+      const byType = rows.reduce((m, r) => { m[r.type] = (m[r.type]||0)+1; return m; }, {});
+      const summary = Object.entries(byType).map(([t,c]) => `<span class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-brand-50 text-brand border border-brand-100 font-medium">${t}<span class="text-brand-600">${c}</span></span>`).join('');
+      const sample = rows.slice(0, 8).map(r => `<tr>
+        <td class="py-1 px-2 font-medium">${r.tag}</td>
+        <td class="py-1 px-2 text-slate-600">${r.type}</td>
+        <td class="py-1 px-2 text-slate-600">${r.make||'—'}</td>
+        <td class="py-1 px-2 text-slate-600">${r.model||'—'}</td>
+        <td class="py-1 px-2"><span class="text-xs px-2 py-0.5 rounded-full border ${r.slot?'border-brand-100 bg-brand-50 text-brand':'border-slate-200 bg-slate-50 text-slate-500'} font-medium">${r.slot||'—'}</span></td>
+      </tr>`).join('');
+      preview.innerHTML = `
+        <div class="border border-slate-200 rounded-lg overflow-hidden bg-white">
+          <div class="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center text-xs">
+            <span class="font-semibold text-slate-700">Detected ${rows.length} equipment</span>
+            <span class="ml-auto flex flex-wrap gap-1.5">${summary}</span>
+          </div>
+          <table class="w-full text-xs">
+            <thead class="text-slate-500 text-left bg-white">
+              <tr><th class="py-2 px-2 font-medium">Name</th><th class="py-2 px-2 font-medium">Type</th><th class="py-2 px-2 font-medium">Make</th><th class="py-2 px-2 font-medium">Model</th><th class="py-2 px-2 font-medium">Slot</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">${sample}</tbody>
+          </table>
+          ${rows.length > 8 ? `<div class="px-4 py-2 text-xs text-slate-500 border-t border-slate-100">…and ${rows.length - 8} more</div>` : ''}
+        </div>`;
+    } catch (e) {
+      preview.innerHTML = `<div class="p-3 rounded-md bg-red-50 border border-red-200 text-xs text-red-700">Could not parse file: ${e.message}</div>`;
+      btn.disabled = true;
+      window._importedRows = null;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parsePPMWorkbook(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  // Locate header row containing "Equipment Name"
+  let headerIdx = -1, nameCol = -1;
+  for (let i = 0; i < rows.length; i++) {
+    for (let c = 0; c < rows[i].length; c++) {
+      if (String(rows[i][c]).toLowerCase().trim() === 'equipment name') {
+        headerIdx = i; nameCol = c; break;
+      }
+    }
+    if (headerIdx !== -1) break;
+  }
+  if (headerIdx === -1) throw new Error('No header row containing "Equipment Name" found.');
+
+  const snCol  = Math.max(0, nameCol - 1);
+  const makeCol = nameCol + 1;
+  const capCol  = nameCol + 2;
+  const slotsStartCol = nameCol + 4; // Name, Make, Capacity, Qty → then slots
+
+  const TYPE_KEYWORDS = [
+    ['PUMP', 'Pump'], ['BLOWER', 'Blower'],
+    ['FILTER', 'Filter'], ['TREATMENT', 'Filter'],
+    ['CENTRIFUGE', 'Centrifuge'], ['UV', 'UV System'],
+  ];
+
+  let currentType = null;
+  const out = [];
+
+  for (let i = headerIdx + 2; i < rows.length; i++) { // skip header + W1/W2 sub-row
+    const row = rows[i];
+    const sn   = row[snCol];
+    const name = row[nameCol];
+
+    if (!name) continue;
+    const nameStr = String(name).trim();
+    const snStr   = String(sn).trim();
+    const snIsNum = snStr !== '' && /^\d+(?:\.\d+)?$/.test(snStr);
+
+    // Section header — text but no S.No
+    if (!snIsNum) {
+      const upper = nameStr.toUpperCase();
+      const m = TYPE_KEYWORDS.find(([kw]) => upper.includes(kw));
+      if (m) currentType = m[1];
+      continue;
+    }
+
+    if (!currentType) currentType = 'Pump'; // default if no section header seen
+
+    // Scan slot markers — only treat known frequency codes as markers
+    let markerCount = 0, firstMarkerCol = -1;
+    for (let c = slotsStartCol; c < slotsStartCol + 52 && c < row.length; c++) {
+      const v = String(row[c] || '').trim().toUpperCase();
+      if (v === 'M' || v === 'W' || v === 'D' || v === 'Q' || v === 'HY' || v === 'Y') {
+        markerCount++;
+        if (firstMarkerCol === -1) firstMarkerCol = c;
+      }
+    }
+
+    let slot = null;
+    if (markerCount >= 40) slot = 'weekly';
+    else if (firstMarkerCol !== -1) {
+      const offset = firstMarkerCol - slotsStartCol;
+      if (offset <= 3) slot = ['W1','W2','W3','W4'][offset];
+      else slot = 'W' + ((offset % 4) + 1); // fallback
+    }
+
+    const make  = String(row[makeCol] || '').trim().replace(/^[-—]+$/, '');
+    const model = String(row[capCol]  || '').trim().replace(/^[-—]+$/, '');
+
+    out.push({ tag: nameStr, type: currentType, make, model, slot });
+  }
+
+  return out;
+}
+
+function submitImportPPM(ev) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const plantId = f.get('plantId');
+  const rows = window._importedRows;
+  if (!plantId || !rows || !rows.length) return;
+
+  const base = Date.now();
+  const newEquipment = rows.map((r, idx) => ({
+    id: `EQ-IMP-${base}-${idx}`,
+    tag: r.tag, type: r.type, make: r.make, model: r.model,
+    plantId, location: '', installed: today(), status: 'Operational',
+  }));
+
+  const newSlots = {};
+  newEquipment.forEach((e, idx) => {
+    if (rows[idx].slot) newSlots[e.id] = rows[idx].slot;
+  });
+
+  // Generate past PPM logs for newly imported equipment
+  const newLogs = generatePastPPMLogs(newSlots, newEquipment, `IMP-${base}`);
+
+  state.equipment = state.equipment.concat(newEquipment);
+  state.slots = Object.assign({}, state.slots || {}, newSlots);
+  state.logs = state.logs.concat(newLogs);
+  saveEq(state.equipment);
+  saveSlots(state.slots);
+  saveLog(state.logs);
+
+  closeModal();
+  alert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
+  location.hash = '#/equipment';
+  ui.plantFilter = plantId;
+  route();
 }
 
 // ---------- Boot ----------
