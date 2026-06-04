@@ -466,36 +466,34 @@ function renderEquipmentDetail(id) {
 // ---------- Maintenance Log ----------
 function renderLog() {
   document.getElementById('view').innerHTML = `
-    <div class="flex items-center mb-4 flex-wrap gap-3">
-      <div>
-        <h1 class="text-2xl font-semibold">Maintenance Log</h1>
-        <p class="text-slate-500 text-sm">Full history across all equipment.</p>
+    <div class="mb-3">
+      <h1 class="text-2xl font-semibold">Maintenance Log</h1>
+      <p class="text-slate-500 text-sm">Full history across all equipment.</p>
+    </div>
+    <div class="flex items-center mb-4 gap-2 flex-nowrap overflow-x-auto pb-1">
+      ${plantFilterControl()}
+      <select id="fType" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white flex-shrink-0" onchange="renderLogRows()">
+        <option value="">All types</option>${EQ_TYPES.map(t=>`<option>${t}</option>`).join('')}
+      </select>
+      <select id="fReason" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white flex-shrink-0" onchange="renderLogRows()">
+        <option value="">All reasons</option><option>Scheduled</option><option>Breakdown</option>
+      </select>
+      <select id="fStatus" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white flex-shrink-0" onchange="renderLogRows()">
+        <option value="">All statuses</option><option value="open">Ongoing</option><option value="closed">Completed</option>
+      </select>
+      <select id="fTech" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white flex-shrink-0" onchange="renderLogRows()">
+        <option value="">All technicians</option>${[...new Set(state.logs.map(l => l.technician).filter(Boolean))].sort().map(t=>`<option>${t}</option>`).join('')}
+      </select>
+      <input id="fSearch" placeholder="Search…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-40 flex-shrink-0" oninput="renderLogRows()" />
+      <div class="inline-flex items-center gap-1 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-600 flex-shrink-0">
+        <span>From</span>
+        <input type="date" id="fFrom" class="text-xs outline-none" onchange="renderLogRows()" />
+        <span>To</span>
+        <input type="date" id="fTo"   class="text-xs outline-none" onchange="renderLogRows()" />
+        <button type="button" onclick="document.getElementById('fFrom').value=''; document.getElementById('fTo').value=''; renderLogRows()" class="text-slate-400 hover:text-slate-700 ml-1" title="Clear">&times;</button>
       </div>
-      <div class="ml-auto flex gap-2 flex-wrap">
-        ${plantFilterControl()}
-        <select id="fType" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white" onchange="renderLogRows()">
-          <option value="">All types</option>${EQ_TYPES.map(t=>`<option>${t}</option>`).join('')}
-        </select>
-        <select id="fReason" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white" onchange="renderLogRows()">
-          <option value="">All reasons</option><option>Scheduled</option><option>Breakdown</option>
-        </select>
-        <select id="fStatus" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white" onchange="renderLogRows()">
-          <option value="">All statuses</option><option value="open">Ongoing</option><option value="closed">Completed</option>
-        </select>
-        <select id="fTech" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white" onchange="renderLogRows()">
-          <option value="">All technicians</option>${[...new Set(state.logs.map(l => l.technician).filter(Boolean))].sort().map(t=>`<option>${t}</option>`).join('')}
-        </select>
-        <input id="fSearch" placeholder="Search…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-44" oninput="renderLogRows()" />
-        <div class="inline-flex items-center gap-1 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-600">
-          <span>From</span>
-          <input type="date" id="fFrom" class="text-xs outline-none" onchange="renderLogRows()" />
-          <span>To</span>
-          <input type="date" id="fTo"   class="text-xs outline-none" onchange="renderLogRows()" />
-          <button type="button" onclick="document.getElementById('fFrom').value=''; document.getElementById('fTo').value=''; renderLogRows()" class="text-slate-400 hover:text-slate-700 ml-1" title="Clear">&times;</button>
-        </div>
-        <button onclick="openServiceReportModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Service Report</button>
-        ${exportDropdown('', 'log-export')}
-      </div>
+      <button onclick="openServiceReportModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium flex-shrink-0">Service Report</button>
+      ${exportDropdown('', 'log-export')}
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
