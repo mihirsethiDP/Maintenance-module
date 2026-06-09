@@ -1,0 +1,17 @@
+# Local notes / scratch
+CONTEXT.md
+
+# Claude Code local settings (per-machine, not shared)
+.claude/settings.local.json
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Temp files
+*.swp
+*~
