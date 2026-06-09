@@ -1088,7 +1088,8 @@ function openVisitReportModal(date) {
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Generate PDF</button>
+        <button type="submit" name="action" value="download" class="px-3 py-1.5 rounded-md border border-brand bg-white text-brand hover:bg-brand-50 text-sm font-medium">Download</button>
+        <button type="submit" name="action" value="preview"  class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Preview</button>
       </div>
     </form>
   `;
@@ -1097,12 +1098,18 @@ function openVisitReportModal(date) {
 function submitVisitReport(ev, date) {
   ev.preventDefault();
   const f = new FormData(ev.target);
+  const action = (ev.submitter && ev.submitter.value) || 'preview';
+  const preparedBy = f.get('preparedBy') || '';
+  const approvedBy = f.get('approvedBy') || '';
   closeModal();
-  generateVisitReport(date, f.get('preparedBy') || '', f.get('approvedBy') || '');
+  const result = buildVisitReportDoc(date, preparedBy, approvedBy);
+  if (!result) return;
+  if (action === 'download') result.doc.save(result.filename);
+  else openPdfPreview(result.doc, result.filename, 'Visit Report');
 }
-function generateVisitReport(date, preparedByIn, approvedByIn) {
+function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
   const logs = state.logs.filter(l => l.endDate === date);
-  if (!logs.length) { alert('No completed tasks on this date.'); return; }
+  if (!logs.length) { alert('No completed tasks on this date.'); return null; }
   const equipment = [...new Set(logs.map(l => l.equipmentId))].map(eqById).filter(Boolean);
   const plants = [...new Set(equipment.map(e => e.plantId))].map(plantById).filter(Boolean);
   const technicians = [...new Set(logs.map(l => l.technician))];
@@ -1175,7 +1182,7 @@ function generateVisitReport(date, preparedByIn, approvedByIn) {
   doc.setFontSize(7); doc.setTextColor(140,140,140);
   doc.text('This visit report is system-generated from completed maintenance log entries.', 14, doc.internal.pageSize.getHeight() - 8);
 
-  doc.save(`visit-report-${date}.pdf`);
+  return { doc, filename: `visit-report-${date}.pdf` };
 }
 
 // ---------- Service Report ----------
@@ -1229,21 +1236,15 @@ function openServiceReportModal() {
       </div>
       <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Generate PDF</button>
+        <button type="submit" name="action" value="download" class="px-3 py-1.5 rounded-md border border-brand bg-white text-brand hover:bg-brand-50 text-sm font-medium">Download</button>
+        <button type="submit" name="action" value="preview"  class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Preview</button>
       </div>
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
 }
-function generateServiceReport(ev) {
-  ev.preventDefault();
-  const f = new FormData(ev.target);
-  const scope = f.get('scope') || 'filtered';
-  const from = f.get('from') || '';
-  const to   = f.get('to')   || today();
-  const preparedBy = f.get('preparedBy') || '';
-  const approvedBy = f.get('approvedBy') || '';
-
+function buildServiceReportDoc(args) {
+  const { scope, from, to, preparedBy, approvedBy } = args;
   let ids;
   if (scope === 'filtered') {
     const filtered = getFilteredLogs();
@@ -1251,13 +1252,13 @@ function generateServiceReport(ev) {
   } else {
     ids = state.equipment.map(e => e.id);
   }
-  if (!ids.length) { alert('No equipment matches the chosen scope.'); return; }
+  if (!ids.length) return null;
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait' });
   const W = doc.internal.pageSize.getWidth();
 
-  // Header band
+  // Top header band
   doc.setFillColor(25,52,88);
   doc.rect(0, 0, W, 22, 'F');
   doc.setTextColor(255,255,255);
@@ -1283,33 +1284,39 @@ function generateServiceReport(ev) {
     if (to)   logs = logs.filter(l => l.startDate <= to);
     logs.sort((a,b) => a.startDate.localeCompare(b.startDate));
 
-    if (y > 250) { doc.addPage(); y = 20; }
-    doc.setFillColor(241,244,249);
-    doc.rect(14, y - 4, W - 28, 8, 'F');
+    if (y > 248) { doc.addPage(); y = 20; }
+    // Brand-colored equipment band — unmistakable
+    doc.setFillColor(25,52,88);
+    doc.rect(14, y, W - 28, 11, 'F');
+    doc.setTextColor(255,255,255);
     doc.setFontSize(11); doc.setFont(undefined, 'bold');
-    doc.text(`${idx + 1}. ${eq.tag}`, 16, y + 1);
+    doc.text(`${idx + 1}.  ${eq.tag}`, 18, y + 7.5);
     doc.setFont(undefined, 'normal'); doc.setFontSize(8);
-    doc.text(`${eq.type} · ${eq.make || '—'} ${eq.model || ''} · ${plant ? plant.name : ''}`, W - 16, y + 1, { align: 'right' });
-    y += 8;
+    const meta = `${eq.type}  ·  ${eq.make || '—'} ${eq.model || ''}  ·  ${plant ? plant.name : ''}`;
+    doc.text(meta, W - 18, y + 7.5, { align: 'right' });
+    doc.setTextColor(15,23,42);
+    y += 13;
 
     if (!logs.length) {
       doc.setFontSize(9); doc.setTextColor(120,120,120);
-      doc.text('No maintenance activity in this period.', 16, y + 4);
+      doc.text('No maintenance activity in this period.', 18, y + 4);
       doc.setTextColor(15,23,42);
       y += 10;
     } else {
       doc.autoTable({
         startY: y,
-        head: [['Date', 'Reason', 'Duration', 'Technician', 'Work performed']],
+        head: [['Equipment', 'Date', 'Reason', 'Duration', 'Technician', 'Work performed']],
         body: logs.map(l => [
+          eq.tag,
           l.startDate + (l.endDate && l.endDate !== l.startDate ? ' → '+l.endDate : ''),
           l.reason,
           l.endDate ? `${daysBetween(l.startDate, l.endDate)}d` : 'ongoing',
           l.technician,
           l.completionNotes || l.notes || ''
         ]),
-        styles: { fontSize: 8, cellPadding: 2 },
-        headStyles: { fillColor: [25,52,88], textColor: 255 },
+        styles: { fontSize: 8, cellPadding: 2, valign: 'top' },
+        headStyles: { fillColor: [241,244,249], textColor: [25,52,88], fontStyle: 'bold' },
+        columnStyles: { 0: { fontStyle: 'bold', cellWidth: 35 }, 5: { cellWidth: 55 } },
         margin: { left: 14, right: 14 },
       });
       y = doc.lastAutoTable.finalY + 6;
@@ -1335,8 +1342,62 @@ function generateServiceReport(ev) {
   sigBlock('Prepared by', preparedBy, 14);
   sigBlock('Approved by', approvedBy, 14 + colW);
 
+  return { doc, filename: `service-report-${today()}.pdf` };
+}
+
+function generateServiceReport(ev) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const action = (ev.submitter && ev.submitter.value) || 'preview';
+  const args = {
+    scope: f.get('scope') || 'filtered',
+    from: f.get('from') || '',
+    to: f.get('to') || today(),
+    preparedBy: f.get('preparedBy') || '',
+    approvedBy: f.get('approvedBy') || '',
+  };
+  const result = buildServiceReportDoc(args);
+  if (!result) { alert('No equipment matches the chosen scope.'); return; }
   closeModal();
-  doc.save(`service-report-${today()}.pdf`);
+  if (action === 'download') {
+    result.doc.save(result.filename);
+  } else {
+    openPdfPreview(result.doc, result.filename, 'Service Report');
+  }
+}
+
+// ---------- PDF preview ----------
+function openPdfPreview(doc, filename, title) {
+  closePdfPreview();
+  const blob = doc.output('blob');
+  const url = URL.createObjectURL(blob);
+  window._pdfPreview = { url, filename, doc };
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="pdfPreview" class="fixed inset-0 z-[80] bg-slate-900/70 flex flex-col">
+      <div class="flex items-center px-5 py-3 bg-white border-b border-slate-200 shadow-sm">
+        <div>
+          <div class="font-semibold text-slate-800">${title}</div>
+          <div class="text-xs text-slate-500">Preview · ${filename}</div>
+        </div>
+        <div class="ml-auto flex gap-2">
+          <button onclick="downloadCurrentPdfPreview()" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download PDF
+          </button>
+          <button onclick="closePdfPreview()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm font-medium">Close</button>
+        </div>
+      </div>
+      <iframe src="${url}" class="flex-1 bg-white" style="border:0;"></iframe>
+    </div>
+  `);
+}
+function downloadCurrentPdfPreview() {
+  if (window._pdfPreview) window._pdfPreview.doc.save(window._pdfPreview.filename);
+}
+function closePdfPreview() {
+  const el = document.getElementById('pdfPreview');
+  if (el) el.remove();
+  if (window._pdfPreview) { URL.revokeObjectURL(window._pdfPreview.url); window._pdfPreview = null; }
 }
 
 // ---------- Modals & mutations ----------
@@ -1515,7 +1576,8 @@ function generateSingleServiceReport(eqId, log) {
   doc.setFontSize(7); doc.setTextColor(140,140,140);
   doc.text('This is a system-generated service report. Signatures above attest to the work described.', 14, doc.internal.pageSize.getHeight() - 8);
 
-  doc.save(`service-report-${eq.tag.replace(/[^a-zA-Z0-9]+/g,'-')}-${log.endDate}.pdf`);
+  const filename = `service-report-${eq.tag.replace(/[^a-zA-Z0-9]+/g,'-')}-${log.endDate}.pdf`;
+  openPdfPreview(doc, filename, `Service Report — ${eq.tag}`);
 }
 
 function openEquipmentFormModal(mode, eqId) {
