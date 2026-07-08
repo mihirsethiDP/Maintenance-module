@@ -1374,7 +1374,7 @@ function openPdfPreview(doc, filename, title) {
   window._pdfPreview = { url, filename, doc };
   document.body.insertAdjacentHTML('beforeend', `
     <div id="pdfPreview" class="fixed inset-0 z-[80] bg-slate-900/70 flex flex-col">
-      <div class="flex items-center px-5 py-3 bg-white border-b border-slate-200 shadow-sm">
+      <div class="flex items-center px-3 sm:px-5 py-3 bg-white border-b border-slate-200 shadow-sm flex-wrap gap-2">
         <div>
           <div class="font-semibold text-slate-800">${title}</div>
           <div class="text-xs text-slate-500">Preview · ${filename}</div>

@@ -103,26 +103,46 @@
     .tour-chooser .ch-card-sub { font-size:11px; color:#64748b; margin-top:2px; }
     .tour-chooser select { width:100%; border:1px solid #cbd5e1; border-radius:6px; padding:5px 8px; font-size:12px; margin-bottom:10px; background:#fff; }
     .icon-btn:hover { background:#f1f5f9; color:#193458; }
+
+    /* Nav links must not shrink when the nav scrolls horizontally on mobile */
+    #nav a { flex-shrink:0; }
+    /* Modals never taller than the viewport */
+    #modal > div { max-height:94vh; display:flex; flex-direction:column; }
+    #modalBody { overflow-y:auto; }
+
+    /* ---------- Mobile ---------- */
+    @media (max-width: 640px) {
+      .list-table { min-width:640px; }               /* tables scroll sideways instead of crushing */
+      .list-table thead th { padding:10px 12px; }
+      .list-table tbody td { padding:12px 12px; }
+      #modal { padding:8px; }
+      #modalBody .grid-cols-2 { grid-template-columns:1fr; }  /* stack form fields */
+      .tour-fab { right:16px; bottom:16px; width:46px; height:46px; }
+      .tour-fab-label { display:none; }
+      .tour-card { max-width:calc(100vw - 24px); left:12px !important; right:12px; }
+      .tour-chooser { left:12px; right:12px; bottom:74px; min-width:0; }
+      .picker-dropdown { max-height:150px; }
+    }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen">
   <header class="bg-white border-b border-slate-200 sticky top-0 z-10">
-    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center gap-6">
-      <div class="flex items-center gap-2">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
+      <div class="flex items-center gap-2 order-1">
         <div class="w-8 h-8 rounded-lg bg-brand text-white grid place-items-center font-bold">M</div>
         <div>
           <div class="font-semibold leading-tight">Maintenance Mode</div>
           <div class="text-[11px] text-slate-500 leading-tight">Pumps &amp; Blowers</div>
         </div>
       </div>
-      <nav id="nav" class="flex gap-1 ml-4 text-sm"></nav>
-      <div class="ml-auto flex items-center gap-2">
+      <nav id="nav" class="order-3 sm:order-2 w-full sm:w-auto sm:ml-4 flex gap-1 text-sm overflow-x-auto whitespace-nowrap"></nav>
+      <div class="order-2 sm:order-3 ml-auto flex items-center gap-2">
         <button id="resetBtn" class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1">Reset demo data</button>
       </div>
     </div>
   </header>
 
-  <main id="view" class="max-w-7xl mx-auto px-6 py-6"></main>
+  <main id="view" class="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6"></main>
 
   <!-- Modal -->
   <div id="modal" class="hidden fixed inset-0 bg-black/40 z-20 grid place-items-center p-4">
@@ -135,6 +155,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=22"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>
