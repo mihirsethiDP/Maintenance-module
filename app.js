@@ -1,11 +1,13 @@
 // ---------- Seed data ----------
-const SEED_PLANTS = [
-  { id: 'PL-01', name: 'Adani Mumbai',       location: 'Mumbai, MH',     notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','sms'], operational:[], overdue:['email'] }) },
-  { id: 'PL-02', name: 'Hindalco Mahaan',    location: 'Singrauli, MP',  notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp'], operational:[], overdue:['email','sms'] }) },
-  { id: 'PL-03', name: 'Tata Jamshedpur',    location: 'Jamshedpur, JH', notifications: defaultNotifConfig({ maintenance:[], breakdown:['email'], operational:[], overdue:['email'] }) },
-  { id: 'PL-04', name: 'Reliance Jamnagar',  location: 'Jamnagar, GJ',   notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','sms'], operational:['email'], overdue:['email','sms'] }) },
-  { id: 'PL-05', name: 'Ireo Grandarch STP', location: 'Gurugram, HR',   notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }) },
-];
+// Plants + equipment + PPM slots come from seed-data.js (generated from All_Sites_PPM_Schedule.xlsx).
+const SEED_PLANTS = (window.SEED_PLANTS_DATA || []).map((p, i) => ({
+  id: p.id, name: p.name, location: p.location || '',
+  notifications: defaultNotifConfig(
+    i % 3 === 0 ? { maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }
+    : i % 3 === 1 ? { maintenance:['email'], breakdown:['email','sms'], operational:[], overdue:['email'] }
+    : { maintenance:[], breakdown:['email','whatsapp'], operational:[], overdue:['email','sms'] }
+  ),
+}));
 function defaultNotifConfig(prefs = {}) {
   const make = (ch, recips) => ({ enabled: (ch||[]).length > 0, channels: ch || [], recipients: recips || (ch && ch.length ? ['U-4','U-5'] : []) });
   return {
@@ -26,105 +28,49 @@ const SEED_USERS = [
   { id: 'U-6', name: 'Operations Desk',   role: 'Control Room',           email: 'ops@plant.com',     phone: '+91 90000 66666' },
 ];
 
-const SEED_EQUIPMENT = [
-  { id: 'EQ-001', tag: 'P-101A', type: 'Pump',   make: 'Grundfos',     model: 'NB 65-200',     plantId: 'PL-01', location: 'Cooling Tower Loop', installed: '2019-03-12', status: 'Operational' },
-  { id: 'EQ-002', tag: 'P-101B', type: 'Pump',   make: 'Grundfos',     model: 'NB 65-200',     plantId: 'PL-01', location: 'Cooling Tower Loop', installed: '2019-03-12', status: 'In Maintenance' },
-  { id: 'EQ-003', tag: 'P-204',  type: 'Pump',   make: 'KSB',          model: 'Etanorm 80-200',plantId: 'PL-02', location: 'Boiler Feed',        installed: '2020-07-01', status: 'Operational' },
-  { id: 'EQ-004', tag: 'P-310',  type: 'Pump',   make: 'Sulzer',       model: 'AHLSTAR APP',   plantId: 'PL-03', location: 'Process Line 3',     installed: '2018-11-22', status: 'Broken Down' },
-  { id: 'EQ-005', tag: 'P-410',  type: 'Pump',   make: 'Flowserve',    model: 'Durco Mark 3',  plantId: 'PL-04', location: 'Effluent Treatment', installed: '2021-01-09', status: 'Operational' },
-  { id: 'EQ-006', tag: 'P-511',  type: 'Pump',   make: 'Wilo',         model: 'IL 80/170-7.5', plantId: 'PL-01', location: 'HVAC Chiller',       installed: '2022-05-30', status: 'Operational' },
-  { id: 'EQ-007', tag: 'P-602',  type: 'Pump',   make: 'Grundfos',     model: 'CR 32-4',       plantId: 'PL-02', location: 'RO Plant',           installed: '2020-02-14', status: 'In Maintenance' },
-  { id: 'EQ-008', tag: 'B-201',  type: 'Blower', make: 'Atlas Copco',  model: 'ZS 55+',        plantId: 'PL-04', location: 'Aeration Tank 1',    installed: '2019-09-18', status: 'Operational' },
-  { id: 'EQ-009', tag: 'B-202',  type: 'Blower', make: 'Atlas Copco',  model: 'ZS 55+',        plantId: 'PL-04', location: 'Aeration Tank 2',    installed: '2019-09-18', status: 'Broken Down' },
-  { id: 'EQ-010', tag: 'B-305',  type: 'Blower', make: 'Kaeser',       model: 'EBS 410L',      plantId: 'PL-03', location: 'Pneumatic Conveyor', installed: '2021-06-04', status: 'Operational' },
-  { id: 'EQ-011', tag: 'B-410',  type: 'Blower', make: 'Howden',       model: 'Roots URAI-68', plantId: 'PL-02', location: 'Dust Collection',    installed: '2018-04-20', status: 'In Maintenance' },
-  { id: 'EQ-012', tag: 'B-501',  type: 'Blower', make: 'Aerzen',       model: 'GM 25S',        plantId: 'PL-01', location: 'Bag Filter House',   installed: '2022-10-11', status: 'Operational' },
-  { id: 'EQ-013', tag: 'P-705',  type: 'Pump',   make: 'KSB',          model: 'Megachem 65',   plantId: 'PL-03', location: 'Chemical Dosing',    installed: '2020-12-05', status: 'Operational' },
-  { id: 'EQ-014', tag: 'B-602',  type: 'Blower', make: 'Kaeser',       model: 'CBS 121',       plantId: 'PL-01', location: 'Instrument Air',     installed: '2021-03-28', status: 'Operational' },
-
-  // ---- Ireo Grandarch STP (imported from PPM list) ----
-  // Pumps (32)
-  { id: 'EQ-101', tag: 'Raw Submersible Pump-1',              type: 'Pump',      make: 'KSB',           model: '4.2 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-102', tag: 'Raw Submersible Pump-2',              type: 'Pump',      make: 'KSB',           model: '4.2 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-103', tag: 'Raw Sewage Monobloc Pump-1 (Small)',  type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-104', tag: 'Raw Sewage Monobloc Pump-2 (Small)',  type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-105', tag: 'Raw Sewage Monobloc Pump-3 (Small)',  type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-106', tag: 'Raw Sewage Monobloc Pump-4 (Big)',    type: 'Pump',      make: 'Kirloskar',     model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-107', tag: 'Raw Sewage Monobloc Pump-5 (Big)',    type: 'Pump',      make: 'Kirloskar',     model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-108', tag: 'Equalization Bypass Pump',            type: 'Pump',      make: 'Kirloskar',     model: '10 HP',   plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-109', tag: 'Sludge Recirculation Pump-1 (Str-1)', type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-110', tag: 'Sludge Recirculation Pump-2 (Str-2)', type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-111', tag: 'Filter Feed Pump-1',                  type: 'Pump',      make: 'Grundfos-X',    model: '10 HP',   plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-112', tag: 'Filter Feed Pump-2',                  type: 'Pump',      make: 'Grundfos-X',    model: '10 HP',   plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-113', tag: 'CCT Bypass Pump-1',                   type: 'Pump',      make: 'Kirloskar',     model: '5 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-114', tag: 'CCT Bypass Pump-2',                   type: 'Pump',      make: 'Kirloskar',     model: '5 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-115', tag: 'High Rise Pump-1',                    type: 'Pump',      make: 'Grundfos-X',    model: '18.5 kW', plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-116', tag: 'High Rise Pump-2',                    type: 'Pump',      make: 'Grundfos-X',    model: '18.5 kW', plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-117', tag: 'High Rise Pump-3',                    type: 'Pump',      make: 'Grundfos-X',    model: '18.5 kW', plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-118', tag: 'Low Rise Pump-1',                     type: 'Pump',      make: 'Grundfos-X',    model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-119', tag: 'Low Rise Pump-2',                     type: 'Pump',      make: 'Grundfos-X',    model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-120', tag: 'Low Rise Pump-3',                     type: 'Pump',      make: 'Grundfos-X',    model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-121', tag: 'Softener Feed Pump-1',                type: 'Pump',      make: 'Grundfos-X',    model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-122', tag: 'Softener Feed Pump-2',                type: 'Pump',      make: 'Grundfos-X',    model: '3 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-123', tag: 'Softener Transfer Pump-1',            type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-124', tag: 'Softener Transfer Pump-2',            type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-125', tag: 'TWT Garden Pump-1',                   type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-126', tag: 'TWT Garden Pump-2',                   type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-127', tag: 'TWT Garden Pump-3',                   type: 'Pump',      make: 'Crompton',      model: '5.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-128', tag: 'Centrifuge Feed Pump-1',              type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-129', tag: 'Centrifuge Feed Pump-2',              type: 'Pump',      make: 'Kirloskar',     model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-130', tag: 'Sump Pit Pump',                       type: 'Pump',      make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-131', tag: 'Chlorine Dosing Pump',                type: 'Pump',      make: 'Milton Roy',    model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-132', tag: 'Drain Pit Pump',                      type: 'Pump',      make: '',              model: '1 HP',    plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  // Blowers (6)
-  { id: 'EQ-133', tag: 'Air Blower-1',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-134', tag: 'Air Blower-2',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-135', tag: 'Air Blower-3',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-136', tag: 'Air Blower-4',                        type: 'Blower',    make: 'Beta Machinery',model: '7.5 kW',  plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-137', tag: 'Sludge Recirc. Air Lifting-1 (Str-1)',type: 'Blower',    make: 'Via Blower',    model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-138', tag: 'Sludge Recirc. Air Lifting-2 (Str-2)',type: 'Blower',    make: 'Via Blower',    model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  // Filters & Treatment Units (5)
-  { id: 'EQ-139', tag: 'MGF (Multi-Grade Filter)',            type: 'Filter',    make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-140', tag: 'ACF-1 (Activated Carbon Filter)',     type: 'Filter',    make: 'Floysis',       model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-141', tag: 'ACF-2 (Activated Carbon Filter)',     type: 'Filter',    make: 'Floysis',       model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-142', tag: 'Centrifuge',                          type: 'Centrifuge',make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-  { id: 'EQ-143', tag: 'UV System',                           type: 'UV System', make: '',              model: '',        plantId: 'PL-05', location: '', installed: '2025-04-01', status: 'Operational' },
-];
-
-const SEED_LOGS = [
-  { id: 'L-001', equipmentId: 'EQ-001', reason: 'Scheduled', startDate: '2026-02-10', etr: '2026-02-11', endDate: '2026-02-11', technician: 'A. Mehta',  notes: 'Mechanical seal replacement, alignment check.', completionNotes: 'Seal replaced; alignment verified within 0.05 mm.' },
-  { id: 'L-002', equipmentId: 'EQ-003', reason: 'Breakdown', startDate: '2026-01-22', etr: '2026-01-25', endDate: '2026-01-24', technician: 'R. Sharma', notes: 'Bearing failure on drive end.',                  completionNotes: 'Replaced 6309 bearings. Vibration normal post-restart.' },
-  { id: 'L-003', equipmentId: 'EQ-008', reason: 'Scheduled', startDate: '2026-03-05', etr: '2026-03-05', endDate: '2026-03-05', technician: 'S. Iyer',   notes: 'Oil change, intake filter replacement.',         completionNotes: 'Oil topped up; new filter installed.' },
-  { id: 'L-004', equipmentId: 'EQ-005', reason: 'Breakdown', startDate: '2026-04-02', etr: '2026-04-04', endDate: '2026-04-03', technician: 'A. Mehta',  notes: 'Impeller erosion.',                              completionNotes: 'Hard-faced impeller installed; pressure stable.' },
-  { id: 'L-005', equipmentId: 'EQ-010', reason: 'Scheduled', startDate: '2026-04-15', etr: '2026-04-16', endDate: '2026-04-16', technician: 'R. Sharma', notes: 'Belt tensioning and inspection.',                completionNotes: 'Belts tensioned; no cracks observed.' },
-  // open entries
-  { id: 'L-006', equipmentId: 'EQ-002', reason: 'Scheduled', startDate: '2026-05-10', etr: '2026-05-14', endDate: null, technician: 'A. Mehta',  notes: 'Annual overhaul — wear ring and seal replacement.', completionNotes: '' },
-  { id: 'L-007', equipmentId: 'EQ-004', reason: 'Breakdown', startDate: '2026-05-09', etr: '2026-05-16', endDate: null, technician: 'R. Sharma', notes: 'Motor winding burnt. Awaiting rewinding from vendor.', completionNotes: '' },
-  { id: 'L-008', equipmentId: 'EQ-007', reason: 'Scheduled', startDate: '2026-05-12', etr: '2026-05-13', endDate: null, technician: 'S. Iyer',   notes: 'Cartridge filter replacement, leak test.',          completionNotes: '' },
-  { id: 'L-009', equipmentId: 'EQ-009', reason: 'Breakdown', startDate: '2026-05-11', etr: '2026-05-18', endDate: null, technician: 'A. Mehta',  notes: 'High vibration, gearbox damaged. Spare being procured.', completionNotes: '' },
-  { id: 'L-010', equipmentId: 'EQ-011', reason: 'Scheduled', startDate: '2026-05-13', etr: '2026-05-15', endDate: null, technician: 'R. Sharma', notes: 'Roots blower lobe clearance check, oil change.',    completionNotes: '' },
-];
-
-// ---------- Generated PPM logs for Ireo Grandarch (from PPM schedule) ----------
-const IREO_SLOTS = {
-  'EQ-101':'W1','EQ-102':'W3','EQ-103':'W1','EQ-104':'W2','EQ-105':'W3',
-  'EQ-106':'W1','EQ-107':'W2','EQ-108':'W1','EQ-109':'W1','EQ-110':'W3',
-  'EQ-111':'W1','EQ-112':'W2','EQ-113':'W1','EQ-114':'W3','EQ-115':'W1',
-  'EQ-116':'W2','EQ-117':'W3','EQ-118':'W1','EQ-119':'W2','EQ-120':'W3',
-  'EQ-121':'W1','EQ-122':'W2','EQ-123':'W2','EQ-124':'W4','EQ-125':'W1',
-  'EQ-126':'W2','EQ-127':'W3','EQ-128':'W1','EQ-129':'W3','EQ-130':'W2',
-  'EQ-131':'W3','EQ-132':'W4',
-  'EQ-133':'W1','EQ-134':'W2','EQ-135':'W3','EQ-136':'W4',
-  'EQ-137':'weekly','EQ-138':'weekly',
-  'EQ-139':'W1','EQ-140':'W2','EQ-141':'W3','EQ-142':'W2','EQ-143':'W4',
-};
+// Equipment + PPM slots from seed-data.js (generated from All_Sites_PPM_Schedule.xlsx).
+const SEED_EQUIPMENT = (window.SEED_EQUIPMENT_DATA || []).map(e => ({ ...e }));
+const SEED_SLOTS = window.SEED_SLOTS_DATA || {};
 const PPM_NOTES = {
   Pump:       { sched: 'Monthly PPM — vibration, leak and seal check.',  done: 'Bearings greased, alignment verified, no abnormalities.' },
   Blower:     { sched: 'Weekly PPM — oil and filter inspection.',         done: 'Oil level normal, intake filter cleaned.' },
   Filter:     { sched: 'Monthly PPM — media inspection / backwash check.', done: 'Backwash performed; differential pressure within limits.' },
   Centrifuge: { sched: 'Monthly PPM — bowl and scroll inspection.',       done: 'Bowl cleaned; vibration normal.' },
   'UV System':{ sched: 'Monthly PPM — lamp intensity and quartz sleeve.', done: 'Quartz sleeve cleaned; intensity within spec.' },
+  Motor:      { sched: 'Monthly PPM — winding, bearing and insulation check.', done: 'Insulation resistance normal; bearings greased.' },
+  Mixer:      { sched: 'Monthly PPM — gearbox oil and shaft check.',      done: 'Oil level normal; shaft seal intact.' },
+  Screen:     { sched: 'Monthly PPM — mesh and rake inspection.',         done: 'Mesh cleaned; rake mechanism free.' },
+  'Screw Press':{ sched: 'Monthly PPM — screw and drive inspection.',     done: 'Screw wear within limits; drive lubricated.' },
+  Fan:        { sched: 'Monthly PPM — impeller and bearing check.',       done: 'Impeller balanced; bearings greased.' },
+  Decanter:   { sched: 'Monthly PPM — bowl and scroll inspection.',       done: 'Bowl cleaned; vibration normal.' },
 };
+const PPM_DEFAULT = { sched: 'Scheduled PPM — inspection and servicing.', done: 'Inspected and serviced; operating normally.' };
+
+// A small set of illustrative open work-orders so the Dashboard / Pending views show live activity.
+function buildSeedOpenLogs(equipment) {
+  const NOW = new Date(today());
+  const d = (off) => { const x = new Date(NOW); x.setDate(x.getDate() + off); return x.toISOString().slice(0,10); };
+  const TECHS = ['A. Mehta','R. Sharma','S. Iyer','P. Kulkarni'];
+  const specs = [
+    { pi: 1,  kind:'Breakdown', off:-4, etr:3,  notes:'Bearing failure on drive end; replacement bearing awaited.' },
+    { pi: 3,  kind:'Scheduled', off:-2, etr:1,  notes:'Scheduled overhaul — mechanical seal and wear ring replacement.' },
+    { pi: 5,  kind:'Breakdown', off:-7, etr:-1, notes:'Motor winding burnt; sent for rewinding.' },
+    { pi: 8,  kind:'Scheduled', off:-1, etr:2,  notes:'Belt tensioning and coupling alignment.' },
+    { pi: 10, kind:'Breakdown', off:-3, etr:4,  notes:'High vibration; gearbox inspection in progress.' },
+    { pi: 13, kind:'Scheduled', off:-2, etr:0,  notes:'Impeller inspection and greasing.' },
+    { pi: 16, kind:'Breakdown', off:-6, etr:-2, notes:'Seal leak; unit isolated pending spares.' },
+    { pi: 19, kind:'Scheduled', off:-1, etr:3,  notes:'Oil change and intake filter replacement.' },
+  ];
+  const logs = []; let seq = 0;
+  specs.forEach(s => {
+    const pid = 'PL-' + String(s.pi + 1).padStart(2,'0');
+    const eq = equipment.find(e => e.plantId === pid && (e.type === 'Pump' || e.type === 'Blower'));
+    if (!eq) return;
+    eq.status = s.kind === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
+    logs.push({ id:'L-OPEN-'+(++seq), equipmentId: eq.id, reason: s.kind, startDate: d(s.off), etr: d(s.etr), endDate: null, technician: TECHS[seq % TECHS.length], notes: s.notes, completionNotes: '' });
+  });
+  return logs;
+}
 function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
   const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
   const TECHS = ['A. Mehta','R. Sharma','S. Iyer','P. Kulkarni'];
@@ -136,7 +82,7 @@ function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
   const eqMap = Object.fromEntries(equipmentList.map(e => [e.id, e]));
   for (const [eqId, slot] of Object.entries(slotsMap)) {
     const eq = eqMap[eqId]; if (!eq) continue;
-    const noteSet = PPM_NOTES[eq.type] || PPM_NOTES.Pump;
+    const noteSet = PPM_NOTES[eq.type] || PPM_DEFAULT;
     const prefix = idPrefix || 'PPM';
     if (slot === 'weekly') {
       let d = new Date(yearStart); let i = 0;
@@ -159,17 +105,26 @@ function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
 }
 
 // ---------- Storage ----------
-const LS_EQ = 'mm.equipment.v4';
-const LS_LOG = 'mm.logs.v4';
-const LS_PLANT = 'mm.plants.v4';
-const LS_USERS = 'mm.users.v1';
-const LS_SLOTS = 'mm.slots.v1';
+const LS_EQ = 'mm.equipment.v5';
+const LS_LOG = 'mm.logs.v5';
+const LS_PLANT = 'mm.plants.v5';
+const LS_USERS = 'mm.users.v2';
+const LS_SLOTS = 'mm.slots.v2';
+
+function seedIfNeeded() {
+  if (localStorage.getItem(LS_EQ)) return;
+  const equipment = SEED_EQUIPMENT.map(e => ({ ...e }));   // clone so we can set statuses
+  const slots = SEED_SLOTS;
+  const openLogs = buildSeedOpenLogs(equipment);           // mutates statuses on a few units
+  const historic = generatePastPPMLogs(slots, equipment, 'PPM');
+  localStorage.setItem(LS_EQ,    JSON.stringify(equipment));
+  localStorage.setItem(LS_SLOTS, JSON.stringify(slots));
+  localStorage.setItem(LS_LOG,   JSON.stringify(historic.concat(openLogs)));
+  localStorage.setItem(LS_PLANT, JSON.stringify(SEED_PLANTS));
+}
 
 function load() {
-  if (!localStorage.getItem(LS_EQ))    localStorage.setItem(LS_EQ,    JSON.stringify(SEED_EQUIPMENT));
-  if (!localStorage.getItem(LS_SLOTS)) localStorage.setItem(LS_SLOTS, JSON.stringify(IREO_SLOTS));
-  if (!localStorage.getItem(LS_LOG))   localStorage.setItem(LS_LOG,   JSON.stringify(SEED_LOGS.concat(generatePastPPMLogs(IREO_SLOTS, SEED_EQUIPMENT, 'PPM'))));
-  if (!localStorage.getItem(LS_PLANT)) localStorage.setItem(LS_PLANT, JSON.stringify(SEED_PLANTS));
+  seedIfNeeded();
   if (!localStorage.getItem(LS_USERS)) localStorage.setItem(LS_USERS, JSON.stringify(SEED_USERS));
   return {
     equipment: JSON.parse(localStorage.getItem(LS_EQ)),
@@ -219,8 +174,9 @@ function tagLink(e) {
 
 // ---------- State / routing / filters ----------
 let state = load();
-const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '' };
-const EQ_TYPES = ['Pump','Blower','Filter','Centrifuge','UV System'];
+const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '' };
+const LOG_PAGE_SIZE = 50;
+const EQ_TYPES = ['Pump','Blower','Motor','Mixer','Screen','Filter','Centrifuge','UV System','Screw Press','Decanter','Fan','Other'];
 
 const routes = [
   { hash: '#/dashboard', label: 'Dashboard' },
@@ -509,10 +465,13 @@ function renderLog() {
           <tbody id="logRows"></tbody>
         </table>
       </div>
+      <div id="logPager" class="flex items-center gap-3 px-5 py-3 border-t border-slate-200 text-sm text-slate-600"></div>
     </div>
   `;
   renderLogRows();
 }
+
+function logGoToPage(p) { ui.logPage = p; renderLogRows(); }
 
 function getFilteredLogs() {
   const fType = document.getElementById('fType')?.value || '';
@@ -545,7 +504,19 @@ function getFilteredLogs() {
 
 function renderLogRows() {
   const data = getFilteredLogs();
-  const rows = data.map(({l, e}) => {
+  // Reset to page 1 whenever the filter set changes
+  const sig = [ui.plantFilter, document.getElementById('fType')?.value, document.getElementById('fReason')?.value,
+    document.getElementById('fStatus')?.value, document.getElementById('fSearch')?.value,
+    document.getElementById('fFrom')?.value, document.getElementById('fTo')?.value, document.getElementById('fTech')?.value].join('|');
+  if (sig !== ui._logSig) { ui.logPage = 1; ui._logSig = sig; }
+
+  const total = data.length;
+  const pages = Math.max(1, Math.ceil(total / LOG_PAGE_SIZE));
+  if (ui.logPage > pages) ui.logPage = pages;
+  const start = (ui.logPage - 1) * LOG_PAGE_SIZE;
+  const pageData = data.slice(start, start + LOG_PAGE_SIZE);
+
+  const rows = pageData.map(({l, e}) => {
     const durDays = l.endDate ? daysBetween(l.startDate, l.endDate) : daysBetween(l.startDate, today());
     const overdue = isOverdue(l);
     const durHtml = l.endDate
@@ -563,6 +534,23 @@ function renderLogRows() {
     </tr>`;
   }).join('') || `<tr><td colspan="8" class="py-6 text-center text-slate-500">No log entries match your filters.</td></tr>`;
   document.getElementById('logRows').innerHTML = rows;
+
+  const pager = document.getElementById('logPager');
+  if (pager) {
+    if (total === 0) { pager.innerHTML = ''; }
+    else {
+      const from = start + 1, to = Math.min(start + LOG_PAGE_SIZE, total);
+      const btn = (label, page, disabled) =>
+        `<button ${disabled?'disabled':''} onclick="logGoToPage(${page})" class="px-2.5 py-1 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">${label}</button>`;
+      pager.innerHTML = `
+        <span>Showing <b>${from}–${to}</b> of <b>${total}</b></span>
+        <div class="ml-auto flex items-center gap-2">
+          ${btn('&larr; Prev', ui.logPage - 1, ui.logPage <= 1)}
+          <span class="text-slate-500">Page ${ui.logPage} / ${pages}</span>
+          ${btn('Next &rarr;', ui.logPage + 1, ui.logPage >= pages)}
+        </div>`;
+    }
+  }
 }
 
 // ---------- Plants ----------
@@ -1745,18 +1733,37 @@ function onPPMFileChosen(input) {
   reader.readAsArrayBuffer(file);
 }
 
-function parsePPMWorkbook(arrayBuffer) {
+// Non-equipment / procedural rows we don't track as maintainable equipment
+const PPM_EXCLUDE_RE = /test\b|\bcheck\b|monitoring|\blog\b|hardness|turbidity|chlorine|reading|sensor|detector|analys|flow ?meter|flowmeter|\bmeter\b|camera|cctv|tank cleaning|\bcleaning\b|settler|\bdiffuser\b|thickener|\bpanel\b|\bmcc\b|earthing|\bcable|wiring|transformer/i;
+const PPM_TYPE_RE = [
+  ['Motor', /\bmotor\b/i],
+  ['Pump', /pump/i],
+  ['Blower', /blower|air ?lift/i],
+  ['Mixer', /mixer|agitator|flocculator|flash mix/i],
+  ['Screen', /screen/i],
+  ['Screw Press', /screw press|filter press|belt press|\bpress\b/i],
+  ['Centrifuge', /centrifuge/i],
+  ['UV System', /\buv\b/i],
+  ['Decanter', /decanter/i],
+  ['Fan', /\bfan\b|exhaust|fresh air/i],
+  ['Filter', /filter|softener|\bmgf\b|\bacf\b|\buf\b|\bro\b|membrane|ultra ?filt/i],
+];
+function classifyEquipmentName(name) {
+  if (PPM_EXCLUDE_RE.test(name)) return null;      // procedural / instrument → skip
+  for (const [t, re] of PPM_TYPE_RE) if (re.test(name)) return t;
+  return 'Other';
+}
+
+function parsePPMWorkbook(arrayBuffer, sheetName) {
   const wb = XLSX.read(arrayBuffer, { type: 'array' });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const sheet = wb.Sheets[sheetName || wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
   // Locate header row containing "Equipment Name"
   let headerIdx = -1, nameCol = -1;
   for (let i = 0; i < rows.length; i++) {
     for (let c = 0; c < rows[i].length; c++) {
-      if (String(rows[i][c]).toLowerCase().trim() === 'equipment name') {
-        headerIdx = i; nameCol = c; break;
-      }
+      if (String(rows[i][c]).toLowerCase().trim() === 'equipment name') { headerIdx = i; nameCol = c; break; }
     }
     if (headerIdx !== -1) break;
   }
@@ -1765,38 +1772,20 @@ function parsePPMWorkbook(arrayBuffer) {
   const snCol  = Math.max(0, nameCol - 1);
   const makeCol = nameCol + 1;
   const capCol  = nameCol + 2;
-  const slotsStartCol = nameCol + 4; // Name, Make, Capacity, Qty → then slots
+  const slotsStartCol = nameCol + 4;
 
-  const TYPE_KEYWORDS = [
-    ['PUMP', 'Pump'], ['BLOWER', 'Blower'],
-    ['FILTER', 'Filter'], ['TREATMENT', 'Filter'],
-    ['CENTRIFUGE', 'Centrifuge'], ['UV', 'UV System'],
-  ];
-
-  let currentType = null;
   const out = [];
+  for (let i = headerIdx + 2; i < rows.length; i++) { // skip header + W1..W5 sub-row
+    const row = rows[i]; if (!row) continue;
+    const snStr   = String(row[snCol] ?? '').trim();
+    const nameStr = String(row[nameCol] ?? '').trim();
+    // Only numbered rows are equipment; section headers (text in S.No col) are ignored —
+    // we classify by the equipment NAME, which works for both type-based and process-stage layouts.
+    if (!/^\d+(?:\.\d+)?$/.test(snStr) || !nameStr) continue;
 
-  for (let i = headerIdx + 2; i < rows.length; i++) { // skip header + W1/W2 sub-row
-    const row = rows[i];
-    const sn   = row[snCol];
-    const name = row[nameCol];
+    const type = classifyEquipmentName(nameStr);
+    if (!type) continue;
 
-    if (!name) continue;
-    const nameStr = String(name).trim();
-    const snStr   = String(sn).trim();
-    const snIsNum = snStr !== '' && /^\d+(?:\.\d+)?$/.test(snStr);
-
-    // Section header — text but no S.No
-    if (!snIsNum) {
-      const upper = nameStr.toUpperCase();
-      const m = TYPE_KEYWORDS.find(([kw]) => upper.includes(kw));
-      if (m) currentType = m[1];
-      continue;
-    }
-
-    if (!currentType) currentType = 'Pump'; // default if no section header seen
-
-    // Scan slot markers — only treat known frequency codes as markers
     let markerCount = 0, firstMarkerCol = -1;
     for (let c = slotsStartCol; c < slotsStartCol + 52 && c < row.length; c++) {
       const v = String(row[c] || '').trim().toUpperCase();
@@ -1805,21 +1794,16 @@ function parsePPMWorkbook(arrayBuffer) {
         if (firstMarkerCol === -1) firstMarkerCol = c;
       }
     }
-
     let slot = null;
     if (markerCount >= 40) slot = 'weekly';
     else if (firstMarkerCol !== -1) {
       const offset = firstMarkerCol - slotsStartCol;
-      if (offset <= 3) slot = ['W1','W2','W3','W4'][offset];
-      else slot = 'W' + ((offset % 4) + 1); // fallback
+      slot = offset <= 3 ? ['W1','W2','W3','W4'][offset] : 'W' + ((offset % 4) + 1);
     }
-
     const make  = String(row[makeCol] || '').trim().replace(/^[-—]+$/, '');
     const model = String(row[capCol]  || '').trim().replace(/^[-—]+$/, '');
-
-    out.push({ tag: nameStr, type: currentType, make, model, slot });
+    out.push({ tag: nameStr, type, make, model, slot });
   }
-
   return out;
 }
 
@@ -1901,7 +1885,7 @@ const TOURS = {
         body:  { 'en-US':"After a site visit, open Visit Reports. Pick a quick date filter, then Generate Report produces a sign-off PDF covering everything you completed that day.",
                  'hi-IN':"Site visit के बाद Visit Reports tab खोलें। quick date filter चुनें, फिर Generate Report से उस दिन के completed कामों का sign-off PDF बनेगा।",
                  'es-ES':"Tras una visita, abra Reportes de visita. Use un filtro rápido y Generar reporte crea un PDF de cierre con todo lo realizado ese día." } },
-      { setup: () => { location.hash='#/equipment/EQ-002'; route(); },
+      { setup: () => { const t = (state.equipment.find(e => e.status !== 'Operational') || state.equipment[0]); location.hash = '#/equipment/' + (t ? t.id : ''); route(); },
         target: '[data-tour="detail-actions"]',
         title: { 'en-US':"Close out the work", 'hi-IN':'काम complete करें', 'es-ES':'Cerrar el trabajo' },
         body:  { 'en-US':"From any equipment detail page you can mark it operational and instantly generate a single-event service report for sign-off. You're all set!",
