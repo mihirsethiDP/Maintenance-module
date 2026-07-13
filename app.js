@@ -9,7 +9,7 @@ const SEED_PLANTS = (window.SEED_PLANTS_DATA || []).map((p, i) => ({
   ),
 }));
 function defaultNotifConfig(prefs = {}) {
-  const make = (ch, recips) => ({ enabled: (ch||[]).length > 0, channels: ch || [], recipients: recips || (ch && ch.length ? ['U-4','U-5'] : []) });
+  const make = (ch, recips) => ({ enabled: (ch||[]).length > 0, channels: ch || [], recipients: recips || (ch && ch.length ? ['U-1','U-2'] : []) });
   return {
     maintenance: make(prefs.maintenance, prefs.maintenanceTo),
     breakdown:   make(prefs.breakdown,   prefs.breakdownTo),
@@ -19,13 +19,15 @@ function defaultNotifConfig(prefs = {}) {
 }
 const CHANNELS = ['email','sms','whatsapp','call'];
 
+// role: 'Admin' (full access, manage plants/equipment/team) or 'Engineer' (field access only).
+// password is a mock, plaintext, prototype-only credential — NOT real security.
 const SEED_USERS = [
-  { id: 'U-1', name: 'A. Mehta',          role: 'Maintenance Technician', email: 'amehta@plant.com',  phone: '+91 90000 11111' },
-  { id: 'U-2', name: 'R. Sharma',         role: 'Maintenance Technician', email: 'rsharma@plant.com', phone: '+91 90000 22222' },
-  { id: 'U-3', name: 'S. Iyer',           role: 'Maintenance Technician', email: 'siyer@plant.com',   phone: '+91 90000 33333' },
-  { id: 'U-4', name: 'P. Kulkarni',       role: 'Maintenance Lead',       email: 'pk@plant.com',      phone: '+91 90000 44444' },
-  { id: 'U-5', name: 'N. Rao',            role: 'Plant Manager',          email: 'nrao@plant.com',    phone: '+91 90000 55555' },
-  { id: 'U-6', name: 'Operations Desk',   role: 'Control Room',           email: 'ops@plant.com',     phone: '+91 90000 66666' },
+  { id: 'U-1', name: 'Mihir Sethi', role: 'Admin',    email: 'mihir.sethi@digitalpaani.com', phone: '+91 90000 10000', password: 'admin123', status: 'active' },
+  { id: 'U-2', name: 'P. Kulkarni', role: 'Admin',    email: 'pk@digitalpaani.com',          phone: '+91 90000 44444', password: 'admin123', status: 'active' },
+  { id: 'U-3', name: 'A. Mehta',    role: 'Engineer', email: 'amehta@digitalpaani.com',      phone: '+91 90000 11111', password: 'eng123',   status: 'active' },
+  { id: 'U-4', name: 'R. Sharma',   role: 'Engineer', email: 'rsharma@digitalpaani.com',     phone: '+91 90000 22222', password: 'eng123',   status: 'active' },
+  { id: 'U-5', name: 'S. Iyer',     role: 'Engineer', email: 'siyer@digitalpaani.com',       phone: '+91 90000 33333', password: 'eng123',   status: 'active' },
+  { id: 'U-6', name: 'N. Rao',      role: 'Engineer', email: 'nrao@digitalpaani.com',        phone: '+91 90000 55555', password: 'eng123',   status: 'active' },
 ];
 
 // Equipment + PPM slots from seed-data.js (generated from All_Sites_PPM_Schedule.xlsx).
@@ -108,7 +110,10 @@ function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
 const LS_EQ = 'mm.equipment.v5';
 const LS_LOG = 'mm.logs.v5';
 const LS_PLANT = 'mm.plants.v5';
-const LS_USERS = 'mm.users.v2';
+const LS_USERS = 'mm.users.v3';
+const LS_SESSION = 'mm.session.v1';
+const LS_NOTIF = 'mm.notifs.v1';
+const LS_OVERDUE_SEEN = 'mm.overdueSeen.v1';
 const LS_SLOTS = 'mm.slots.v2';
 
 function seedIfNeeded() {
@@ -138,7 +143,8 @@ const saveEq    = e => localStorage.setItem(LS_EQ,    JSON.stringify(e));
 const saveLog   = l => localStorage.setItem(LS_LOG,   JSON.stringify(l));
 const saveSlots = s => localStorage.setItem(LS_SLOTS, JSON.stringify(s));
 const savePlant = p => localStorage.setItem(LS_PLANT, JSON.stringify(p));
-function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS].forEach(k => localStorage.removeItem(k)); route(); }
+const saveUsers = u => localStorage.setItem(LS_USERS, JSON.stringify(u));
+function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS, LS_NOTIF, LS_OVERDUE_SEEN].forEach(k => localStorage.removeItem(k)); route(); }
 
 // ---------- Helpers ----------
 const today = () => new Date().toISOString().slice(0,10);
@@ -179,16 +185,40 @@ const LOG_PAGE_SIZE = 50;
 const EQ_TYPES = ['Pump','Blower','Motor','Mixer','Screen','Filter','Centrifuge','UV System','Screw Press','Decanter','Fan','Other'];
 
 const routes = [
-  { hash: '#/dashboard', label: 'Dashboard' },
-  { hash: '#/equipment', label: 'Equipment' },
-  { hash: '#/log',       label: 'Maintenance Log' },
-  { hash: '#/engineer',  label: 'Engineering Corner' },
-  { hash: '#/plants',    label: 'Plants' },
+  { hash: '#/dashboard', label: 'Dashboard',          roles: ['Admin'] },
+  { hash: '#/equipment', label: 'Equipment',          roles: ['Admin','Engineer'] },
+  { hash: '#/log',       label: 'Maintenance Log',     roles: ['Admin','Engineer'] },
+  { hash: '#/engineer',  label: 'Engineering Corner',  roles: ['Admin','Engineer'] },
+  { hash: '#/plants',    label: 'Plants',             roles: ['Admin'] },
+  { hash: '#/team',      label: 'Team',               roles: ['Admin'] },
 ];
 
+// ---------- Auth (prototype — client-side only, NOT real security) ----------
+function currentUser() {
+  const id = localStorage.getItem(LS_SESSION);
+  return id ? (state.users || []).find(u => u.id === id) : null;
+}
+function isAdmin() { const u = currentUser(); return !!u && u.role === 'Admin'; }
+function loginWith(email, password) {
+  const u = (state.users || []).find(x => x.email.toLowerCase() === String(email).toLowerCase().trim() && x.status === 'active');
+  if (!u || u.password !== password) return false;
+  localStorage.setItem(LS_SESSION, u.id);
+  return true;
+}
+function logout() { localStorage.removeItem(LS_SESSION); route(); }
+function routeAllowed(hash, user) {
+  const base = hash.startsWith('#/equipment/') ? '#/equipment' : hash;
+  const r = routes.find(x => x.hash === base);
+  if (!r) return true; // notifications panel etc. are not routes
+  return r.roles.includes(user.role);
+}
+function homeHashFor(user) { return user.role === 'Admin' ? '#/dashboard' : '#/equipment'; }
+
 function renderNav() {
-  const cur = location.hash || '#/dashboard';
-  document.getElementById('nav').innerHTML = routes.map(r => {
+  const user = currentUser();
+  if (!user) { document.getElementById('nav').innerHTML = ''; return; }
+  const cur = location.hash || homeHashFor(user);
+  document.getElementById('nav').innerHTML = routes.filter(r => r.roles.includes(user.role)).map(r => {
     const active = cur === r.hash || (r.hash === '#/equipment' && cur.startsWith('#/equipment/'));
     return `<a href="${r.hash}" class="px-3 py-1.5 rounded-md ${active?'bg-brand-50 text-brand font-medium':'text-slate-600 hover:bg-slate-100'}">${r.label}</a>`;
   }).join('');
@@ -196,16 +226,195 @@ function renderNav() {
 
 function route() {
   state = load();
+  const user = currentUser();
+  renderHeaderChrome();
+  if (!user) { renderLogin(); return; }
   renderNav();
-  const h = location.hash || '#/dashboard';
+  let h = location.hash || homeHashFor(user);
+  if (!routeAllowed(h, user)) { location.hash = homeHashFor(user); return; }
+  sweepOverdue();
   if (h.startsWith('#/equipment/')) return renderEquipmentDetail(h.split('/')[2]);
   if (h === '#/equipment') return renderEquipment();
   if (h === '#/log')       return renderLog();
   if (h === '#/plants')    return renderPlants();
+  if (h === '#/team')      return renderTeam();
   if (h === '#/engineer')  return renderEngineer();
-  return renderDashboard();
+  if (h === '#/dashboard') return renderDashboard();
+  location.hash = homeHashFor(user);
 }
 window.addEventListener('hashchange', route);
+
+// ---------- Login screen ----------
+function renderLogin() {
+  document.getElementById('view').innerHTML = `
+    <div class="min-h-[70vh] flex items-center justify-center px-4">
+      <div class="w-full max-w-sm">
+        <div class="flex items-center gap-2 justify-center mb-6">
+          <div class="w-10 h-10 rounded-lg bg-brand text-white grid place-items-center font-bold text-lg">DP</div>
+          <div>
+            <div class="font-semibold text-lg leading-tight">DigitalPaani</div>
+            <div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+          <h1 class="text-lg font-semibold mb-1">Sign in</h1>
+          <p class="text-xs text-slate-500 mb-4">Use your DigitalPaani account.</p>
+          <form onsubmit="submitLogin(event)" class="space-y-3">
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">Email</label>
+              <input name="email" type="email" required autocomplete="username" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="you@digitalpaani.com" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-600 mb-1">Password</label>
+              <input name="password" type="password" required autocomplete="current-password" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="••••••••" />
+            </div>
+            <div id="loginError" class="hidden text-xs text-red-600"></div>
+            <button class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Sign in</button>
+          </form>
+          <div class="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500 leading-relaxed">
+            <div class="font-medium text-slate-600 mb-1">Demo accounts</div>
+            <button onclick="fillLogin('mihir.sethi@digitalpaani.com','admin123')" class="block text-left hover:text-brand">Admin — mihir.sethi@digitalpaani.com / admin123</button>
+            <button onclick="fillLogin('amehta@digitalpaani.com','eng123')" class="block text-left hover:text-brand">Engineer — amehta@digitalpaani.com / eng123</button>
+          </div>
+        </div>
+        <p class="text-[10px] text-slate-400 text-center mt-3">Prototype sign-in — not real authentication. See backend plan for production.</p>
+      </div>
+    </div>`;
+}
+function fillLogin(email, pw) {
+  const f = document.querySelector('#view form');
+  if (f) { f.email.value = email; f.password.value = pw; }
+}
+function submitLogin(ev) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  if (loginWith(f.get('email'), f.get('password'))) {
+    const u = currentUser();
+    location.hash = homeHashFor(u);
+    route();
+  } else {
+    const el = document.getElementById('loginError');
+    el.textContent = 'Invalid email or password.';
+    el.classList.remove('hidden');
+  }
+}
+
+// ---------- Header chrome (user menu + notifications) ----------
+function renderHeaderChrome() {
+  const host = document.getElementById('headerRight');
+  if (!host) return;
+  const user = currentUser();
+  // Show the Guide-me FAB only when signed in
+  const fab = document.querySelector('.tour-fab'), fabLabel = document.querySelector('.tour-fab-label');
+  [fab, fabLabel].forEach(el => { if (el) el.style.display = user ? '' : 'none'; });
+  if (!user) { host.innerHTML = ''; return; }
+  const admin = user.role === 'Admin';
+  const resetLink = admin ? `<button onclick="if(confirm('Reset all demo data to seed?'))resetDemo()" class="hidden md:inline text-xs text-slate-400 hover:text-slate-700 px-2 py-1">Reset demo</button>` : '';
+  const unread = admin ? loadNotifs().filter(n => !n.read).length : 0;
+  const bell = admin ? `
+    <button onclick="toggleNotifPanel()" class="relative p-2 rounded-md hover:bg-slate-100 text-slate-600" title="Notifications" aria-label="Notifications">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      ${unread ? `<span class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-semibold grid place-items-center">${unread>9?'9+':unread}</span>` : ''}
+    </button>` : '';
+  host.innerHTML = `
+    ${resetLink}
+    ${bell}
+    <div class="flex items-center gap-2 pl-1">
+      <div class="text-right leading-tight hidden sm:block">
+        <div class="text-xs font-medium text-slate-800">${user.name}</div>
+        <div class="text-[10px] text-slate-500">${user.role}</div>
+      </div>
+      <div class="w-8 h-8 rounded-full bg-brand-50 text-brand grid place-items-center text-xs font-semibold">${initials(user.name)}</div>
+      <button onclick="logout()" class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1" title="Sign out">Sign out</button>
+    </div>`;
+}
+function initials(name) { return name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
+
+// ---------- Notifications (in-app "outbox" — records what would be delivered) ----------
+function loadNotifs() { try { return JSON.parse(localStorage.getItem(LS_NOTIF) || '[]'); } catch { return []; } }
+function saveNotifs(n) { localStorage.setItem(LS_NOTIF, JSON.stringify(n)); }
+const NOTIF_MSG = {
+  maintenance: (eq, p) => `${eq.tag} put into scheduled maintenance at ${p.name}.`,
+  breakdown:   (eq, p) => `Breakdown reported — ${eq.tag} at ${p.name}.`,
+  operational: (eq, p) => `${eq.tag} returned to service at ${p.name}.`,
+  overdue:     (eq, p, log) => `Maintenance overdue — ${eq.tag} at ${p.name} (expected ${log?.etr || '—'}).`,
+};
+function pushEventNotification(eventKey, eq, log) {
+  const plant = plantById(eq.plantId); if (!plant || !plant.notifications) return;
+  const cfg = plant.notifications[eventKey];
+  if (!cfg || !cfg.enabled) return;
+  if (!cfg.channels.length && !(cfg.recipients||[]).length) return;
+  const notifs = loadNotifs();
+  notifs.unshift({
+    id: 'N-' + Date.now() + '-' + Math.floor(Math.random()*1e4),
+    ts: new Date().toISOString(),
+    event: eventKey, plantId: eq.plantId, eqId: eq.id,
+    channels: cfg.channels.slice(), recipients: (cfg.recipients||[]).slice(),
+    message: (NOTIF_MSG[eventKey] || (()=>'Maintenance event'))(eq, plant, log),
+    read: false,
+  });
+  saveNotifs(notifs.slice(0, 200));
+}
+function sweepOverdue() {
+  let seen; try { seen = JSON.parse(localStorage.getItem(LS_OVERDUE_SEEN) || '[]'); } catch { seen = []; }
+  const seenSet = new Set(seen);
+  let changed = false;
+  state.logs.filter(l => !l.endDate && isOverdue(l)).forEach(l => {
+    if (seenSet.has(l.id)) return;
+    const eq = eqById(l.equipmentId); if (!eq) return;
+    pushEventNotification('overdue', eq, l);
+    seenSet.add(l.id); changed = true;
+  });
+  if (changed) localStorage.setItem(LS_OVERDUE_SEEN, JSON.stringify([...seenSet]));
+}
+function toggleNotifPanel() {
+  const existing = document.getElementById('notifPanel');
+  if (existing) { existing.remove(); return; }
+  const notifs = loadNotifs();
+  const userName = id => (state.users.find(u=>u.id===id)?.name || id);
+  const chLabel = ch => ch === 'sms' ? 'SMS' : ch.charAt(0).toUpperCase()+ch.slice(1);
+  const eventBadge = { maintenance:'badge-brand', breakdown:'badge-bd', operational:'badge-op', overdue:'badge-bd' };
+  const rows = notifs.map(n => {
+    const eq = eqById(n.eqId);
+    return `<div class="p-3 border-b border-slate-100 ${n.read?'':'bg-brand-50/40'}">
+      <div class="flex items-start gap-2">
+        <span class="badge ${eventBadge[n.event]||'badge-neutral'} capitalize mt-0.5">${n.event}</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm text-slate-800">${n.message}</div>
+          <div class="text-[11px] text-slate-500 mt-1">
+            ${n.channels.length ? 'via ' + n.channels.map(chLabel).join(', ') : 'no channel'}
+            ${n.recipients.length ? ' → ' + n.recipients.map(userName).join(', ') : ''}
+          </div>
+          <div class="text-[10px] text-slate-400 mt-0.5">${new Date(n.ts).toLocaleString()}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('') || `<div class="p-6 text-center text-sm text-slate-500">No notifications yet.</div>`;
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="notifPanel" class="fixed inset-0 z-[70]" onclick="if(event.target===this)this.remove()">
+      <div class="absolute right-0 top-0 h-full w-full max-w-sm bg-white shadow-xl flex flex-col">
+        <div class="px-4 py-3 border-b border-slate-200 flex items-center">
+          <div class="font-semibold">Notifications</div>
+          <div class="ml-auto flex items-center gap-2">
+            <button onclick="markAllNotifsRead()" class="text-xs text-brand hover:underline">Mark all read</button>
+            <button onclick="document.getElementById('notifPanel').remove()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+          </div>
+        </div>
+        <div class="px-4 py-2 bg-amber-50 border-b border-amber-100 text-[11px] text-amber-800">
+          Prototype outbox — records what would be delivered. Real Email/SMS/WhatsApp needs the backend (see plan).
+        </div>
+        <div class="flex-1 overflow-y-auto">${rows}</div>
+      </div>
+    </div>`);
+}
+function markAllNotifsRead() {
+  const notifs = loadNotifs().map(n => ({ ...n, read: true }));
+  saveNotifs(notifs);
+  const panel = document.getElementById('notifPanel');
+  if (panel) panel.remove();
+  renderHeaderChrome();
+  toggleNotifPanel();
+}
 
 // ---------- Reusable controls ----------
 function plantFilterControl() {
@@ -223,6 +432,7 @@ function typeFilterControl() {
   return `<select onchange="ui.typeFilter=this.value; route()" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">${opts}</select>`;
 }
 function addEquipmentBtn() {
+  if (!isAdmin()) return '';   // engineers cannot add equipment
   return `<button onclick="openAddEquipmentModal()" class="px-3 py-1.5 rounded-md bg-brand text-white hover:bg-brand-800 text-sm font-medium inline-flex items-center gap-1">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     Add Equipment
@@ -398,10 +608,10 @@ function renderEquipmentDetail(id) {
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${e.make} ${e.model} · ${plantName(e.plantId)}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
-          <button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
+          ${isAdmin() ? `<button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
             Edit
-          </button>
+          </button>` : ''}
           ${exportDropdown(`'${e.id}'`, 'detail-export')}
           ${actionBtn}
         </div>
@@ -576,7 +786,11 @@ function renderPlants() {
         <h1 class="text-2xl font-semibold" data-tour="plants-h1">Plants</h1>
         <p class="text-slate-500 text-sm mt-1">Per-plant notification settings and admin actions.</p>
       </div>
-      <div class="ml-auto">
+      <div class="ml-auto flex gap-2 flex-wrap">
+        <button onclick="openAddPlantModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add Plant
+        </button>
         <button onclick="openImportPPMModal()" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Import PPM
@@ -592,6 +806,146 @@ function renderPlants() {
       </div>
     </div>
   `;
+}
+
+// ---------- Add Plant (admin) ----------
+function nextPlantId() {
+  const max = state.plants.reduce((m, p) => { const n = parseInt(String(p.id).replace(/\D/g,''), 10); return isNaN(n) ? m : Math.max(m, n); }, 0);
+  return 'PL-' + String(max + 1).padStart(2, '0');
+}
+function openAddPlantModal() {
+  document.getElementById('modalTitle').textContent = 'Add Plant';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitAddPlant(event)" class="space-y-3 text-sm">
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Plant name <span class="text-red-500">*</span></label>
+        <input name="name" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Skyline Residency STP" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Location <span class="text-slate-400">(optional)</span></label>
+        <input name="location" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Pune, MH" />
+      </div>
+      <div class="text-xs text-slate-500">You can add equipment to this plant afterwards, or use <b>Import PPM</b> to bulk-load a schedule.</div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add plant</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function submitAddPlant(ev) {
+  ev.preventDefault();
+  if (!isAdmin()) return;
+  const f = new FormData(ev.target);
+  state.plants.push({ id: nextPlantId(), name: f.get('name').trim(), location: (f.get('location')||'').trim(), notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }) });
+  savePlant(state.plants);
+  closeModal(); route();
+}
+
+// ---------- Team (admin) ----------
+function nextUserId() {
+  const max = state.users.reduce((m, u) => { const n = parseInt(String(u.id).replace(/\D/g,''), 10); return isNaN(n) ? m : Math.max(m, n); }, 0);
+  return 'U-' + (max + 1);
+}
+function renderTeam() {
+  const rows = state.users.map(u => {
+    const roleBadge = u.role === 'Admin' ? 'badge-brand' : 'badge-neutral';
+    const statusBadgeCls = u.status === 'active' ? 'badge-op' : 'badge-mt';
+    const isSelf = currentUser()?.id === u.id;
+    return `<tr>
+      <td>
+        <div class="cell-primary">${u.name}${isSelf?' <span class="text-[10px] text-slate-400">(you)</span>':''}</div>
+        <div class="cell-muted">${u.email}</div>
+      </td>
+      <td><span class="badge ${roleBadge}">${u.role}</span></td>
+      <td><div class="cell-muted">${u.phone || '—'}</div></td>
+      <td><span class="badge ${statusBadgeCls} capitalize">${u.status}</span></td>
+      <td class="col-center">
+        ${isSelf ? '<span class="text-xs text-slate-400">—</span>' :
+          `<button onclick="removeUser('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>`}
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('view').innerHTML = `
+    <div class="flex items-center mb-1 flex-wrap gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold" data-tour="team-h1">Team</h1>
+        <p class="text-slate-500 text-sm mt-1">Manage who can access the tool and who performs maintenance.</p>
+      </div>
+      <div class="ml-auto flex gap-2 flex-wrap">
+        <button onclick="openTeamModal('technician')" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add Technician
+        </button>
+        <button onclick="openTeamModal('invite')" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
+          Invite User
+        </button>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
+      <div class="overflow-x-auto">
+        <table class="list-table">
+          <thead><tr><th>User</th><th>Role</th><th>Phone</th><th>Status</th><th class="col-center">Action</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+function openTeamModal(mode) {
+  const invite = mode === 'invite';
+  document.getElementById('modalTitle').textContent = invite ? 'Invite User' : 'Add Technician';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitTeamMember(event, '${mode}')" class="space-y-3 text-sm">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
+          <input name="name" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Full name" /></div>
+        <div><label class="block text-xs text-slate-600 mb-1">Phone</label>
+          <input name="phone" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="+91 …" /></div>
+      </div>
+      <div><label class="block text-xs text-slate-600 mb-1">Email <span class="text-red-500">*</span></label>
+        <input name="email" type="email" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="name@digitalpaani.com" /></div>
+      ${invite ? `<div>
+        <label class="block text-xs text-slate-600 mb-1">Role</label>
+        <select name="role" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+          <option value="Engineer">Engineer — field access (equipment, engineering corner, logs)</option>
+          <option value="Admin">Admin — full access (plants, equipment, team, notifications)</option>
+        </select>
+      </div>` : `<div class="text-xs text-slate-500">Technicians are added as <b>Engineers</b> and become selectable when logging maintenance.</div>`}
+      <div class="p-2.5 rounded-md bg-amber-50 border border-amber-100 text-[11px] text-amber-800">
+        Prototype: no real invite email is sent. ${invite ? "The user is created as <b>Invited</b> with a temporary password <b>welcome123</b>." : "A default password <b>eng123</b> is set."}
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${invite ? 'Send invite' : 'Add technician'}</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function submitTeamMember(ev, mode) {
+  ev.preventDefault();
+  if (!isAdmin()) return;
+  const f = new FormData(ev.target);
+  const email = f.get('email').trim().toLowerCase();
+  if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
+  const invite = mode === 'invite';
+  state.users.push({
+    id: nextUserId(), name: f.get('name').trim(), email,
+    role: invite ? (f.get('role') || 'Engineer') : 'Engineer',
+    phone: (f.get('phone')||'').trim(),
+    password: invite ? 'welcome123' : 'eng123',
+    status: invite ? 'invited' : 'active',
+  });
+  saveUsers(state.users);
+  closeModal(); route();
+}
+function removeUser(id) {
+  if (!isAdmin() || currentUser()?.id === id) return;
+  const u = state.users.find(x => x.id === id);
+  if (!u || !confirm(`Remove ${u.name} from the team?`)) return;
+  state.users = state.users.filter(x => x.id !== id);
+  saveUsers(state.users);
+  route();
 }
 
 window._recipState = {};
@@ -1438,8 +1792,10 @@ function submitMaint(ev, eqId) {
     notes: f.get('notes') || '', completionNotes: '',
   };
   state.logs.unshift(log);
-  eqById(eqId).status = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
+  const eq = eqById(eqId);
+  eq.status = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
   saveLog(state.logs); saveEq(state.equipment);
+  pushEventNotification(log.reason === 'Breakdown' ? 'breakdown' : 'maintenance', eq, log);
   closeModal(); route();
 }
 
@@ -1479,8 +1835,10 @@ function submitComplete(ev, eqId) {
     log.endDate = f.get('endDate');
     log.completionNotes = f.get('completionNotes') || '';
   }
-  eqById(eqId).status = 'Operational';
+  const eq = eqById(eqId);
+  eq.status = 'Operational';
   saveLog(state.logs); saveEq(state.equipment);
+  pushEventNotification('operational', eq, log);
   const wantReport = (ev.submitter && ev.submitter.value === 'confirm-report');
   closeModal(); route();
   if (wantReport && log) generateSingleServiceReport(eqId, log);
@@ -2109,10 +2467,6 @@ function mountTourFAB() {
 }
 
 // ---------- Boot ----------
-document.getElementById('resetBtn').addEventListener('click', () => {
-  if (confirm('Reset all data back to the seed demo?')) resetDemo();
-});
-if (!location.hash) location.hash = '#/dashboard';
 route();
 mountTourFAB();
 // preload voices so TTS works on first click
