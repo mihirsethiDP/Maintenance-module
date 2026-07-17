@@ -9,7 +9,7 @@ const SEED_PLANTS = (window.SEED_PLANTS_DATA || []).map((p, i) => ({
   ),
 }));
 function defaultNotifConfig(prefs = {}) {
-  const make = (ch, recips) => ({ enabled: (ch||[]).length > 0, channels: ch || [], recipients: recips || (ch && ch.length ? ['U-1','U-2'] : []) });
+  const make = (ch, recips) => ({ enabled: (ch||[]).length > 0, channels: ch || [], recipients: recips || (ch && ch.length ? ['U-1'] : []) });
   return {
     maintenance: make(prefs.maintenance, prefs.maintenanceTo),
     breakdown:   make(prefs.breakdown,   prefs.breakdownTo),
@@ -19,15 +19,10 @@ function defaultNotifConfig(prefs = {}) {
 }
 const CHANNELS = ['email','sms','whatsapp','call'];
 
-// role: 'Admin' (full access, manage plants/equipment/team) or 'Engineer' (field access only).
-// password is a mock, plaintext, prototype-only credential — NOT real security.
+// roles: 'Superadmin' (owner) > 'Admin' (power user, manages engineers) > 'Engineer' (field access).
+// password is a mock, plaintext, prototype-fallback credential only — real auth is Supabase.
 const SEED_USERS = [
-  { id: 'U-1', name: 'Mihir Sethi', role: 'Admin',    email: 'mihir.sethi@digitalpaani.com', phone: '+91 90000 10000', password: 'admin123', status: 'active' },
-  { id: 'U-2', name: 'P. Kulkarni', role: 'Admin',    email: 'pk@digitalpaani.com',          phone: '+91 90000 44444', password: 'admin123', status: 'active' },
-  { id: 'U-3', name: 'A. Mehta',    role: 'Engineer', email: 'amehta@digitalpaani.com',      phone: '+91 90000 11111', password: 'eng123',   status: 'active' },
-  { id: 'U-4', name: 'R. Sharma',   role: 'Engineer', email: 'rsharma@digitalpaani.com',     phone: '+91 90000 22222', password: 'eng123',   status: 'active' },
-  { id: 'U-5', name: 'S. Iyer',     role: 'Engineer', email: 'siyer@digitalpaani.com',       phone: '+91 90000 33333', password: 'eng123',   status: 'active' },
-  { id: 'U-6', name: 'N. Rao',      role: 'Engineer', email: 'nrao@digitalpaani.com',        phone: '+91 90000 55555', password: 'eng123',   status: 'active' },
+  { id: 'U-1', name: 'Mihir Sethi', role: 'Superadmin', email: 'mihir.sethi@digitalpaani.com', phone: '+91 90000 10000', password: 'admin123', status: 'active' },
 ];
 
 // Equipment + PPM slots from seed-data.js (generated from All_Sites_PPM_Schedule.xlsx).
@@ -52,7 +47,7 @@ const PPM_DEFAULT = { sched: 'Scheduled PPM — inspection and servicing.', done
 function buildSeedOpenLogs(equipment) {
   const NOW = new Date(today());
   const d = (off) => { const x = new Date(NOW); x.setDate(x.getDate() + off); return x.toISOString().slice(0,10); };
-  const TECHS = ['A. Mehta','R. Sharma','S. Iyer','P. Kulkarni'];
+  const TECHS = ['Mihir Sethi'];
   const specs = [
     { pi: 1,  kind:'Breakdown', off:-4, etr:3,  notes:'Bearing failure on drive end; replacement bearing awaited.' },
     { pi: 3,  kind:'Scheduled', off:-2, etr:1,  notes:'Scheduled overhaul — mechanical seal and wear ring replacement.' },
@@ -75,7 +70,7 @@ function buildSeedOpenLogs(equipment) {
 }
 function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
   const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
-  const TECHS = ['A. Mehta','R. Sharma','S. Iyer','P. Kulkarni'];
+  const TECHS = ['Mihir Sethi'];
   const NOW = new Date();
   const yearStart = new Date('2026-01-01');
   const fmt = (d) => d.toISOString().slice(0,10);
@@ -107,10 +102,10 @@ function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
 }
 
 // ---------- Storage ----------
-const LS_EQ = 'mm.equipment.v5';
-const LS_LOG = 'mm.logs.v5';
-const LS_PLANT = 'mm.plants.v5';
-const LS_USERS = 'mm.users.v3';
+const LS_EQ = 'mm.equipment.v6';
+const LS_LOG = 'mm.logs.v6';
+const LS_PLANT = 'mm.plants.v6';
+const LS_USERS = 'mm.users.v4';
 const LS_SESSION = 'mm.session.v1';
 const LS_NOTIF = 'mm.notifs.v1';
 const LS_OVERDUE_SEEN = 'mm.overdueSeen.v1';
@@ -218,7 +213,8 @@ function currentUser() {
   const id = localStorage.getItem(LS_SESSION);
   return id ? (state.users || []).find(u => u.id === id) : null;
 }
-function isAdmin() { const u = currentUser(); return !!u && u.role === 'Admin'; }
+function isAdmin() { const u = currentUser(); return !!u && (u.role === 'Admin' || u.role === 'Superadmin'); }
+function isSuperadmin() { const u = currentUser(); return !!u && u.role === 'Superadmin'; }
 function loginWith(email, password) {   // prototype mode only
   const u = (state.users || []).find(x => x.email.toLowerCase() === String(email).toLowerCase().trim() && x.status === 'active');
   if (!u || u.password !== password) return false;
@@ -886,7 +882,7 @@ function nextUserId() {
 }
 function renderTeam() {
   const userRows = state.users.map(u => {
-    const roleBadge = u.role === 'Admin' ? 'badge-brand' : 'badge-neutral';
+    const roleBadge = (u.role === 'Admin' || u.role === 'Superadmin') ? 'badge-brand' : 'badge-neutral';
     const isSelf = currentUser()?.id === u.id;
     return `<tr>
       <td>
@@ -990,16 +986,17 @@ function openInviteModal() {
         <input name="email" type="email" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="name@digitalpaani.com" /></div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Role</label>
-        <div class="grid grid-cols-2 gap-2">
+        <div class="grid ${isSuperadmin() ? 'grid-cols-2' : 'grid-cols-1'} gap-2">
           <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="role" value="Engineer" checked class="mt-0.5" />
             <div><div class="font-medium text-slate-800">Engineer</div><div class="text-[11px] text-slate-500">Equipment, Engineering Corner, Maintenance Log.</div></div>
           </label>
-          <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+          ${isSuperadmin() ? `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="role" value="Admin" class="mt-0.5" />
             <div><div class="font-medium text-slate-800">Admin</div><div class="text-[11px] text-slate-500">Full access incl. plants, team, notifications.</div></div>
-          </label>
+          </label>` : ''}
         </div>
+        ${isSuperadmin() ? '' : '<div class="text-[11px] text-slate-400 mt-1">Only the Superadmin can grant Admin access.</div>'}
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -1015,9 +1012,12 @@ function submitInvite(ev) {
   const email = f.get('email').trim().toLowerCase();
   if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
   if ((state.invites||[]).some(i => i.status === 'pending' && i.email.toLowerCase() === email)) { alert('An invite is already pending for this email.'); return; }
+  // Only the Superadmin can grant Admin; everyone else invites Engineers.
+  const requestedRole = f.get('role') || 'Engineer';
+  const role = (requestedRole === 'Admin' && isSuperadmin()) ? 'Admin' : 'Engineer';
   const invite = {
     id: 'INV-' + Date.now() + '-' + Math.floor(Math.random()*1e4),
-    name: f.get('name').trim(), email, role: f.get('role') || 'Engineer',
+    name: f.get('name').trim(), email, role,
     ts: new Date().toISOString(), invitedBy: currentUser()?.id, status: 'pending',
   };
   state.invites = (state.invites || []).concat(invite);
@@ -1165,7 +1165,11 @@ function submitAcceptInvite(ev, token) {
 function removeUser(id) {
   if (!isAdmin() || currentUser()?.id === id) return;
   const u = state.users.find(x => x.id === id);
-  if (!u || !confirm(`Remove ${u.name} from the team?`)) return;
+  if (!u) return;
+  // Superadmin can never be removed; only a Superadmin may remove an Admin.
+  if (u.role === 'Superadmin') { alert('The Superadmin account cannot be removed.'); return; }
+  if (u.role === 'Admin' && !isSuperadmin()) { alert('Only the Superadmin can remove an Admin.'); return; }
+  if (!confirm(`Remove ${u.name} from the team?`)) return;
   state.users = state.users.filter(x => x.id !== id);
   saveUsers(state.users);
   route();

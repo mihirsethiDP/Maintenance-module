@@ -7,7 +7,7 @@
 create table if not exists public.profiles (
   id         uuid primary key references auth.users(id) on delete cascade,
   name       text,
-  role       text not null default 'Engineer' check (role in ('Admin','Engineer')),
+  role       text not null default 'Engineer' check (role in ('Superadmin','Admin','Engineer')),
   phone      text,
   status     text not null default 'active',
   created_at timestamptz not null default now()
@@ -23,7 +23,7 @@ set search_path = public
 as $$
   select exists (
     select 1 from public.profiles
-    where id = auth.uid() and role = 'Admin'
+    where id = auth.uid() and role in ('Admin','Superadmin')
   );
 $$;
 
