@@ -197,7 +197,9 @@ const routes = [
 const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
   ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
   : null;
-let authUser = null;   // cached identity in real mode: {id,email,name,role,phone,status}
+let authUser = null;        // cached identity in real mode: {id,email,name,role,phone,status,plants}
+let cloudUsers = null;      // real users hydrated from Supabase profiles (real mode)
+let cloudAssignments = {};  // userId -> [plantId] (real mode)
 
 async function loadAuthProfile(u) {
   let name = (u.email || '').split('@')[0], role = 'Engineer', phone = '', status = 'active';
@@ -205,8 +207,35 @@ async function loadAuthProfile(u) {
     const { data } = await SUPA.from('profiles').select('name,role,phone,status').eq('id', u.id).single();
     if (data) { name = data.name || name; role = data.role || role; phone = data.phone || ''; status = data.status || 'active'; }
   } catch (e) { console.warn('profile load failed', e); }
-  authUser = { id: u.id, email: u.email, name, role, phone, status };
+  let plants = [];
+  try {
+    const { data: pa } = await SUPA.from('plant_assignments').select('plant_id').eq('user_id', u.id);
+    if (pa) plants = pa.map(x => x.plant_id);
+  } catch (e) { console.warn('assignment load failed', e); }
+  authUser = { id: u.id, email: u.email, name, role, phone, status, plants };
 }
+
+async function hydrateCloud() {
+  if (!SUPA || !authUser) return;
+  try {
+    const { data: profs } = await SUPA.from('profiles').select('id,name,role,phone,status,email');
+    if (profs) cloudUsers = profs.map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active' }));
+  } catch (e) { console.warn('users hydrate failed', e); }
+  try {
+    const { data: pa } = await SUPA.from('plant_assignments').select('user_id,plant_id');
+    cloudAssignments = {};
+    (pa || []).forEach(a => { (cloudAssignments[a.user_id] = cloudAssignments[a.user_id] || []).push(a.plant_id); });
+  } catch (e) { console.warn('assignments hydrate failed', e); }
+}
+
+// Plant IDs the current user may see: admins → all; engineers → assigned (real mode) or all (prototype).
+function accessiblePlantIds() {
+  const u = currentUser();
+  if (!u || effRole(u) === 'Admin') return state.plants.map(p => p.id);
+  if (SUPA) return (authUser && authUser.plants) ? authUser.plants.slice() : [];
+  return state.plants.map(p => p.id); // prototype: engineers unrestricted
+}
+function canAccessPlant(pid) { return effRole(currentUser()) === 'Admin' || accessiblePlantIds().includes(pid); }
 
 function currentUser() {
   if (SUPA) return authUser;
@@ -225,19 +254,21 @@ async function logout() {
   if (SUPA) { try { await SUPA.auth.signOut(); } catch (e) {} authUser = null; route(); return; }
   localStorage.removeItem(LS_SESSION); route();
 }
+// Superadmin and Admin share the same route access; only Engineer is restricted.
+function effRole(user) { return user && user.role === 'Engineer' ? 'Engineer' : 'Admin'; }
 function routeAllowed(hash, user) {
   const base = hash.startsWith('#/equipment/') ? '#/equipment' : hash;
   const r = routes.find(x => x.hash === base);
   if (!r) return true; // notifications panel etc. are not routes
-  return r.roles.includes(user.role);
+  return r.roles.includes(effRole(user));
 }
-function homeHashFor(user) { return user.role === 'Admin' ? '#/dashboard' : '#/equipment'; }
+function homeHashFor(user) { return effRole(user) === 'Admin' ? '#/dashboard' : '#/equipment'; }
 
 function renderNav() {
   const user = currentUser();
   if (!user) { document.getElementById('nav').innerHTML = ''; return; }
   const cur = location.hash || homeHashFor(user);
-  document.getElementById('nav').innerHTML = routes.filter(r => r.roles.includes(user.role)).map(r => {
+  document.getElementById('nav').innerHTML = routes.filter(r => r.roles.includes(effRole(user))).map(r => {
     const active = cur === r.hash || (r.hash === '#/equipment' && cur.startsWith('#/equipment/'));
     return `<a href="${r.hash}" class="px-3 py-1.5 rounded-md ${active?'bg-brand-50 text-brand font-medium':'text-slate-600 hover:bg-slate-100'}">${r.label}</a>`;
   }).join('');
@@ -245,6 +276,7 @@ function renderNav() {
 
 function route() {
   state = load();
+  if (SUPA && cloudUsers) state.users = cloudUsers;   // real users replace the localStorage seed
   const user = currentUser();
   renderHeaderChrome();
   const h0 = location.hash || '';
@@ -320,6 +352,7 @@ async function submitLogin(ev) {
     const { data, error } = await SUPA.auth.signInWithPassword({ email, password });
     if (error) { loginError(error.message); if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; } return; }
     await loadAuthProfile(data.user);
+    await hydrateCloud();
     location.hash = homeHashFor(authUser);
     route();
     return;
@@ -451,12 +484,20 @@ function markAllNotifsRead() {
 
 // ---------- Reusable controls ----------
 function plantFilterControl() {
-  const opts = ['<option value="all">All plants</option>'].concat(
-    state.plants.map(p => `<option value="${p.id}" ${ui.plantFilter===p.id?'selected':''}>${p.name}</option>`)
+  const ids = accessiblePlantIds();
+  const visible = state.plants.filter(p => ids.includes(p.id));
+  const allLabel = effRole(currentUser()) === 'Admin' ? 'All plants' : 'All my plants';
+  const opts = [`<option value="all">${allLabel}</option>`].concat(
+    visible.map(p => `<option value="${p.id}" ${ui.plantFilter===p.id?'selected':''}>${p.name}</option>`)
   ).join('');
   return `<select onchange="ui.plantFilter=this.value; route()" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">${opts}</select>`;
 }
-function applyPlantFilter(eq) { return ui.plantFilter === 'all' ? eq : eq.filter(e => e.plantId === ui.plantFilter); }
+// Restrict to accessible plants first, then apply the chosen plant filter.
+function applyPlantFilter(eq) {
+  const ids = accessiblePlantIds();
+  let scoped = (effRole(currentUser()) === 'Admin') ? eq : eq.filter(e => ids.includes(e.plantId));
+  return ui.plantFilter === 'all' ? scoped : scoped.filter(e => e.plantId === ui.plantFilter);
+}
 function applyTypeFilter(eq)  { return ui.typeFilter  === 'all' ? eq : eq.filter(e => e.type      === ui.typeFilter);  }
 function typeFilterControl() {
   const opts = ['<option value="all">All types</option>'].concat(
@@ -609,6 +650,10 @@ function filterEq(q) {
 function renderEquipmentDetail(id) {
   const e = eqById(id);
   if (!e) { document.getElementById('view').innerHTML = `<p>Equipment not found. <a class="text-brand" href="#/equipment">Back</a></p>`; return; }
+  if (!canAccessPlant(e.plantId)) {
+    document.getElementById('view').innerHTML = `<div class="bg-white rounded-xl border border-slate-200 p-8 text-center"><div class="text-slate-800 font-semibold mb-1">No access</div><div class="text-slate-500 text-sm mb-4">This equipment belongs to a plant you're not assigned to.</div><a class="text-brand hover:underline text-sm" href="#/equipment">&larr; Back to equipment</a></div>`;
+    return;
+  }
   const logs = state.logs.filter(l => l.equipmentId === id).sort((a,b) => b.startDate.localeCompare(a.startDate));
   const open = logs.find(l => !l.endDate);
 
@@ -728,6 +773,7 @@ function getFilteredLogs() {
     .map(l => ({ l, e: eqById(l.equipmentId) }))
     .filter(({l, e}) => {
       if (!e) return false;
+      if (effRole(currentUser()) !== 'Admin' && !accessiblePlantIds().includes(e.plantId)) return false;
       if (ui.plantFilter !== 'all' && e.plantId !== ui.plantFilter) return false;
       if (fType && e.type !== fType) return false;
       if (fReason && l.reason !== fReason) return false;
@@ -880,22 +926,40 @@ function nextUserId() {
   const max = state.users.reduce((m, u) => { const n = parseInt(String(u.id).replace(/\D/g,''), 10); return isNaN(n) ? m : Math.max(m, n); }, 0);
   return 'U-' + (max + 1);
 }
+function assignmentsFor(uid) {
+  if (SUPA) return cloudAssignments[uid] || [];
+  const u = state.users.find(x => x.id === uid);
+  return (u && u.plantIds) ? u.plantIds : [];
+}
 function renderTeam() {
   const userRows = state.users.map(u => {
     const roleBadge = (u.role === 'Admin' || u.role === 'Superadmin') ? 'badge-brand' : 'badge-neutral';
     const isSelf = currentUser()?.id === u.id;
+    const isEng = u.role === 'Engineer';
+    const assigned = assignmentsFor(u.id);
+    const plantsCell = isEng
+      ? (assigned.length
+          ? `<div class="cell-primary">${assigned.length} plant${assigned.length===1?'':'s'}</div><div class="cell-muted truncate max-w-[220px]">${assigned.map(plantName).join(', ')}</div>`
+          : `<span class="badge badge-mt">None assigned</span>`)
+      : `<span class="text-xs text-slate-500">All plants</span>`;
+    const actions = [];
+    if (isEng) actions.push(`<button onclick="openAssignPlantsModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100">Assign plants</button>`);
+    if (isSuperadmin() && !isSelf && u.role !== 'Superadmin')
+      actions.push(`<select onchange="setUserRole('${u.id}', this.value)" class="text-xs border border-slate-300 rounded-md px-1.5 py-1 bg-white">
+        <option value="Engineer" ${u.role==='Engineer'?'selected':''}>Engineer</option>
+        <option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option>
+      </select>`);
+    if (!isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer'))
+      actions.push(`<button onclick="removeUser('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>`);
     return `<tr>
       <td>
         <div class="cell-primary">${u.name}${isSelf?' <span class="text-[10px] text-slate-400">(you)</span>':''}</div>
-        <div class="cell-muted">${u.email}</div>
+        <div class="cell-muted">${u.email || '—'}</div>
       </td>
       <td><span class="badge ${roleBadge}">${u.role}</span></td>
+      <td>${plantsCell}</td>
       <td><div class="cell-muted">${u.phone || '—'}</div></td>
-      <td><span class="badge badge-op">Active</span></td>
-      <td class="col-center">
-        ${isSelf ? '<span class="text-xs text-slate-400">—</span>' :
-          `<button onclick="removeUser('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>`}
-      </td>
+      <td class="col-center">${actions.length ? `<div class="inline-flex gap-1.5 flex-wrap justify-center">${actions.join('')}</div>` : '<span class="text-xs text-slate-400">—</span>'}</td>
     </tr>`;
   }).join('');
 
@@ -935,21 +999,22 @@ function renderTeam() {
         <p class="text-slate-500 text-sm mt-1">Manage who can access the tool and who performs maintenance.</p>
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
-        <button onclick="openAddTechnicianModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
+        ${SUPA ? '' : `<button onclick="openAddTechnicianModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           Add Technician
         </button>
         <button onclick="openInviteModal()" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
           Invite User
-        </button>
+        </button>`}
       </div>
     </div>
-    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Active users <span class="text-slate-400 font-normal">(${state.users.length})</span></div>
+    ${SUPA ? `<div class="mt-3 p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-brand">Create users in Supabase (Authentication → Users); they appear here automatically. Set their role and assign plants below. Self-service email invites come in Phase 3.</div>` : ''}
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-4">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Users <span class="text-slate-400 font-normal">(${state.users.length})</span></div>
       <div class="overflow-x-auto">
         <table class="list-table">
-          <thead><tr><th>User</th><th>Role</th><th>Phone</th><th>Status</th><th class="col-center">Action</th></tr></thead>
+          <thead><tr><th>User</th><th>Role</th><th>Assigned plants</th><th>Phone</th><th class="col-center">Actions</th></tr></thead>
           <tbody>${userRows}</tbody>
         </table>
       </div>
@@ -1170,8 +1235,69 @@ function removeUser(id) {
   if (u.role === 'Superadmin') { alert('The Superadmin account cannot be removed.'); return; }
   if (u.role === 'Admin' && !isSuperadmin()) { alert('Only the Superadmin can remove an Admin.'); return; }
   if (!confirm(`Remove ${u.name} from the team?`)) return;
+  if (SUPA) { alert('Delete the user in Supabase → Authentication → Users. This list reflects Supabase.'); return; }
   state.users = state.users.filter(x => x.id !== id);
   saveUsers(state.users);
+  route();
+}
+
+// ---------- Assign plants to an engineer (admin) ----------
+function openAssignPlantsModal(userId) {
+  if (!isAdmin()) return;
+  const u = state.users.find(x => x.id === userId); if (!u) return;
+  const assigned = assignmentsFor(userId);
+  const boxes = state.plants.map(p => `
+    <label class="flex items-center gap-2 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
+      <input type="checkbox" name="plant.${p.id}" ${assigned.includes(p.id)?'checked':''} />
+      <span><span class="font-medium text-slate-800">${p.name}</span>${p.location?` <span class="text-slate-400">· ${p.location}</span>`:''}</span>
+    </label>`).join('');
+  document.getElementById('modalTitle').textContent = `Assign plants — ${u.name}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitAssignPlants(event, '${userId}')" class="space-y-3 text-sm">
+      <div class="flex items-center gap-2">
+        <div class="text-xs text-slate-500">Select the plants this engineer can access.</div>
+        <div class="ml-auto flex gap-2">
+          <button type="button" onclick="toggleAllPlants(true)" class="text-xs text-brand hover:underline">Select all</button>
+          <button type="button" onclick="toggleAllPlants(false)" class="text-xs text-slate-500 hover:underline">Clear</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[55vh] overflow-y-auto pr-1">${boxes}</div>
+      <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Save assignments</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function toggleAllPlants(on) {
+  document.querySelectorAll('#modalBody input[type="checkbox"]').forEach(cb => cb.checked = on);
+}
+async function submitAssignPlants(ev, userId) {
+  ev.preventDefault();
+  if (!isAdmin()) return;
+  const f = new FormData(ev.target);
+  const selected = state.plants.map(p => p.id).filter(id => f.get('plant.' + id));
+  if (SUPA) {
+    try {
+      await SUPA.from('plant_assignments').delete().eq('user_id', userId);
+      if (selected.length) await SUPA.from('plant_assignments').insert(selected.map(pid => ({ user_id: userId, plant_id: pid })));
+      await hydrateCloud();
+      if (authUser && authUser.id === userId) authUser.plants = selected.slice();
+    } catch (e) { alert('Could not save assignments: ' + e.message); return; }
+  } else {
+    const u = state.users.find(x => x.id === userId); if (u) u.plantIds = selected;
+    saveUsers(state.users);
+  }
+  closeModal(); route();
+}
+async function setUserRole(userId, role) {
+  if (!isSuperadmin()) { alert('Only the Superadmin can change roles.'); route(); return; }
+  if (SUPA) {
+    try { await SUPA.from('profiles').update({ role }).eq('id', userId); await hydrateCloud(); }
+    catch (e) { alert('Could not change role: ' + e.message); return; }
+  } else {
+    const u = state.users.find(x => x.id === userId); if (u) u.role = role; saveUsers(state.users);
+  }
   route();
 }
 
@@ -1355,10 +1481,12 @@ function exportPDF(eqId) {
 const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
 
 function getPendingTasks() {
+  const admin = effRole(currentUser()) === 'Admin';
+  const ids = accessiblePlantIds();
   return state.logs
     .filter(l => !l.endDate)
     .map(l => ({ l, e: eqById(l.equipmentId) }))
-    .filter(x => x.e)
+    .filter(x => x.e && (admin || ids.includes(x.e.plantId)))
     .sort((a,b) => a.l.startDate.localeCompare(b.l.startDate));
 }
 
@@ -1366,9 +1494,10 @@ function getUpcomingPPM(days = 30) {
   const todayStr = today();
   const now = new Date(todayStr + 'T00:00:00');
   const horizon = new Date(now); horizon.setDate(horizon.getDate() + days);
+  const admin = effRole(currentUser()) === 'Admin'; const ids = accessiblePlantIds();
   const out = [];
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
-    const e = eqById(eqId); if (!e) continue;
+    const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
     if (slot === 'weekly') {
       let d = new Date('2026-01-01T00:00:00');
       while (d < now) { d.setDate(d.getDate() + 7); }
@@ -1392,9 +1521,10 @@ function getOverduePPM() {
   // PPM slots whose date is in the past but no completion log exists at-or-after that date in this month.
   const todayStr = today();
   const now = new Date(todayStr + 'T00:00:00');
+  const admin = effRole(currentUser()) === 'Admin'; const ids = accessiblePlantIds();
   const out = [];
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
-    const e = eqById(eqId); if (!e) continue;
+    const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
     if (slot === 'weekly') continue; // weekly noise — skip from "overdue"
     const day = SLOT_DAY[slot];
     const m = now.getMonth(), y = now.getFullYear();
@@ -1409,10 +1539,13 @@ function getOverduePPM() {
 }
 
 function getVisits() {
-  // Group completed logs by endDate (= visit day)
+  // Group completed logs by endDate (= visit day), scoped to accessible plants.
+  const admin = effRole(currentUser()) === 'Admin'; const ids = accessiblePlantIds();
   const map = new Map();
   for (const l of state.logs) {
     if (!l.endDate) continue;
+    const e = eqById(l.equipmentId);
+    if (!e || (!admin && !ids.includes(e.plantId))) continue;
     if (!map.has(l.endDate)) map.set(l.endDate, []);
     map.get(l.endDate).push(l);
   }
@@ -2698,12 +2831,12 @@ async function boot() {
   if (SUPA) {
     try {
       const { data } = await SUPA.auth.getSession();
-      if (data.session) await loadAuthProfile(data.session.user);
+      if (data.session) { await loadAuthProfile(data.session.user); await hydrateCloud(); }
     } catch (e) { console.warn('session restore failed', e); }
     // React to sign-in / sign-out / token refresh across tabs
     SUPA.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT' || !session) { authUser = null; }
-      else if (!authUser || authUser.id !== session.user.id) { await loadAuthProfile(session.user); }
+      if (event === 'SIGNED_OUT' || !session) { authUser = null; cloudUsers = null; cloudAssignments = {}; }
+      else if (!authUser || authUser.id !== session.user.id) { await loadAuthProfile(session.user); await hydrateCloud(); }
       route();
     });
   }
