@@ -196,19 +196,39 @@ const routes = [
   { hash: '#/team',      label: 'Team',               roles: ['Admin'] },
 ];
 
-// ---------- Auth (prototype — client-side only, NOT real security) ----------
+// ---------- Auth ----------
+// Real mode: Supabase Auth (when supabase-config.js + the CDN client are present).
+// Prototype mode: localStorage mock (fallback when Supabase isn't configured).
+const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
+  : null;
+let authUser = null;   // cached identity in real mode: {id,email,name,role,phone,status}
+
+async function loadAuthProfile(u) {
+  let name = (u.email || '').split('@')[0], role = 'Engineer', phone = '', status = 'active';
+  try {
+    const { data } = await SUPA.from('profiles').select('name,role,phone,status').eq('id', u.id).single();
+    if (data) { name = data.name || name; role = data.role || role; phone = data.phone || ''; status = data.status || 'active'; }
+  } catch (e) { console.warn('profile load failed', e); }
+  authUser = { id: u.id, email: u.email, name, role, phone, status };
+}
+
 function currentUser() {
+  if (SUPA) return authUser;
   const id = localStorage.getItem(LS_SESSION);
   return id ? (state.users || []).find(u => u.id === id) : null;
 }
 function isAdmin() { const u = currentUser(); return !!u && u.role === 'Admin'; }
-function loginWith(email, password) {
+function loginWith(email, password) {   // prototype mode only
   const u = (state.users || []).find(x => x.email.toLowerCase() === String(email).toLowerCase().trim() && x.status === 'active');
   if (!u || u.password !== password) return false;
   localStorage.setItem(LS_SESSION, u.id);
   return true;
 }
-function logout() { localStorage.removeItem(LS_SESSION); route(); }
+async function logout() {
+  if (SUPA) { try { await SUPA.auth.signOut(); } catch (e) {} authUser = null; route(); return; }
+  localStorage.removeItem(LS_SESSION); route();
+}
 function routeAllowed(hash, user) {
   const base = hash.startsWith('#/equipment/') ? '#/equipment' : hash;
   const r = routes.find(x => x.hash === base);
@@ -276,13 +296,13 @@ function renderLogin() {
             <div id="loginError" class="hidden text-xs text-red-600"></div>
             <button class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Sign in</button>
           </form>
-          <div class="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500 leading-relaxed">
+          ${SUPA ? '' : `<div class="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500 leading-relaxed">
             <div class="font-medium text-slate-600 mb-1">Demo accounts</div>
             <button onclick="fillLogin('mihir.sethi@digitalpaani.com','admin123')" class="block text-left hover:text-brand">Admin — mihir.sethi@digitalpaani.com / admin123</button>
             <button onclick="fillLogin('amehta@digitalpaani.com','eng123')" class="block text-left hover:text-brand">Engineer — amehta@digitalpaani.com / eng123</button>
-          </div>
+          </div>`}
         </div>
-        <p class="text-[10px] text-slate-400 text-center mt-3">Prototype sign-in — not real authentication. See backend plan for production.</p>
+        <p class="text-[10px] text-slate-400 text-center mt-3">${SUPA ? 'Secured by Supabase Auth.' : 'Prototype sign-in — not real authentication. See backend plan for production.'}</p>
       </div>
     </div>`;
 }
@@ -290,17 +310,29 @@ function fillLogin(email, pw) {
   const f = document.querySelector('#view form');
   if (f) { f.email.value = email; f.password.value = pw; }
 }
-function submitLogin(ev) {
+function loginError(msg) {
+  const el = document.getElementById('loginError');
+  if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+}
+async function submitLogin(ev) {
   ev.preventDefault();
   const f = new FormData(ev.target);
-  if (loginWith(f.get('email'), f.get('password'))) {
-    const u = currentUser();
-    location.hash = homeHashFor(u);
+  const email = String(f.get('email')).trim(), password = f.get('password');
+  if (SUPA) {
+    const btn = ev.target.querySelector('button[type=submit], button:not([type])');
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+    const { data, error } = await SUPA.auth.signInWithPassword({ email, password });
+    if (error) { loginError(error.message); if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; } return; }
+    await loadAuthProfile(data.user);
+    location.hash = homeHashFor(authUser);
+    route();
+    return;
+  }
+  if (loginWith(email, password)) {
+    location.hash = homeHashFor(currentUser());
     route();
   } else {
-    const el = document.getElementById('loginError');
-    el.textContent = 'Invalid email or password.';
-    el.classList.remove('hidden');
+    loginError('Invalid email or password.');
   }
 }
 
@@ -2658,7 +2690,21 @@ function mountTourFAB() {
 }
 
 // ---------- Boot ----------
-route();
-mountTourFAB();
-// preload voices so TTS works on first click
-if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+async function boot() {
+  if (SUPA) {
+    try {
+      const { data } = await SUPA.auth.getSession();
+      if (data.session) await loadAuthProfile(data.session.user);
+    } catch (e) { console.warn('session restore failed', e); }
+    // React to sign-in / sign-out / token refresh across tabs
+    SUPA.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT' || !session) { authUser = null; }
+      else if (!authUser || authUser.id !== session.user.id) { await loadAuthProfile(session.user); }
+      route();
+    });
+  }
+  route();
+  mountTourFAB();
+  if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+}
+boot();
