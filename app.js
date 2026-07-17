@@ -194,6 +194,9 @@ const routes = [
 // ---------- Auth ----------
 // Real mode: Supabase Auth (when supabase-config.js + the CDN client are present).
 // Prototype mode: localStorage mock (fallback when Supabase isn't configured).
+// Capture the auth-redirect hash (invite / password recovery) BEFORE the client consumes it.
+const _initHash = location.hash || '';
+let needsPasswordSet = /(?:^|[#&])type=(invite|recovery|signup)/.test(_initHash);
 const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
   ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
   : null;
@@ -310,6 +313,8 @@ function route() {
   const user = currentUser();
   renderHeaderChrome();
   const h0 = location.hash || '';
+  // Invite / password-recovery landing: the user has a session but must set a password.
+  if (SUPA && needsPasswordSet && user) { renderSetPassword(); return; }
   if (h0.startsWith('#/accept/')) { renderAcceptInvite(h0.slice('#/accept/'.length)); return; }
   if (!user) { renderLogin(); return; }
   renderNav();
@@ -363,6 +368,44 @@ function renderLogin() {
         <p class="text-[10px] text-slate-400 text-center mt-3">${SUPA ? 'Secured by Supabase Auth.' : 'Prototype sign-in — not real authentication. See backend plan for production.'}</p>
       </div>
     </div>`;
+}
+// Invite / recovery landing — the user sets their password to activate their account.
+function renderSetPassword() {
+  const u = currentUser();
+  document.getElementById('view').innerHTML = `
+    <div class="min-h-[70vh] flex items-center justify-center px-4"><div class="w-full max-w-sm">
+      <div class="flex items-center gap-2 justify-center mb-6">
+        <div class="w-10 h-10 rounded-lg bg-brand text-white grid place-items-center font-bold text-lg">DP</div>
+        <div><div class="font-semibold text-lg leading-tight">DigitalPaani</div><div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div></div>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+        <h1 class="text-lg font-semibold mb-1">Set your password</h1>
+        <p class="text-xs text-slate-500 mb-4">Welcome${u && u.name ? ', ' + u.name : ''}! Choose a password to activate your DigitalPaani account.</p>
+        <form onsubmit="submitSetPassword(event)" class="space-y-3">
+          <div><label class="block text-xs text-slate-600 mb-1">New password <span class="text-red-500">*</span></label>
+            <input name="password" type="password" required minlength="6" autocomplete="new-password" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="At least 6 characters" /></div>
+          <div><label class="block text-xs text-slate-600 mb-1">Confirm password <span class="text-red-500">*</span></label>
+            <input name="confirm" type="password" required autocomplete="new-password" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Re-enter password" /></div>
+          <div id="spError" class="hidden text-xs text-red-600"></div>
+          <button class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Set password &amp; continue</button>
+        </form>
+      </div>
+    </div></div>`;
+}
+async function submitSetPassword(ev) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const pw = f.get('password'), confirm = f.get('confirm');
+  const err = document.getElementById('spError');
+  if (pw !== confirm) { err.textContent = 'Passwords do not match.'; err.classList.remove('hidden'); return; }
+  const { error } = await SUPA.auth.updateUser({ password: pw });
+  if (error) { err.textContent = error.message; err.classList.remove('hidden'); return; }
+  needsPasswordSet = false;
+  history.replaceState(null, '', location.pathname + location.search);  // strip the token hash
+  await loadAuthProfile((await SUPA.auth.getSession()).data.session.user);
+  await hydrateCloud();
+  location.hash = homeHashFor(authUser);
+  route();
 }
 function fillLogin(email, pw) {
   const f = document.querySelector('#view form');
@@ -1038,14 +1081,14 @@ function renderTeam() {
         ${SUPA ? '' : `<button onclick="openAddTechnicianModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           Add Technician
-        </button>
+        </button>`}
         <button onclick="openInviteModal()" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
           Invite User
-        </button>`}
+        </button>
       </div>
     </div>
-    ${SUPA ? `<div class="mt-3 p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-brand">Create users in Supabase (Authentication → Users); they appear here automatically. Set their role and assign plants below. Self-service email invites come in Phase 3.</div>` : ''}
+    ${SUPA ? `<div class="mt-3 p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-brand">Invite users by email — they receive a link to set their own password and join with the role you pick. Assign plants below once they appear.</div>` : ''}
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-4">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Users <span class="text-slate-400 font-normal">(${state.users.length})</span></div>
       <div class="overflow-x-auto">
@@ -1101,24 +1144,45 @@ function openInviteModal() {
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Create invite</button>
+        <button type="submit" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${SUPA ? 'Send invite' : 'Create invite'}</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
 }
-function submitInvite(ev) {
+async function submitInvite(ev) {
   ev.preventDefault();
   if (!isAdmin()) return;
   const f = new FormData(ev.target);
   const email = f.get('email').trim().toLowerCase();
-  if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
-  if ((state.invites||[]).some(i => i.status === 'pending' && i.email.toLowerCase() === email)) { alert('An invite is already pending for this email.'); return; }
-  // Only the Superadmin can grant Admin; everyone else invites Engineers.
+  const name = f.get('name').trim();
   const requestedRole = f.get('role') || 'Engineer';
   const role = (requestedRole === 'Admin' && isSuperadmin()) ? 'Admin' : 'Engineer';
+
+  if (SUPA) {
+    // Real invite: Edge Function calls the admin API; Supabase emails the link.
+    const btn = ev.target.querySelector('button[type=submit], button:not([type])');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      const { data, error } = await SUPA.functions.invoke('invite-user', {
+        body: { email, name, role, redirectTo: location.origin + location.pathname },
+      });
+      if (error || (data && data.error)) throw new Error((data && data.error) || error.message);
+      closeModal();
+      alert(`Invitation email sent to ${email} as ${data.role || role}. They'll set their own password from the email link.`);
+      await hydrateCloud(); route();
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Send invite'; }
+      alert('Could not send invite: ' + err.message);
+    }
+    return;
+  }
+
+  // Prototype fallback: shareable link flow.
+  if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
+  if ((state.invites||[]).some(i => i.status === 'pending' && i.email.toLowerCase() === email)) { alert('An invite is already pending for this email.'); return; }
   const invite = {
     id: 'INV-' + Date.now() + '-' + Math.floor(Math.random()*1e4),
-    name: f.get('name').trim(), email, role,
+    name, email, role,
     ts: new Date().toISOString(), invitedBy: currentUser()?.id, status: 'pending',
   };
   state.invites = (state.invites || []).concat(invite);
@@ -2916,6 +2980,7 @@ async function boot() {
     } catch (e) { console.warn('session restore failed', e); }
     // React to sign-in / sign-out / token refresh across tabs
     SUPA.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'PASSWORD_RECOVERY') needsPasswordSet = true;
       if (event === 'SIGNED_OUT' || !session) { authUser = null; cloudUsers = null; cloudAssignments = {}; }
       else if (!authUser || authUser.id !== session.user.id) { await loadAuthProfile(session.user); await hydrateCloud(); }
       route();
