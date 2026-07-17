@@ -114,6 +114,7 @@ const LS_USERS = 'mm.users.v3';
 const LS_SESSION = 'mm.session.v1';
 const LS_NOTIF = 'mm.notifs.v1';
 const LS_OVERDUE_SEEN = 'mm.overdueSeen.v1';
+const LS_INVITES = 'mm.invites.v1';
 const LS_SLOTS = 'mm.slots.v2';
 
 function seedIfNeeded() {
@@ -137,6 +138,7 @@ function load() {
     plants:    JSON.parse(localStorage.getItem(LS_PLANT)),
     users:     JSON.parse(localStorage.getItem(LS_USERS)),
     slots:     JSON.parse(localStorage.getItem(LS_SLOTS)),
+    invites:   JSON.parse(localStorage.getItem(LS_INVITES) || '[]'),
   };
 }
 const saveEq    = e => localStorage.setItem(LS_EQ,    JSON.stringify(e));
@@ -144,7 +146,8 @@ const saveLog   = l => localStorage.setItem(LS_LOG,   JSON.stringify(l));
 const saveSlots = s => localStorage.setItem(LS_SLOTS, JSON.stringify(s));
 const savePlant = p => localStorage.setItem(LS_PLANT, JSON.stringify(p));
 const saveUsers = u => localStorage.setItem(LS_USERS, JSON.stringify(u));
-function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS, LS_NOTIF, LS_OVERDUE_SEEN].forEach(k => localStorage.removeItem(k)); route(); }
+const saveInvites = i => localStorage.setItem(LS_INVITES, JSON.stringify(i));
+function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS, LS_NOTIF, LS_OVERDUE_SEEN, LS_INVITES].forEach(k => localStorage.removeItem(k)); route(); }
 
 // ---------- Helpers ----------
 const today = () => new Date().toISOString().slice(0,10);
@@ -228,6 +231,8 @@ function route() {
   state = load();
   const user = currentUser();
   renderHeaderChrome();
+  const h0 = location.hash || '';
+  if (h0.startsWith('#/accept/')) { renderAcceptInvite(h0.slice('#/accept/'.length)); return; }
   if (!user) { renderLogin(); return; }
   renderNav();
   let h = location.hash || homeHashFor(user);
@@ -848,9 +853,8 @@ function nextUserId() {
   return 'U-' + (max + 1);
 }
 function renderTeam() {
-  const rows = state.users.map(u => {
+  const userRows = state.users.map(u => {
     const roleBadge = u.role === 'Admin' ? 'badge-brand' : 'badge-neutral';
-    const statusBadgeCls = u.status === 'active' ? 'badge-op' : 'badge-mt';
     const isSelf = currentUser()?.id === u.id;
     return `<tr>
       <td>
@@ -859,13 +863,43 @@ function renderTeam() {
       </td>
       <td><span class="badge ${roleBadge}">${u.role}</span></td>
       <td><div class="cell-muted">${u.phone || '—'}</div></td>
-      <td><span class="badge ${statusBadgeCls} capitalize">${u.status}</span></td>
+      <td><span class="badge badge-op">Active</span></td>
       <td class="col-center">
         ${isSelf ? '<span class="text-xs text-slate-400">—</span>' :
           `<button onclick="removeUser('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>`}
       </td>
     </tr>`;
   }).join('');
+
+  const pending = (state.invites || []).filter(i => i.status === 'pending');
+  const inviteRows = pending.map(i => `<tr>
+      <td>
+        <div class="cell-primary">${i.name}</div>
+        <div class="cell-muted">${i.email}</div>
+      </td>
+      <td><span class="badge ${i.role === 'Admin' ? 'badge-brand' : 'badge-neutral'}">${i.role}</span></td>
+      <td><div class="cell-muted">Invited ${new Date(i.ts).toLocaleDateString()}</div></td>
+      <td><span class="badge badge-mt">Pending</span></td>
+      <td class="col-center">
+        <div class="inline-flex gap-1.5">
+          <button onclick="showInviteLinkModal('${i.id}')" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100">Invite link</button>
+          <button onclick="revokeInvite('${i.id}')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Revoke</button>
+        </div>
+      </td>
+    </tr>`).join('');
+
+  const pendingSection = pending.length ? `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+        <span>Pending invites <span class="text-slate-400 font-normal">(${pending.length})</span></span>
+        <span class="ml-auto text-xs text-slate-500 font-normal">Share the invite link — the person sets their own password to join.</span>
+      </div>
+      <div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Invitee</th><th>Role</th><th>Invited</th><th>Status</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${inviteRows}</tbody>
+      </table></div>
+    </div>` : '';
+
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-1 flex-wrap gap-3">
       <div>
@@ -873,30 +907,136 @@ function renderTeam() {
         <p class="text-slate-500 text-sm mt-1">Manage who can access the tool and who performs maintenance.</p>
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
-        <button onclick="openTeamModal('technician')" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
+        <button onclick="openAddTechnicianModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           Add Technician
         </button>
-        <button onclick="openTeamModal('invite')" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
+        <button onclick="openInviteModal()" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
           Invite User
         </button>
       </div>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Active users <span class="text-slate-400 font-normal">(${state.users.length})</span></div>
       <div class="overflow-x-auto">
         <table class="list-table">
           <thead><tr><th>User</th><th>Role</th><th>Phone</th><th>Status</th><th class="col-center">Action</th></tr></thead>
-          <tbody>${rows}</tbody>
+          <tbody>${userRows}</tbody>
         </table>
       </div>
-    </div>`;
+    </div>
+    ${pendingSection}`;
 }
-function openTeamModal(mode) {
-  const invite = mode === 'invite';
-  document.getElementById('modalTitle').textContent = invite ? 'Invite User' : 'Add Technician';
+
+// ---------- Invite workflow ----------
+function b64urlEncode(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  let bin = ''; bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64urlDecode(str) {
+  try {
+    str = str.replace(/-/g,'+').replace(/_/g,'/');
+    const bin = atob(str);
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return null; }
+}
+function inviteLinkFor(invite) {
+  const token = b64urlEncode({ n: invite.name, e: invite.email, r: invite.role, id: invite.id, ts: invite.ts });
+  return `${location.origin}${location.pathname}#/accept/${token}`;
+}
+function openInviteModal() {
+  if (!isAdmin()) return;
+  document.getElementById('modalTitle').textContent = 'Invite User';
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="submitTeamMember(event, '${mode}')" class="space-y-3 text-sm">
+    <form onsubmit="submitInvite(event)" class="space-y-3 text-sm">
+      <div><label class="block text-xs text-slate-600 mb-1">Full name <span class="text-red-500">*</span></label>
+        <input name="name" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Anita Desai" /></div>
+      <div><label class="block text-xs text-slate-600 mb-1">Email <span class="text-red-500">*</span></label>
+        <input name="email" type="email" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="name@digitalpaani.com" /></div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Role</label>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="role" value="Engineer" checked class="mt-0.5" />
+            <div><div class="font-medium text-slate-800">Engineer</div><div class="text-[11px] text-slate-500">Equipment, Engineering Corner, Maintenance Log.</div></div>
+          </label>
+          <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="role" value="Admin" class="mt-0.5" />
+            <div><div class="font-medium text-slate-800">Admin</div><div class="text-[11px] text-slate-500">Full access incl. plants, team, notifications.</div></div>
+          </label>
+        </div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Create invite</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function submitInvite(ev) {
+  ev.preventDefault();
+  if (!isAdmin()) return;
+  const f = new FormData(ev.target);
+  const email = f.get('email').trim().toLowerCase();
+  if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
+  if ((state.invites||[]).some(i => i.status === 'pending' && i.email.toLowerCase() === email)) { alert('An invite is already pending for this email.'); return; }
+  const invite = {
+    id: 'INV-' + Date.now() + '-' + Math.floor(Math.random()*1e4),
+    name: f.get('name').trim(), email, role: f.get('role') || 'Engineer',
+    ts: new Date().toISOString(), invitedBy: currentUser()?.id, status: 'pending',
+  };
+  state.invites = (state.invites || []).concat(invite);
+  saveInvites(state.invites);
+  showInviteLinkModal(invite.id);
+}
+function showInviteLinkModal(inviteId) {
+  const invite = (state.invites || []).find(i => i.id === inviteId);
+  if (!invite) return;
+  const link = inviteLinkFor(invite);
+  document.getElementById('modalTitle').textContent = 'Invite created';
+  document.getElementById('modalBody').innerHTML = `
+    <div class="space-y-3 text-sm">
+      <div class="text-slate-700">Invite for <b>${invite.name}</b> (${invite.email}) as <b>${invite.role}</b>.</div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Invite link</label>
+        <div class="flex gap-2">
+          <input id="inviteLinkField" readonly value="${link}" class="flex-1 border border-slate-300 rounded-md px-2 py-1.5 text-xs bg-slate-50" onclick="this.select()" />
+          <button onclick="copyInviteLink()" id="copyBtn" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-xs font-medium whitespace-nowrap">Copy</button>
+        </div>
+      </div>
+      <div class="p-2.5 rounded-md bg-amber-50 border border-amber-100 text-[11px] text-amber-800">
+        Prototype: share this link manually (WhatsApp, email, etc.). When the backend is live, this link would be emailed automatically. The invitee opens it and sets their own password — no password is set by you.
+      </div>
+      <div class="flex justify-end pt-1">
+        <button onclick="closeModal(); route();" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Done</button>
+      </div>
+    </div>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function copyInviteLink() {
+  const field = document.getElementById('inviteLinkField');
+  const done = () => { const b = document.getElementById('copyBtn'); if (b){ b.textContent = 'Copied!'; setTimeout(()=>{ if(b) b.textContent='Copy'; }, 1500); } };
+  if (navigator.clipboard) navigator.clipboard.writeText(field.value).then(done, () => { field.select(); document.execCommand('copy'); done(); });
+  else { field.select(); document.execCommand('copy'); done(); }
+}
+function revokeInvite(id) {
+  if (!isAdmin()) return;
+  const inv = (state.invites||[]).find(i => i.id === id);
+  if (!inv || !confirm(`Revoke the invite for ${inv.name}? The link will stop working.`)) return;
+  state.invites = state.invites.filter(i => i.id !== id);
+  saveInvites(state.invites);
+  route();
+}
+
+// ---------- Add Technician (admin) — created active immediately ----------
+function openAddTechnicianModal() {
+  if (!isAdmin()) return;
+  document.getElementById('modalTitle').textContent = 'Add Technician';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitAddTechnician(event)" class="space-y-3 text-sm">
       <div class="grid grid-cols-2 gap-3">
         <div><label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
           <input name="name" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Full name" /></div>
@@ -905,39 +1045,90 @@ function openTeamModal(mode) {
       </div>
       <div><label class="block text-xs text-slate-600 mb-1">Email <span class="text-red-500">*</span></label>
         <input name="email" type="email" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="name@digitalpaani.com" /></div>
-      ${invite ? `<div>
-        <label class="block text-xs text-slate-600 mb-1">Role</label>
-        <select name="role" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
-          <option value="Engineer">Engineer — field access (equipment, engineering corner, logs)</option>
-          <option value="Admin">Admin — full access (plants, equipment, team, notifications)</option>
-        </select>
-      </div>` : `<div class="text-xs text-slate-500">Technicians are added as <b>Engineers</b> and become selectable when logging maintenance.</div>`}
-      <div class="p-2.5 rounded-md bg-amber-50 border border-amber-100 text-[11px] text-amber-800">
-        Prototype: no real invite email is sent. ${invite ? "The user is created as <b>Invited</b> with a temporary password <b>welcome123</b>." : "A default password <b>eng123</b> is set."}
-      </div>
+      <div class="text-xs text-slate-500">Technicians are added as active <b>Engineers</b> with default password <b>eng123</b>, and become selectable when logging maintenance.</div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${invite ? 'Send invite' : 'Add technician'}</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add technician</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
 }
-function submitTeamMember(ev, mode) {
+function submitAddTechnician(ev) {
   ev.preventDefault();
   if (!isAdmin()) return;
   const f = new FormData(ev.target);
   const email = f.get('email').trim().toLowerCase();
   if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
-  const invite = mode === 'invite';
-  state.users.push({
-    id: nextUserId(), name: f.get('name').trim(), email,
-    role: invite ? (f.get('role') || 'Engineer') : 'Engineer',
-    phone: (f.get('phone')||'').trim(),
-    password: invite ? 'welcome123' : 'eng123',
-    status: invite ? 'invited' : 'active',
-  });
+  state.users.push({ id: nextUserId(), name: f.get('name').trim(), email, role: 'Engineer', phone: (f.get('phone')||'').trim(), password: 'eng123', status: 'active' });
   saveUsers(state.users);
   closeModal(); route();
+}
+
+// ---------- Accept invite (no session required) ----------
+function renderAcceptInvite(token) {
+  const data = b64urlDecode(token);
+  const wrap = (inner) => `<div class="min-h-[70vh] flex items-center justify-center px-4"><div class="w-full max-w-sm">
+    <div class="flex items-center gap-2 justify-center mb-6">
+      <div class="w-10 h-10 rounded-lg bg-brand text-white grid place-items-center font-bold text-lg">DP</div>
+      <div><div class="font-semibold text-lg leading-tight">DigitalPaani</div><div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div></div>
+    </div>${inner}</div></div>`;
+  const card = (inner) => `<div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">${inner}</div>`;
+
+  if (!data || !data.e) {
+    document.getElementById('view').innerHTML = wrap(card(`<h1 class="text-lg font-semibold mb-1">Invalid invite</h1>
+      <p class="text-sm text-slate-500 mb-4">This invite link is invalid or malformed.</p>
+      <a href="#/dashboard" onclick="location.hash='#/dashboard'" class="text-sm text-brand hover:underline">Go to sign in</a>`));
+    return;
+  }
+  const existing = state.users.find(u => u.email.toLowerCase() === data.e.toLowerCase());
+  if (existing && existing.status === 'active') {
+    document.getElementById('view').innerHTML = wrap(card(`<h1 class="text-lg font-semibold mb-1">Already a member</h1>
+      <p class="text-sm text-slate-500 mb-4">${data.e} already has an active account. Please sign in.</p>
+      <button onclick="location.hash='#/dashboard'; route();" class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Go to sign in</button>`));
+    return;
+  }
+  document.getElementById('view').innerHTML = wrap(card(`
+    <h1 class="text-lg font-semibold mb-1">Accept your invite</h1>
+    <p class="text-xs text-slate-500 mb-4">You've been invited to DigitalPaani Maintenance Ops. Set a password to activate your account.</p>
+    <form onsubmit="submitAcceptInvite(event, '${token}')" class="space-y-3">
+      <div><label class="block text-xs text-slate-600 mb-1">Name</label>
+        <input value="${(data.n||'').replace(/"/g,'&quot;')}" disabled class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-slate-50 text-slate-500" /></div>
+      <div><label class="block text-xs text-slate-600 mb-1">Email</label>
+        <input value="${data.e}" disabled class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-slate-50 text-slate-500" /></div>
+      <div class="flex items-center gap-2 text-xs text-slate-600">Role: <span class="badge ${data.r === 'Admin' ? 'badge-brand' : 'badge-neutral'}">${data.r || 'Engineer'}</span></div>
+      <div><label class="block text-xs text-slate-600 mb-1">Choose a password <span class="text-red-500">*</span></label>
+        <input name="password" type="password" required minlength="6" autocomplete="new-password" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="At least 6 characters" /></div>
+      <div><label class="block text-xs text-slate-600 mb-1">Confirm password <span class="text-red-500">*</span></label>
+        <input name="confirm" type="password" required autocomplete="new-password" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Re-enter password" /></div>
+      <div id="acceptError" class="hidden text-xs text-red-600"></div>
+      <button class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Activate account &amp; sign in</button>
+    </form>`));
+}
+function submitAcceptInvite(ev, token) {
+  ev.preventDefault();
+  const data = b64urlDecode(token); if (!data) return;
+  const f = new FormData(ev.target);
+  const pw = f.get('password'), confirm = f.get('confirm');
+  const err = document.getElementById('acceptError');
+  if (pw !== confirm) { err.textContent = 'Passwords do not match.'; err.classList.remove('hidden'); return; }
+
+  const email = data.e.toLowerCase();
+  let user = state.users.find(u => u.email.toLowerCase() === email);
+  if (user) {
+    user.password = pw; user.status = 'active';
+  } else {
+    user = { id: nextUserId(), name: data.n || data.e, email: data.e, role: data.r || 'Engineer', phone: '', password: pw, status: 'active' };
+    state.users.push(user);
+  }
+  saveUsers(state.users);
+  // Mark the matching invite accepted (only present in the inviter's browser)
+  if (state.invites) {
+    const inv = state.invites.find(i => i.email.toLowerCase() === email && i.status === 'pending');
+    if (inv) { inv.status = 'accepted'; saveInvites(state.invites); }
+  }
+  localStorage.setItem(LS_SESSION, user.id);
+  location.hash = homeHashFor(user);
+  route();
 }
 function removeUser(id) {
   if (!isAdmin() || currentUser()?.id === id) return;
