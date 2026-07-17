@@ -215,6 +215,14 @@ async function loadAuthProfile(u) {
   authUser = { id: u.id, email: u.email, name, role, phone, status, plants };
 }
 
+let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null;
+
+// ---- field mappers: DB (snake_case) <-> app (camelCase) ----
+const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null });
+const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '' });
+const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '' });
+
 async function hydrateCloud() {
   if (!SUPA || !authUser) return;
   try {
@@ -226,6 +234,22 @@ async function hydrateCloud() {
     cloudAssignments = {};
     (pa || []).forEach(a => { (cloudAssignments[a.user_id] = cloudAssignments[a.user_id] || []).push(a.plant_id); });
   } catch (e) { console.warn('assignments hydrate failed', e); }
+  try {
+    const { data } = await SUPA.from('plants').select('*').order('id');
+    if (data) cloudPlants = data.map(p => ({ id: p.id, name: p.name, location: p.location || '', notifications: p.notifications || defaultNotifConfig() }));
+  } catch (e) { console.warn('plants hydrate failed', e); }
+  try {
+    const { data } = await SUPA.from('equipment').select('*').order('id');
+    if (data) {
+      cloudEquipment = data.map(eqFromDb);
+      cloudSlots = {};
+      cloudEquipment.forEach(e => { if (e.slot) cloudSlots[e.id] = e.slot; });
+    }
+  } catch (e) { console.warn('equipment hydrate failed', e); }
+  try {
+    const { data } = await SUPA.from('maintenance_logs').select('*');
+    if (data) cloudLogs = data.map(logFromDb);
+  } catch (e) { console.warn('logs hydrate failed', e); }
 }
 
 // Plant IDs the current user may see: admins → all; engineers → assigned (real mode) or all (prototype).
@@ -276,7 +300,13 @@ function renderNav() {
 
 function route() {
   state = load();
-  if (SUPA && cloudUsers) state.users = cloudUsers;   // real users replace the localStorage seed
+  if (SUPA) {   // real mode: cloud data replaces the localStorage seed
+    if (cloudUsers)     state.users     = cloudUsers;
+    if (cloudPlants)    state.plants    = cloudPlants;
+    if (cloudEquipment) state.equipment = cloudEquipment;
+    if (cloudLogs)      state.logs      = cloudLogs;
+    if (cloudSlots)     state.slots     = cloudSlots;
+  }
   const user = currentUser();
   renderHeaderChrome();
   const h0 = location.hash || '';
@@ -912,11 +942,17 @@ function openAddPlantModal() {
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
 }
-function submitAddPlant(ev) {
+async function submitAddPlant(ev) {
   ev.preventDefault();
   if (!isAdmin()) return;
   const f = new FormData(ev.target);
-  state.plants.push({ id: nextPlantId(), name: f.get('name').trim(), location: (f.get('location')||'').trim(), notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }) });
+  const plant = { id: nextPlantId(), name: f.get('name').trim(), location: (f.get('location')||'').trim(), notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }) };
+  if (SUPA) {
+    try { const { error } = await SUPA.from('plants').insert({ id: plant.id, name: plant.name, location: plant.location, notifications: plant.notifications }); if (error) throw error; }
+    catch (err) { alert('Could not add plant: ' + err.message); return; }
+    await hydrateCloud(); closeModal(); route(); return;
+  }
+  state.plants.push(plant);
   savePlant(state.plants);
   closeModal(); route();
 }
@@ -1407,7 +1443,7 @@ function openPlantNotifModal(plantId) {
   document.getElementById('modal').classList.remove('hidden');
 }
 
-function savePlantNotif(ev, plantId) {
+async function savePlantNotif(ev, plantId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
   const p = plantById(plantId);
@@ -1416,6 +1452,11 @@ function savePlantNotif(ev, plantId) {
     p.notifications[evt.key].channels   = CHANNELS.filter(ch => f.get(`${evt.key}.${ch}`));
     p.notifications[evt.key].recipients = (window._recipState[evt.key] || []).slice();
   });
+  if (SUPA) {
+    try { const { error } = await SUPA.from('plants').update({ notifications: p.notifications }).eq('id', plantId); if (error) throw error; }
+    catch (err) { alert('Could not save notifications: ' + err.message); return; }
+    await hydrateCloud(); closeModal(); route(); return;
+  }
   savePlant(state.plants);
   closeModal();
   route();
@@ -2142,7 +2183,7 @@ function openMaintModal(eqId) {
   `;
   document.getElementById('modal').classList.remove('hidden');
 }
-function submitMaint(ev, eqId) {
+async function submitMaint(ev, eqId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
   const log = {
@@ -2151,11 +2192,24 @@ function submitMaint(ev, eqId) {
     endDate: null, technician: f.get('technician'),
     notes: f.get('notes') || '', completionNotes: '',
   };
+  const newStatus = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
+  const evKey = log.reason === 'Breakdown' ? 'breakdown' : 'maintenance';
+  if (SUPA) {
+    try {
+      const { error: e1 } = await SUPA.from('maintenance_logs').insert(logToDb(log));
+      const { error: e2 } = await SUPA.rpc('set_equipment_status', { eq_id: eqId, new_status: newStatus });
+      if (e1 || e2) throw (e1 || e2);
+    } catch (err) { alert('Could not save: ' + err.message); return; }
+    await hydrateCloud();
+    closeModal(); route();
+    pushEventNotification(evKey, eqById(eqId), log); renderHeaderChrome();
+    return;
+  }
   state.logs.unshift(log);
   const eq = eqById(eqId);
-  eq.status = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
+  eq.status = newStatus;
   saveLog(state.logs); saveEq(state.equipment);
-  pushEventNotification(log.reason === 'Breakdown' ? 'breakdown' : 'maintenance', eq, log);
+  pushEventNotification(evKey, eq, log);
   closeModal(); route();
 }
 
@@ -2187,19 +2241,32 @@ function openCompleteModal(eqId) {
   `;
   document.getElementById('modal').classList.remove('hidden');
 }
-function submitComplete(ev, eqId) {
+async function submitComplete(ev, eqId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
+  const endDate = f.get('endDate');
+  const completionNotes = f.get('completionNotes') || '';
+  const wantReport = (ev.submitter && ev.submitter.value === 'confirm-report');
   const log = openLogFor(eqId);
-  if (log) {
-    log.endDate = f.get('endDate');
-    log.completionNotes = f.get('completionNotes') || '';
+  if (SUPA) {
+    if (!log) { alert('No open work-order found.'); return; }
+    try {
+      const { error: e1 } = await SUPA.from('maintenance_logs').update({ end_date: endDate, completion_notes: completionNotes }).eq('id', log.id);
+      const { error: e2 } = await SUPA.rpc('set_equipment_status', { eq_id: eqId, new_status: 'Operational' });
+      if (e1 || e2) throw (e1 || e2);
+    } catch (err) { alert('Could not save: ' + err.message); return; }
+    const closedLog = { ...log, endDate, completionNotes };
+    await hydrateCloud();
+    closeModal(); route();
+    pushEventNotification('operational', eqById(eqId), closedLog); renderHeaderChrome();
+    if (wantReport) generateSingleServiceReport(eqId, closedLog);
+    return;
   }
+  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; }
   const eq = eqById(eqId);
   eq.status = 'Operational';
   saveLog(state.logs); saveEq(state.equipment);
   pushEventNotification('operational', eq, log);
-  const wantReport = (ev.submitter && ev.submitter.value === 'confirm-report');
   closeModal(); route();
   if (wantReport && log) generateSingleServiceReport(eqId, log);
 }
@@ -2334,23 +2401,32 @@ function openEquipmentFormModal(mode, eqId) {
 }
 function openAddEquipmentModal() { openEquipmentFormModal('add'); }
 function openEditEquipmentModal(eqId) { openEquipmentFormModal('edit', eqId); }
-function submitEquipmentForm(ev, mode, eqId) {
+async function submitEquipmentForm(ev, mode, eqId) {
   ev.preventDefault();
+  if (!isAdmin()) return;
   const f = new FormData(ev.target);
   if (mode === 'edit') {
-    const e = eqById(eqId); if (!e) return;
-    e.tag = f.get('tag'); e.type = f.get('type');
-    e.make = f.get('make') || ''; e.model = f.get('model') || '';
-    e.plantId = f.get('plantId');
-    e.installed = f.get('installed') || e.installed;
+    const cur = eqById(eqId); if (!cur) return;
+    const patch = { tag: f.get('tag'), type: f.get('type'), make: f.get('make') || '', model: f.get('model') || '', plantId: f.get('plantId'), installed: f.get('installed') || cur.installed };
+    if (SUPA) {
+      try { const { error } = await SUPA.from('equipment').update(eqToDb({ ...cur, ...patch })).eq('id', eqId); if (error) throw error; }
+      catch (err) { alert('Could not save: ' + err.message); return; }
+      await hydrateCloud(); closeModal(); route(); return;
+    }
+    Object.assign(cur, patch);
   } else {
-    const id = 'EQ-' + String(Date.now()).slice(-6);
-    state.equipment.push({
-      id, tag: f.get('tag'), type: f.get('type'),
+    const newEq = {
+      id: 'EQ-' + String(Date.now()).slice(-6), tag: f.get('tag'), type: f.get('type'),
       make: f.get('make') || '', model: f.get('model') || '',
       plantId: f.get('plantId'), location: '',
-      installed: f.get('installed') || today(), status: 'Operational',
-    });
+      installed: f.get('installed') || today(), status: 'Operational', slot: null,
+    };
+    if (SUPA) {
+      try { const { error } = await SUPA.from('equipment').insert(eqToDb(newEq)); if (error) throw error; }
+      catch (err) { alert('Could not add equipment: ' + err.message); return; }
+      await hydrateCloud(); closeModal(); route(); return;
+    }
+    state.equipment.push(newEq);
   }
   saveEq(state.equipment);
   closeModal(); route();
@@ -2525,8 +2601,9 @@ function parsePPMWorkbook(arrayBuffer, sheetName) {
   return out;
 }
 
-function submitImportPPM(ev) {
+async function submitImportPPM(ev) {
   ev.preventDefault();
+  if (!isAdmin()) return;
   const f = new FormData(ev.target);
   const plantId = f.get('plantId');
   const rows = window._importedRows;
@@ -2537,28 +2614,32 @@ function submitImportPPM(ev) {
     id: `EQ-IMP-${base}-${idx}`,
     tag: r.tag, type: r.type, make: r.make, model: r.model,
     plantId, location: '', installed: today(), status: 'Operational',
+    slot: r.slot || null,
   }));
 
+  if (SUPA) {
+    try {
+      const { error } = await SUPA.from('equipment').insert(newEquipment.map(eqToDb));
+      if (error) throw error;
+    } catch (err) { alert('Could not import: ' + err.message); return; }
+    await hydrateCloud();
+    closeModal();
+    alert(`Imported ${newEquipment.length} equipment into the plant.`);
+    ui.plantFilter = plantId; location.hash = '#/equipment'; route();
+    return;
+  }
+
+  // Prototype: keep separate slots map + generate demo history
   const newSlots = {};
-  newEquipment.forEach((e, idx) => {
-    if (rows[idx].slot) newSlots[e.id] = rows[idx].slot;
-  });
-
-  // Generate past PPM logs for newly imported equipment
+  newEquipment.forEach((e) => { if (e.slot) newSlots[e.id] = e.slot; });
   const newLogs = generatePastPPMLogs(newSlots, newEquipment, `IMP-${base}`);
-
   state.equipment = state.equipment.concat(newEquipment);
   state.slots = Object.assign({}, state.slots || {}, newSlots);
   state.logs = state.logs.concat(newLogs);
-  saveEq(state.equipment);
-  saveSlots(state.slots);
-  saveLog(state.logs);
-
+  saveEq(state.equipment); saveSlots(state.slots); saveLog(state.logs);
   closeModal();
   alert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
-  location.hash = '#/equipment';
-  ui.plantFilter = plantId;
-  route();
+  location.hash = '#/equipment'; ui.plantFilter = plantId; route();
 }
 
 // ---------- Guide-me tour ----------
