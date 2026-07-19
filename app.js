@@ -195,6 +195,16 @@ function lockSubmit(ev, label = 'Saving…') {
 function saveError(err) {
   alert('Could not save. Please try again.\n\nDetails: ' + ((err && err.message) || err));
 }
+// Transient success toast (bottom-center, auto-dismisses).
+function toast(msg) {
+  document.getElementById('appToast')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="appToast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[90] bg-brand text-white text-sm px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span>${msg}</span>
+    </div>`);
+  setTimeout(() => document.getElementById('appToast')?.remove(), 3500);
+}
 // Escape user-authored text before injecting into innerHTML templates.
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const fmt = d => d ? d : '—';
@@ -229,7 +239,7 @@ function tagLink(e) {
 
 // ---------- State / routing / filters ----------
 let state = load();
-const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '' };
+const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '', notifPlant: 'all', notifTime: 'all' };
 const LOG_PAGE_SIZE = 50;
 const EQ_TYPES = ['Pump','Blower','Motor','Mixer','Screen','Filter','Centrifuge','UV System','Screw Press','Decanter','Fan','Other'];
 
@@ -543,10 +553,10 @@ const NOTIF_MSG = {
   overdue:     (eq, p, log) => `Maintenance overdue — ${esc(eq.tag)} at ${esc(p.name)} (expected ${esc(log?.etr) || '—'}).`,
 };
 function pushEventNotification(eventKey, eq, log) {
-  const plant = plantById(eq.plantId); if (!plant || !plant.notifications) return;
-  const cfg = plant.notifications[eventKey];
-  if (!cfg || !cfg.enabled) return;
-  if (!cfg.channels.length && !(cfg.recipients||[]).length) return;
+  const plant = plantById(eq.plantId); if (!plant) return;
+  // The in-app activity feed ALWAYS records events. The per-plant config only
+  // controls delivery channels/recipients (Phase 3b) — not whether it's logged.
+  const cfg = (plant.notifications && plant.notifications[eventKey]) || { channels: [], recipients: [] };
   const rec = {
     id: 'N-' + Date.now() + '-' + Math.floor(Math.random()*1e4),
     ts: new Date().toISOString(),
@@ -601,55 +611,74 @@ function buildNotifFeed() {
   const feed = [];
   // Overdue open work-orders
   getPendingTasks().forEach(({ l, e }) => {
-    if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr,
+    if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId,
       message: `Work-order overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (expected ${l.etr}).` });
   });
   // Overdue PPM (planned date passed, no completion this month)
   getOverduePPM().forEach(({ e, date }) => {
     const ds = dstr(date);
-    feed.push({ key: `ppm-overdue-${e.id}-${ds}`, group: 'overdue', date: ds,
+    feed.push({ key: `ppm-overdue-${e.id}-${ds}`, group: 'overdue', date: ds, plantId: e.plantId,
       message: `PPM overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (planned ${ds}).` });
   });
   // Due today + (admins only) upcoming within 7 days
   getUpcomingPPM(7).forEach(({ e, date }) => {
     const ds = dstr(date);
-    if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds,
+    if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds, plantId: e.plantId,
       message: `Maintenance due today — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
-    else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds,
+    else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds, plantId: e.plantId,
       message: `Upcoming — ${esc(e.tag)} at ${esc(plantName(e.plantId))} on ${ds}.` });
   });
   // Activity (admins only): breakdowns, status changes — shared table in real
   // mode (cross-device), localStorage outbox in prototype mode.
   if (admin) {
     const activity = SUPA
-      ? (cloudNotifs || []).map(n => ({ id: n.id, ts: n.ts, event: n.event, message: n.message, channels: n.channels || [], recipients: n.recipients || [] }))
+      ? (cloudNotifs || []).map(n => ({ id: n.id, ts: n.ts, event: n.event, message: n.message, channels: n.channels || [], recipients: n.recipients || [], plantId: n.plant_id }))
       : loadNotifs();
-    activity.forEach(n => feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event,
+    activity.forEach(n => feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event, plantId: n.plantId,
       message: n.message, channels: n.channels, recipients: n.recipients }));
   }
-  const order = { overdue: 0, due: 1, upcoming: 2, activity: 3 };
-  return feed.sort((a, b) => (order[a.group] - order[b.group]) || String(a.date).localeCompare(String(b.date)));
+  // Fresh activity belongs right under "Due today" (newest first);
+  // the 7-day lookahead sits last so it never buries real events.
+  const order = { overdue: 0, due: 1, activity: 2, upcoming: 3 };
+  return feed.sort((a, b) =>
+    (order[a.group] - order[b.group]) ||
+    (a.group === 'activity'
+      ? String(b.date).localeCompare(String(a.date))   // activity: newest first
+      : String(a.date).localeCompare(String(b.date)))); // schedule items: soonest first
 }
-// Badge counts only ACTIONABLE unseen items (overdue + due today) — an
-// alarm-red "9+" for merely-upcoming PPM would cry wolf on day one.
+// Badge counts unseen actionable items + activity. Only the 7-day "upcoming"
+// lookahead is excluded — merely-scheduled PPM shouldn't ring the bell.
 function unreadNotifCount() {
   const seen = loadSeenNotifs();
-  return buildNotifFeed().filter(n => (n.group === 'overdue' || n.group === 'due') && !seen.has(n.key)).length;
+  return buildNotifFeed().filter(n => n.group !== 'upcoming' && !seen.has(n.key)).length;
 }
-function toggleNotifPanel() {
-  const existing = document.getElementById('notifPanel');
-  if (existing) { existing.remove(); return; }
-  const feed = buildNotifFeed();
+// Panel filters (plant + time window)
+function applyNotifFilters(feed) {
+  let out = feed;
+  if (ui.notifPlant !== 'all') out = out.filter(n => n.plantId === ui.notifPlant);
+  if (ui.notifTime !== 'all') {
+    const days = { today: 0, '7d': 7, '30d': 30 }[ui.notifTime];
+    const t = new Date(today() + 'T00:00:00');
+    out = out.filter(n => {
+      const d = new Date(String(n.date).slice(0, 10) + 'T00:00:00');
+      const diff = Math.abs(Math.round((d - t) / 86400000));
+      return ui.notifTime === 'today' ? diff === 0 : diff <= days;
+    });
+  }
+  return out;
+}
+function notifPanelBody() {
+  const feed = applyNotifFilters(buildNotifFeed());
   const seen = loadSeenNotifs();
   const userName = id => (state.users.find(x => x.id === id)?.name || id);
   const chLabel = ch => ch === 'sms' ? 'SMS' : ch.charAt(0).toUpperCase() + ch.slice(1);
   const GROUPS = [
-    ['overdue',  'Overdue',        'badge-bd'],
-    ['due',      'Due today',      'badge-mt'],
+    ['overdue',  'Overdue',           'badge-bd'],
+    ['due',      'Due today',         'badge-mt'],
+    ['activity', 'Recent activity',   'badge-neutral'],
     ['upcoming', 'Upcoming (7 days)', 'badge-brand'],
-    ['activity', 'Recent activity', 'badge-neutral'],
   ];
-  const sections = GROUPS.map(([key, label, badgeCls]) => {
+  return GROUPS.map(([key, label, badgeCls]) => {
     const items = feed.filter(n => n.group === key);
     if (!items.length) return '';
     const rows = items.map(n => `
@@ -667,7 +696,24 @@ function toggleNotifPanel() {
         <span class="badge ${badgeCls}">${label}</span>
         <span class="text-xs text-slate-500">${items.length}</span>
       </div>${rows}</div>`;
-  }).join('') || `<div class="p-6 text-center text-sm text-slate-500">You're all caught up — nothing due or overdue.</div>`;
+  }).join('') || `<div class="p-6 text-center text-sm text-slate-500">${
+    (ui.notifPlant !== 'all' || ui.notifTime !== 'all')
+      ? 'Nothing matches these filters.'
+      : "You're all caught up — nothing due or overdue."}</div>`;
+}
+function refreshNotifPanel() {
+  const body = document.getElementById('notifPanelBody');
+  if (body) body.innerHTML = notifPanelBody();
+}
+function toggleNotifPanel() {
+  const existing = document.getElementById('notifPanel');
+  if (existing) { existing.remove(); return; }
+  const plantOpts = ['<option value="all">All plants</option>'].concat(
+    state.plants.filter(p => accessiblePlantIds().includes(p.id))
+      .map(p => `<option value="${p.id}" ${ui.notifPlant===p.id?'selected':''}>${esc(p.name)}</option>`)
+  ).join('');
+  const timeOpts = [['all','All time'],['today','Today'],['7d','Last 7 days'],['30d','Last 30 days']]
+    .map(([v,l]) => `<option value="${v}" ${ui.notifTime===v?'selected':''}>${l}</option>`).join('');
   document.body.insertAdjacentHTML('beforeend', `
     <div id="notifPanel" class="fixed inset-0 z-[70]" onclick="if(event.target===this)this.remove()">
       <div class="absolute right-0 top-0 h-full w-full max-w-sm bg-white shadow-xl flex flex-col">
@@ -675,10 +721,14 @@ function toggleNotifPanel() {
           <div class="font-semibold">Notifications</div>
           <div class="ml-auto flex items-center gap-2">
             <button onclick="markAllNotifsRead()" class="text-xs text-brand hover:underline">Mark all read</button>
-            <button onclick="document.getElementById('notifPanel').remove()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+            <button onclick="document.getElementById('notifPanel').remove()" class="text-slate-400 hover:text-slate-700 text-xl leading-none" aria-label="Close">&times;</button>
           </div>
         </div>
-        <div class="flex-1 overflow-y-auto">${sections}</div>
+        <div class="px-4 py-2 border-b border-slate-200 flex items-center gap-2 bg-white">
+          <select onchange="ui.notifPlant=this.value; refreshNotifPanel()" class="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white">${plantOpts}</select>
+          <select onchange="ui.notifTime=this.value; refreshNotifPanel()" class="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white">${timeOpts}</select>
+        </div>
+        <div id="notifPanelBody" class="flex-1 overflow-y-auto">${notifPanelBody()}</div>
       </div>
     </div>`);
 }
@@ -2434,7 +2484,9 @@ async function submitMaint(ev, eqId) {
     if (error) { unlock(); saveError(error); return; }
     await hydrateCloud();
     closeModal(); route();
-    pushEventNotification(evKey, eqById(eqId), log);
+    const eq0 = eqById(eqId);
+    pushEventNotification(evKey, eq0, log);
+    toast(`Work-order created — ${esc(eq0?.tag || 'equipment')} is now ${newStatus.toLowerCase()}.`);
     return;
   }
   state.logs.unshift(log);
@@ -2443,6 +2495,7 @@ async function submitMaint(ev, eqId) {
   saveLog(state.logs); saveEq(state.equipment);
   pushEventNotification(evKey, eq, log);
   closeModal(); route();
+  toast(`Work-order created — ${esc(eq.tag)} is now ${newStatus.toLowerCase()}.`);
 }
 
 function openCompleteModal(eqId) {
@@ -2492,6 +2545,7 @@ async function submitComplete(ev, eqId) {
     await hydrateCloud();
     closeModal(); route();
     pushEventNotification('operational', eqById(eqId), closedLog);
+    toast(`${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
     if (wantReport) generateSingleServiceReport(eqId, closedLog);
     return;
   }
@@ -2501,6 +2555,7 @@ async function submitComplete(ev, eqId) {
   saveLog(state.logs); saveEq(state.equipment);
   pushEventNotification('operational', eq, log);
   closeModal(); route();
+  toast(`${esc(eq.tag)} is back in service.`);
   if (wantReport && log) generateSingleServiceReport(eqId, log);
 }
 
