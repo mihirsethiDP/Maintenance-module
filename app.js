@@ -338,10 +338,9 @@ function renderLogin() {
     <div class="min-h-[70vh] flex items-center justify-center px-4">
       <div class="w-full max-w-sm">
         <div class="flex items-center gap-2 justify-center mb-6">
-          <div class="w-10 h-10 rounded-lg bg-brand text-white grid place-items-center font-bold text-lg">DP</div>
+          <img src="logo.png?v=1" alt="DigitalPaani" class="h-11 w-auto rounded-lg" />
           <div>
-            <div class="font-semibold text-lg leading-tight">DigitalPaani</div>
-            <div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div>
+                        <div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div>
           </div>
         </div>
         <div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
@@ -375,7 +374,7 @@ function renderSetPassword() {
   document.getElementById('view').innerHTML = `
     <div class="min-h-[70vh] flex items-center justify-center px-4"><div class="w-full max-w-sm">
       <div class="flex items-center gap-2 justify-center mb-6">
-        <div class="w-10 h-10 rounded-lg bg-brand text-white grid place-items-center font-bold text-lg">DP</div>
+        <img src="logo.png?v=1" alt="DigitalPaani" class="h-11 w-auto rounded-lg" />
         <div><div class="font-semibold text-lg leading-tight">DigitalPaani</div><div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div></div>
       </div>
       <div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
@@ -1266,7 +1265,7 @@ function renderAcceptInvite(token) {
   const data = b64urlDecode(token);
   const wrap = (inner) => `<div class="min-h-[70vh] flex items-center justify-center px-4"><div class="w-full max-w-sm">
     <div class="flex items-center gap-2 justify-center mb-6">
-      <div class="w-10 h-10 rounded-lg bg-brand text-white grid place-items-center font-bold text-lg">DP</div>
+      <img src="logo.png?v=1" alt="DigitalPaani" class="h-11 w-auto rounded-lg" />
       <div><div class="font-semibold text-lg leading-tight">DigitalPaani</div><div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div></div>
     </div>${inner}</div></div>`;
   const card = (inner) => `<div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">${inner}</div>`;

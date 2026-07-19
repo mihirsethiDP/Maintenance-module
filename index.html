@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>DigitalPaani — Maintenance Ops</title>
+  <link rel="icon" type="image/png" href="logo.png" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -129,11 +130,8 @@
   <header class="bg-white border-b border-slate-200 sticky top-0 z-10">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
       <div class="flex items-center gap-2 order-1">
-        <div class="w-8 h-8 rounded-lg bg-brand text-white grid place-items-center font-bold">DP</div>
-        <div>
-          <div class="font-semibold leading-tight">DigitalPaani</div>
-          <div class="text-[11px] text-slate-500 leading-tight">Maintenance Ops</div>
-        </div>
+        <img src="logo.png?v=1" alt="DigitalPaani" class="h-9 w-auto rounded-md" />
+        <span class="hidden sm:block text-[11px] text-slate-500 leading-tight border-l border-slate-200 pl-2">Maintenance Ops</span>
       </div>
       <nav id="nav" class="order-3 sm:order-2 w-full sm:w-auto sm:ml-4 flex gap-1 text-sm overflow-x-auto whitespace-nowrap"></nav>
       <div id="headerRight" class="order-2 sm:order-3 ml-auto flex items-center gap-2"></div>
@@ -156,6 +154,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-config.js?v=1"></script>
   <script src="seed-data.js?v=1"></script>
-  <script src="app.js?v=32"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>
