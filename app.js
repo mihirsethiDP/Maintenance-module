@@ -46,7 +46,7 @@ const PPM_DEFAULT = { sched: 'Scheduled PPM — inspection and servicing.', done
 // A small set of illustrative open work-orders so the Dashboard / Pending views show live activity.
 function buildSeedOpenLogs(equipment) {
   const NOW = new Date(today());
-  const d = (off) => { const x = new Date(NOW); x.setDate(x.getDate() + off); return x.toISOString().slice(0,10); };
+  const d = (off) => { const x = new Date(NOW); x.setDate(x.getDate() + off); return dstr(x); };
   const TECHS = ['Mihir Sethi'];
   const specs = [
     { pi: 1,  kind:'Breakdown', off:-4, etr:3,  notes:'Bearing failure on drive end; replacement bearing awaited.' },
@@ -73,7 +73,7 @@ function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
   const TECHS = ['Mihir Sethi'];
   const NOW = new Date();
   const yearStart = new Date('2026-01-01');
-  const fmt = (d) => d.toISOString().slice(0,10);
+  const fmt = (d) => dstr(d);
   const out = [];
   let seq = 0;
   const eqMap = Object.fromEntries(equipmentList.map(e => [e.id, e]));
@@ -113,6 +113,8 @@ const LS_INVITES = 'mm.invites.v1';
 const LS_SLOTS = 'mm.slots.v2';
 
 function seedIfNeeded() {
+  // Real mode never touches the demo seeds — data comes exclusively from Supabase.
+  if (window.SUPABASE_URL && window.SUPABASE_ANON_KEY) return;
   if (localStorage.getItem(LS_EQ)) return;
   const equipment = SEED_EQUIPMENT.map(e => ({ ...e }));   // clone so we can set statuses
   const slots = SEED_SLOTS;
@@ -124,7 +126,27 @@ function seedIfNeeded() {
   localStorage.setItem(LS_PLANT, JSON.stringify(SEED_PLANTS));
 }
 
+// Cloud caches (real mode) — declared before load() which reads them.
+let authUser = null;        // cached identity in real mode: {id,email,name,role,phone,status,plants}
+let cloudUsers = null;      // real users hydrated from Supabase profiles (real mode)
+let cloudAssignments = {};  // userId -> [plantId] (real mode)
+let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null;
+let hydrateErrors = [];     // table names that failed to hydrate (drives the error banner)
+
 function load() {
+  // Real mode: state comes exclusively from the cloud caches (hydrateCloud).
+  // Never fall back to demo seeds — a transient fetch failure must show an
+  // error banner, not fabricated maintenance history.
+  if (window.SUPABASE_URL && window.SUPABASE_ANON_KEY) {
+    return {
+      equipment: cloudEquipment || [],
+      logs:      cloudLogs      || [],
+      plants:    cloudPlants    || [],
+      users:     cloudUsers     || [],
+      slots:     cloudSlots     || {},
+      invites:   [],
+    };
+  }
   seedIfNeeded();
   if (!localStorage.getItem(LS_USERS)) localStorage.setItem(LS_USERS, JSON.stringify(SEED_USERS));
   return {
@@ -145,7 +167,36 @@ const saveInvites = i => localStorage.setItem(LS_INVITES, JSON.stringify(i));
 function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS, LS_NOTIF, LS_OVERDUE_SEEN, LS_INVITES].forEach(k => localStorage.removeItem(k)); route(); }
 
 // ---------- Helpers ----------
-const today = () => new Date().toISOString().slice(0,10);
+// LOCAL date string (yyyy-mm-dd). Never use toISOString() for calendar dates —
+// in IST (UTC+5:30) it shifts dates back a day between 00:00 and 05:30.
+const dstr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const today = () => dstr(new Date());
+
+// Banner shown when any cloud table failed to hydrate (real mode).
+function renderHydrateBanner() {
+  document.getElementById('hydrateBanner')?.remove();
+  if (!SUPA || !currentUser() || !hydrateErrors.length) return;
+  document.querySelector('header')?.insertAdjacentHTML('afterend', `
+    <div id="hydrateBanner" class="bg-red-50 border-b border-red-200 text-red-800 text-sm px-4 py-2 flex items-center gap-3">
+      <span>Some data failed to load (${hydrateErrors.join(', ')}). What you see may be incomplete.</span>
+      <button onclick="retryHydrate()" class="ml-auto text-xs px-3 py-1 rounded-md border border-red-300 bg-white hover:bg-red-100 font-medium">Retry</button>
+    </div>`);
+}
+async function retryHydrate() { await hydrateCloud(); route(); }
+
+// Disable a form's submit button while an async save runs (prevents double-submit).
+function lockSubmit(ev, label = 'Saving…') {
+  const btn = ev.submitter || ev.target.querySelector('button[type="submit"], button:not([type="button"])');
+  if (!btn) return () => {};
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = label;
+  return () => { btn.disabled = false; btn.textContent = orig; };
+}
+function saveError(err) {
+  alert('Could not save. Please try again.\n\nDetails: ' + ((err && err.message) || err));
+}
+// Escape user-authored text before injecting into innerHTML templates.
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const fmt = d => d ? d : '—';
 const eqById = id => state.equipment.find(e => e.id === id);
 const plantById = id => state.plants.find(p => p.id === id);
@@ -173,7 +224,7 @@ function ecStatus(etr, endDate) {
   return { label: `In ${d}d`, cls: 'text-[#193458]' };
 }
 function tagLink(e) {
-  return `<a class="tag-chip" href="#/equipment/${e.id}">${e.tag}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>`;
+  return `<a class="tag-chip" href="#/equipment/${e.id}">${esc(e.tag)}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>`;
 }
 
 // ---------- State / routing / filters ----------
@@ -200,10 +251,6 @@ let needsPasswordSet = /(?:^|[#&])type=(invite|recovery|signup)/.test(_initHash)
 const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
   ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
   : null;
-let authUser = null;        // cached identity in real mode: {id,email,name,role,phone,status,plants}
-let cloudUsers = null;      // real users hydrated from Supabase profiles (real mode)
-let cloudAssignments = {};  // userId -> [plantId] (real mode)
-
 async function loadAuthProfile(u) {
   let name = (u.email || '').split('@')[0], role = 'Engineer', phone = '', status = 'active';
   try {
@@ -218,41 +265,59 @@ async function loadAuthProfile(u) {
   authUser = { id: u.id, email: u.email, name, role, phone, status, plants };
 }
 
-let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null;
-
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
 const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
 const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '' });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '' });
 
+let cloudNotifs = null;   // activity feed rows from public.notifications (real mode)
+
 async function hydrateCloud() {
   if (!SUPA || !authUser) return;
-  try {
-    const { data: profs } = await SUPA.from('profiles').select('id,name,role,phone,status,email');
-    if (profs) cloudUsers = profs.map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active' }));
-  } catch (e) { console.warn('users hydrate failed', e); }
-  try {
-    const { data: pa } = await SUPA.from('plant_assignments').select('user_id,plant_id');
-    cloudAssignments = {};
-    (pa || []).forEach(a => { (cloudAssignments[a.user_id] = cloudAssignments[a.user_id] || []).push(a.plant_id); });
-  } catch (e) { console.warn('assignments hydrate failed', e); }
-  try {
-    const { data } = await SUPA.from('plants').select('*').order('id');
-    if (data) cloudPlants = data.map(p => ({ id: p.id, name: p.name, location: p.location || '', notifications: p.notifications || defaultNotifConfig() }));
-  } catch (e) { console.warn('plants hydrate failed', e); }
-  try {
-    const { data } = await SUPA.from('equipment').select('*').order('id');
-    if (data) {
-      cloudEquipment = data.map(eqFromDb);
-      cloudSlots = {};
-      cloudEquipment.forEach(e => { if (e.slot) cloudSlots[e.id] = e.slot; });
-    }
-  } catch (e) { console.warn('equipment hydrate failed', e); }
-  try {
-    const { data } = await SUPA.from('maintenance_logs').select('*');
-    if (data) cloudLogs = data.map(logFromDb);
-  } catch (e) { console.warn('logs hydrate failed', e); }
+  hydrateErrors = [];
+  const fail = (name, err) => { hydrateErrors.push(name); console.warn(name + ' hydrate failed', err); };
+  await Promise.all([
+    SUPA.from('profiles').select('id,name,role,phone,status,email')
+      .then(({ data, error }) => {
+        if (error) return fail('users', error);
+        cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active' }));
+      }, e => fail('users', e)),
+    SUPA.from('plant_assignments').select('user_id,plant_id')
+      .then(({ data, error }) => {
+        if (error) return fail('assignments', error);
+        cloudAssignments = {};
+        (data || []).forEach(a => { (cloudAssignments[a.user_id] = cloudAssignments[a.user_id] || []).push(a.plant_id); });
+      }, e => fail('assignments', e)),
+    SUPA.from('plants').select('*').order('id')
+      .then(({ data, error }) => {
+        if (error) return fail('plants', error);
+        cloudPlants = (data || []).map(p => ({ id: p.id, name: p.name, location: p.location || '', notifications: p.notifications || defaultNotifConfig() }));
+      }, e => fail('plants', e)),
+    SUPA.from('equipment').select('*').order('id')
+      .then(({ data, error }) => {
+        if (error) return fail('equipment', error);
+        cloudEquipment = (data || []).map(eqFromDb);
+        cloudSlots = {};
+        cloudEquipment.forEach(e => { if (e.slot) cloudSlots[e.id] = e.slot; });
+      }, e => fail('equipment', e)),
+    // Logs: PostgREST caps un-ranged selects at 1000 rows. Fetch ALL open
+    // work-orders (must never drop out) + the most recent history, merged.
+    Promise.all([
+      SUPA.from('maintenance_logs').select('*').is('end_date', null),
+      SUPA.from('maintenance_logs').select('*').order('start_date', { ascending: false }).limit(1000),
+    ]).then(([open, recent]) => {
+      if (open.error || recent.error) return fail('logs', open.error || recent.error);
+      const byId = new Map();
+      (open.data || []).concat(recent.data || []).forEach(r => byId.set(r.id, r));
+      cloudLogs = [...byId.values()].map(logFromDb);
+    }, e => fail('logs', e)),
+    SUPA.from('notifications').select('*').order('ts', { ascending: false }).limit(100)
+      .then(({ data, error }) => {
+        if (error) return fail('notifications', error);
+        cloudNotifs = data || [];
+      }, e => fail('notifications', e)),
+  ]);
 }
 
 // Plant IDs the current user may see: admins → all; engineers → assigned (real mode) or all (prototype).
@@ -303,19 +368,17 @@ function renderNav() {
 
 function route() {
   state = load();
-  if (SUPA) {   // real mode: cloud data replaces the localStorage seed
-    if (cloudUsers)     state.users     = cloudUsers;
-    if (cloudPlants)    state.plants    = cloudPlants;
-    if (cloudEquipment) state.equipment = cloudEquipment;
-    if (cloudLogs)      state.logs      = cloudLogs;
-    if (cloudSlots)     state.slots     = cloudSlots;
-  }
   const user = currentUser();
   renderHeaderChrome();
+  renderHydrateBanner();
   const h0 = location.hash || '';
   // Invite / password-recovery landing: the user has a session but must set a password.
   if (SUPA && needsPasswordSet && user) { renderSetPassword(); return; }
-  if (h0.startsWith('#/accept/')) { renderAcceptInvite(h0.slice('#/accept/'.length)); return; }
+  // Prototype share-link invites don't exist in real mode (real invites arrive by email).
+  if (h0.startsWith('#/accept/')) {
+    if (SUPA) { location.hash = ''; renderLogin(); return; }
+    renderAcceptInvite(h0.slice('#/accept/'.length)); return;
+  }
   if (!user) { renderLogin(); return; }
   renderNav();
   let h = location.hash || homeHashFor(user);
@@ -401,9 +464,12 @@ async function submitSetPassword(ev) {
   if (error) { err.textContent = error.message; err.classList.remove('hidden'); return; }
   needsPasswordSet = false;
   history.replaceState(null, '', location.pathname + location.search);  // strip the token hash
-  await loadAuthProfile((await SUPA.auth.getSession()).data.session.user);
-  await hydrateCloud();
-  location.hash = homeHashFor(authUser);
+  const { data: sess } = await SUPA.auth.getSession();
+  if (sess && sess.session) {
+    await loadAuthProfile(sess.session.user);
+    await hydrateCloud();
+    location.hash = homeHashFor(authUser);
+  }
   route();
 }
 function fillLogin(email, pw) {
@@ -471,28 +537,45 @@ function initials(name) { return name.split(/\s+/).map(w=>w[0]).join('').slice(0
 function loadNotifs() { try { return JSON.parse(localStorage.getItem(LS_NOTIF) || '[]'); } catch { return []; } }
 function saveNotifs(n) { localStorage.setItem(LS_NOTIF, JSON.stringify(n)); }
 const NOTIF_MSG = {
-  maintenance: (eq, p) => `${eq.tag} put into scheduled maintenance at ${p.name}.`,
-  breakdown:   (eq, p) => `Breakdown reported — ${eq.tag} at ${p.name}.`,
-  operational: (eq, p) => `${eq.tag} returned to service at ${p.name}.`,
-  overdue:     (eq, p, log) => `Maintenance overdue — ${eq.tag} at ${p.name} (expected ${log?.etr || '—'}).`,
+  maintenance: (eq, p) => `${esc(eq.tag)} put into scheduled maintenance at ${esc(p.name)}.`,
+  breakdown:   (eq, p) => `Breakdown reported — ${esc(eq.tag)} at ${esc(p.name)}.`,
+  operational: (eq, p) => `${esc(eq.tag)} returned to service at ${esc(p.name)}.`,
+  overdue:     (eq, p, log) => `Maintenance overdue — ${esc(eq.tag)} at ${esc(p.name)} (expected ${esc(log?.etr) || '—'}).`,
 };
 function pushEventNotification(eventKey, eq, log) {
   const plant = plantById(eq.plantId); if (!plant || !plant.notifications) return;
   const cfg = plant.notifications[eventKey];
   if (!cfg || !cfg.enabled) return;
   if (!cfg.channels.length && !(cfg.recipients||[]).length) return;
-  const notifs = loadNotifs();
-  notifs.unshift({
+  const rec = {
     id: 'N-' + Date.now() + '-' + Math.floor(Math.random()*1e4),
     ts: new Date().toISOString(),
     event: eventKey, plantId: eq.plantId, eqId: eq.id,
     channels: cfg.channels.slice(), recipients: (cfg.recipients||[]).slice(),
     message: (NOTIF_MSG[eventKey] || (()=>'Maintenance event'))(eq, plant, log),
     read: false,
-  });
+  };
+  if (SUPA) {
+    // Shared activity feed: every admin sees it, on any device.
+    SUPA.from('notifications').insert({
+      id: rec.id, ts: rec.ts, event: rec.event, plant_id: rec.plantId,
+      equipment_id: rec.eqId, channels: rec.channels, recipients: rec.recipients,
+      message: rec.message,
+    }).then(({ error }) => {
+      if (error) { console.warn('notification insert failed', error); return; }
+      if (cloudNotifs) cloudNotifs.unshift({ id: rec.id, ts: rec.ts, event: rec.event, message: rec.message, channels: rec.channels, recipients: rec.recipients });
+      renderHeaderChrome();
+    });
+    return;
+  }
+  const notifs = loadNotifs();
+  notifs.unshift(rec);
   saveNotifs(notifs.slice(0, 200));
 }
 function sweepOverdue() {
+  // Real mode: overdue items are DERIVED in buildNotifFeed (per-user, no
+  // storage). Writing them to the shared table from every device would spam it.
+  if (SUPA) return;
   let seen; try { seen = JSON.parse(localStorage.getItem(LS_OVERDUE_SEEN) || '[]'); } catch { seen = []; }
   const seenSet = new Set(seen);
   let changed = false;
@@ -519,31 +602,39 @@ function buildNotifFeed() {
   // Overdue open work-orders
   getPendingTasks().forEach(({ l, e }) => {
     if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr,
-      message: `Work-order overdue — ${e.tag} at ${plantName(e.plantId)} (expected ${l.etr}).` });
+      message: `Work-order overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (expected ${l.etr}).` });
   });
   // Overdue PPM (planned date passed, no completion this month)
   getOverduePPM().forEach(({ e, date }) => {
-    const ds = date.toISOString().slice(0, 10);
+    const ds = dstr(date);
     feed.push({ key: `ppm-overdue-${e.id}-${ds}`, group: 'overdue', date: ds,
-      message: `PPM overdue — ${e.tag} at ${plantName(e.plantId)} (planned ${ds}).` });
+      message: `PPM overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (planned ${ds}).` });
   });
   // Due today + (admins only) upcoming within 7 days
   getUpcomingPPM(7).forEach(({ e, date }) => {
-    const ds = date.toISOString().slice(0, 10);
+    const ds = dstr(date);
     if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds,
-      message: `Maintenance due today — ${e.tag} at ${plantName(e.plantId)}.` });
+      message: `Maintenance due today — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
     else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds,
-      message: `Upcoming — ${e.tag} at ${plantName(e.plantId)} on ${ds}.` });
+      message: `Upcoming — ${esc(e.tag)} at ${esc(plantName(e.plantId))} on ${ds}.` });
   });
-  // Activity outbox (admins only): breakdowns, status changes, per-plant channel config
-  if (admin) loadNotifs().forEach(n => feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event,
-    message: n.message, channels: n.channels, recipients: n.recipients }));
+  // Activity (admins only): breakdowns, status changes — shared table in real
+  // mode (cross-device), localStorage outbox in prototype mode.
+  if (admin) {
+    const activity = SUPA
+      ? (cloudNotifs || []).map(n => ({ id: n.id, ts: n.ts, event: n.event, message: n.message, channels: n.channels || [], recipients: n.recipients || [] }))
+      : loadNotifs();
+    activity.forEach(n => feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event,
+      message: n.message, channels: n.channels, recipients: n.recipients }));
+  }
   const order = { overdue: 0, due: 1, upcoming: 2, activity: 3 };
   return feed.sort((a, b) => (order[a.group] - order[b.group]) || String(a.date).localeCompare(String(b.date)));
 }
+// Badge counts only ACTIONABLE unseen items (overdue + due today) — an
+// alarm-red "9+" for merely-upcoming PPM would cry wolf on day one.
 function unreadNotifCount() {
   const seen = loadSeenNotifs();
-  return buildNotifFeed().filter(n => !seen.has(n.key)).length;
+  return buildNotifFeed().filter(n => (n.group === 'overdue' || n.group === 'due') && !seen.has(n.key)).length;
 }
 function toggleNotifPanel() {
   const existing = document.getElementById('notifPanel');
@@ -658,9 +749,9 @@ function renderDashboard() {
     const log = openLogFor(e.id);
     const et = ecStatus(log?.etr, log?.endDate);
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${e.location}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${log ? log.reason : '—'}</div><div class="cell-muted">${log ? 'Tech: ' + log.technician : ''}</div></td>
       <td><div class="cell-primary">${fmt(log?.startDate)}</div><div class="cell-muted">Expected: ${fmt(log?.etr)}</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
@@ -703,7 +794,7 @@ function renderDashboard() {
         <table class="list-table">
           <thead><tr>
             <th>Equipment</th><th>Plant</th><th>Type / Model</th><th>Reason</th>
-            <th>Start / Expected Completion</th><th>Status</th><th>State</th>
+            <th>Start / Expected Completion</th><th>Due</th><th>Status</th>
           </tr></thead>
           <tbody>${downRows}</tbody>
         </table>
@@ -721,9 +812,9 @@ function renderEquipment() {
       ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
       : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${e.location}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
       <td class="col-center">${statusBadge(e.status)}</td>
       <td class="col-center">${action}</td>
@@ -784,9 +875,9 @@ function renderEquipmentDetail(id) {
           ? `<span class="text-xs text-slate-400">(${daysBetween(l.startDate, l.endDate)} day${daysBetween(l.startDate,l.endDate)===1?'':'s'})</span>`
           : `<span class="text-xs ${isOverdue(l)?'text-red-600 font-medium':'text-brand'}">Expected ${l.etr || '—'}</span>`}
       </div>
-      <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${l.notes || '—'}</div>
-      ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${l.completionNotes}</div>` : ''}
-      <div class="text-xs text-slate-500 mt-1">Technician: ${l.technician}</div>
+      <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${esc(l.notes) || '—'}</div>
+      ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${esc(l.completionNotes)}</div>` : ''}
+      <div class="text-xs text-slate-500 mt-1">Technician: ${esc(l.technician)}</div>
     </div>
   `).join('') || `<div class="text-slate-500 text-sm">No maintenance history yet.</div>`;
 
@@ -800,7 +891,7 @@ function renderEquipmentDetail(id) {
       <div class="flex items-start flex-wrap gap-3">
         <div>
           <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${e.tag}</h1>${statusBadge(e.status)}</div>
-          <div class="text-slate-500 text-sm mt-1">${e.type} · ${e.make} ${e.model} · ${plantName(e.plantId)}</div>
+          <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${plantName(e.plantId)}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
           ${isAdmin() ? `<button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
@@ -813,7 +904,7 @@ function renderEquipmentDetail(id) {
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 text-sm">
         <div><div class="text-xs uppercase text-slate-500">Plant</div><div>${plantName(e.plantId)}</div></div>
-        <div><div class="text-xs uppercase text-slate-500">Location</div><div>${e.location}</div></div>
+        <div><div class="text-xs uppercase text-slate-500">Location</div><div>${esc(e.location)}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Installed</div><div>${e.installed}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Expected Completion</div><div>${open?.etr || '—'}</div></div>
       </div>
@@ -900,7 +991,7 @@ function getFilteredLogs() {
       if (fTo   && l.startDate > fTo)   return false;
       if (fTech && l.technician !== fTech) return false;
       if (fSearch) {
-        const blob = `${e.tag} ${e.make} ${e.model} ${e.location} ${plantName(e.plantId)} ${l.notes} ${l.completionNotes||''} ${l.technician}`.toLowerCase();
+        const blob = `${e.tag} ${esc(e.make)} ${esc(e.model)} ${e.location} ${plantName(e.plantId)} ${l.notes} ${l.completionNotes||''} ${l.technician}`.toLowerCase();
         if (!blob.includes(fSearch)) return false;
       }
       return true;
@@ -929,16 +1020,20 @@ function renderLogRows() {
       ? `<span class="text-slate-700">${durDays} day${durDays===1?'':'s'}</span>`
       : `<span class="font-medium ${overdue?'text-red-600':'text-brand'}">${durDays} day${durDays===1?'':'s'} (ongoing)</span>`;
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
-      <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">${e.type} · ${e.location}</div></td>
+      <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">${e.type} · ${esc(e.location)}</div></td>
       <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">${l.endDate ? 'End: ' + l.endDate : 'Expected: ' + (l.etr || '—')}</div></td>
       <td>${durHtml}</td>
-      <td><div class="cell-primary">${l.technician}</div></td>
-      <td class="max-w-xs"><div class="text-slate-600 line-clamp-2" title="${(l.notes||'').replace(/"/g,'&quot;')}">${l.notes||''}</div></td>
+      <td><div class="cell-primary">${esc(l.technician)}</div></td>
+      <td class="max-w-xs"><div class="text-slate-600 line-clamp-2" title="${esc(l.notes)}">${esc(l.notes)}</div></td>
       <td>${ongoingStatusPill(l)}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="8" class="py-6 text-center text-slate-500">No log entries match your filters.</td></tr>`;
+  }).join('') || `<tr><td colspan="8" class="py-6 text-center text-slate-500">${
+    state.logs.length === 0
+      ? 'No maintenance has been logged yet. Entries appear here when equipment is put in maintenance.'
+      : 'No log entries match your filters.'
+  }</td></tr>`;
   document.getElementById('logRows').innerHTML = rows;
 
   const pager = document.getElementById('logPager');
@@ -1035,8 +1130,9 @@ async function submitAddPlant(ev) {
   const f = new FormData(ev.target);
   const plant = { id: nextPlantId(), name: f.get('name').trim(), location: (f.get('location')||'').trim(), notifications: defaultNotifConfig({ maintenance:['email'], breakdown:['email','whatsapp','sms'], operational:[], overdue:['email','whatsapp'] }) };
   if (SUPA) {
-    try { const { error } = await SUPA.from('plants').insert({ id: plant.id, name: plant.name, location: plant.location, notifications: plant.notifications }); if (error) throw error; }
-    catch (err) { alert('Could not add plant: ' + err.message); return; }
+    const unlock = lockSubmit(ev);
+    const { error } = await SUPA.from('plants').insert({ id: plant.id, name: plant.name, location: plant.location, notifications: plant.notifications });
+    if (error) { unlock(); saveError(error); return; }
     await hydrateCloud(); closeModal(); route(); return;
   }
   state.plants.push(plant);
@@ -1072,12 +1168,14 @@ function renderTeam() {
         <option value="Engineer" ${u.role==='Engineer'?'selected':''}>Engineer</option>
         <option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option>
       </select>`);
-    if (!isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer'))
+    // Real mode: user deletion happens in Supabase Auth (an in-app button that
+    // dead-ends in "go to the console" is worse than no button).
+    if (!SUPA && !isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer'))
       actions.push(`<button onclick="removeUser('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>`);
     return `<tr>
       <td>
-        <div class="cell-primary">${u.name}${isSelf?' <span class="text-[10px] text-slate-400">(you)</span>':''}</div>
-        <div class="cell-muted">${u.email || '—'}</div>
+        <div class="cell-primary">${esc(u.name)}${isSelf?' <span class="text-[10px] text-slate-400">(you)</span>':''}</div>
+        <div class="cell-muted">${esc(u.email) || '—'}</div>
       </td>
       <td><span class="badge ${roleBadge}">${u.role}</span></td>
       <td>${plantsCell}</td>
@@ -1086,7 +1184,8 @@ function renderTeam() {
     </tr>`;
   }).join('');
 
-  const pending = (state.invites || []).filter(i => i.status === 'pending');
+  // Prototype-only: real-mode invites go out by email (no shareable-link table).
+  const pending = SUPA ? [] : (state.invites || []).filter(i => i.status === 'pending');
   const inviteRows = pending.map(i => `<tr>
       <td>
         <div class="cell-primary">${i.name}</div>
@@ -1210,7 +1309,13 @@ async function submitInvite(ev) {
       const { data, error } = await SUPA.functions.invoke('invite-user', {
         body: { email, name, role, redirectTo: location.origin + location.pathname },
       });
-      if (error || (data && data.error)) throw new Error((data && data.error) || error.message);
+      if (error) {
+        // Non-2xx responses hide the real message inside error.context.
+        let msg = error.message;
+        try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch {}
+        throw new Error(msg);
+      }
+      if (data && data.error) throw new Error(data.error);
       closeModal();
       alert(`Invitation email sent to ${email} as ${data.role || role}. They'll set their own password from the email link.`);
       await hydrateCloud(); route();
@@ -1422,12 +1527,17 @@ async function submitAssignPlants(ev, userId) {
   const f = new FormData(ev.target);
   const selected = state.plants.map(p => p.id).filter(id => f.get('plant.' + id));
   if (SUPA) {
-    try {
-      await SUPA.from('plant_assignments').delete().eq('user_id', userId);
-      if (selected.length) await SUPA.from('plant_assignments').insert(selected.map(pid => ({ user_id: userId, plant_id: pid })));
-      await hydrateCloud();
-      if (authUser && authUser.id === userId) authUser.plants = selected.slice();
-    } catch (e) { alert('Could not save assignments: ' + e.message); return; }
+    const unlock = lockSubmit(ev);
+    // supabase-js returns {error} rather than throwing — check every step so a
+    // failed re-insert can't silently wipe an engineer's access.
+    const del = await SUPA.from('plant_assignments').delete().eq('user_id', userId);
+    if (del.error) { unlock(); saveError(del.error); return; }
+    if (selected.length) {
+      const ins = await SUPA.from('plant_assignments').insert(selected.map(pid => ({ user_id: userId, plant_id: pid })));
+      if (ins.error) { unlock(); saveError(new Error(ins.error.message + ' — assignments for this user may be incomplete; please re-open and save again.')); await hydrateCloud(); route(); return; }
+    }
+    await hydrateCloud();
+    if (authUser && authUser.id === userId) authUser.plants = selected.slice();
   } else {
     const u = state.users.find(x => x.id === userId); if (u) u.plantIds = selected;
     saveUsers(state.users);
@@ -1437,8 +1547,9 @@ async function submitAssignPlants(ev, userId) {
 async function setUserRole(userId, role) {
   if (!isSuperadmin()) { alert('Only the Superadmin can change roles.'); route(); return; }
   if (SUPA) {
-    try { await SUPA.from('profiles').update({ role }).eq('id', userId); await hydrateCloud(); }
-    catch (e) { alert('Could not change role: ' + e.message); return; }
+    const { error } = await SUPA.from('profiles').update({ role }).eq('id', userId);
+    if (error) { saveError(error); route(); return; }
+    await hydrateCloud();
   } else {
     const u = state.users.find(x => x.id === userId); if (u) u.role = role; saveUsers(state.users);
   }
@@ -1450,7 +1561,7 @@ function renderRecipPicker(eventKey) {
   const ids = window._recipState[eventKey] || [];
   const chips = ids.map(uid => {
     const u = state.users.find(x => x.id === uid); if (!u) return '';
-    return `<span class="recip-chip">${u.name}<button type="button" onclick="removeRecipient('${eventKey}','${uid}')" aria-label="Remove ${u.name}">&times;</button></span>`;
+    return `<span class="recip-chip">${esc(u.name)}<button type="button" onclick="removeRecipient('${eventKey}','${uid}')" aria-label="Remove ${u.name}">&times;</button></span>`;
   }).join('');
   return `
     <div class="recip-picker">
@@ -1477,7 +1588,7 @@ function onRecipInput(eventKey, query) {
   } else {
     dd.innerHTML = matches.map(u => `
       <div onmousedown="event.preventDefault()" onclick="addRecipient('${eventKey}','${u.id}')">
-        <span class="pd-name">${u.name}</span>
+        <span class="pd-name">${esc(u.name)}</span>
         <span class="pd-role">${u.role}</span>
       </div>`).join('');
   }
@@ -1561,8 +1672,9 @@ async function savePlantNotif(ev, plantId) {
     p.notifications[evt.key].recipients = (window._recipState[evt.key] || []).slice();
   });
   if (SUPA) {
-    try { const { error } = await SUPA.from('plants').update({ notifications: p.notifications }).eq('id', plantId); if (error) throw error; }
-    catch (err) { alert('Could not save notifications: ' + err.message); return; }
+    const unlock = lockSubmit(ev);
+    const { error } = await SUPA.from('plants').update({ notifications: p.notifications }).eq('id', plantId);
+    if (error) { unlock(); saveError(error); return; }
     await hydrateCloud(); closeModal(); route(); return;
   }
   savePlant(state.plants);
@@ -1647,6 +1759,7 @@ function getUpcomingPPM(days = 30) {
   const out = [];
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
+    if (e.status !== 'Operational') continue; // already under maintenance
     if (slot === 'weekly') {
       let d = new Date('2026-01-01T00:00:00');
       while (d < now) { d.setDate(d.getDate() + 7); }
@@ -1666,6 +1779,10 @@ function getUpcomingPPM(days = 30) {
   return out.sort((a,b) => a.date - b.date);
 }
 
+// PPM slots before this date are never reported overdue — the schedule went
+// live at launch; flagging months of pre-launch slots would flood day one.
+const PPM_BASELINE = '2026-07-19';
+
 function getOverduePPM() {
   // PPM slots whose date is in the past but no completion log exists at-or-after that date in this month.
   const todayStr = today();
@@ -1674,12 +1791,14 @@ function getOverduePPM() {
   const out = [];
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
+    if (e.status !== 'Operational') continue; // already in maintenance — being handled
     if (slot === 'weekly') continue; // weekly noise — skip from "overdue"
     const day = SLOT_DAY[slot];
     const m = now.getMonth(), y = now.getFullYear();
     const slotDate = new Date(y, m, day);
     if (slotDate >= now) continue; // not yet due
-    const slotStr = slotDate.toISOString().slice(0,10);
+    const slotStr = dstr(slotDate);
+    if (slotStr < PPM_BASELINE) continue; // pre-launch slot — not our backlog
     const monthPrefix = slotStr.slice(0,7);
     const done = state.logs.some(l => l.equipmentId === eqId && l.endDate && l.endDate.startsWith(monthPrefix));
     if (!done) out.push({ e, date: slotDate, slot: `Monthly · ${slot}` });
@@ -1753,8 +1872,8 @@ function renderPendingTab(pending, overdue) {
     const et = ecStatus(l.etr, null);
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
-      <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">Tech: ${l.technician}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
+      <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">Tech: ${esc(l.technician)}</div></td>
       <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">Expected: ${l.etr||'—'}</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
       <td class="col-center"><button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium">Mark Complete</button></td>
@@ -1763,11 +1882,11 @@ function renderPendingTab(pending, overdue) {
 
   const todayD = new Date(today() + 'T00:00:00');
   const overdueRows = fOverdue.map(({e, date, slot}) => {
-    const ds = date.toISOString().slice(0,10);
+    const ds = dstr(date);
     const overdueBy = Math.round((todayD - date) / 86400000);
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">Scheduled PPM</div><div class="cell-muted">${slot}</div></td>
       <td><div class="cell-primary">${ds}</div><div class="cell-muted">Planned date</div></td>
       <td><span class="badge badge-bd">Overdue by ${overdueBy}d</span></td>
@@ -1779,7 +1898,7 @@ function renderPendingTab(pending, overdue) {
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-400 font-normal">(${fOngoing.length})</span></div>
       <div class="overflow-x-auto"><table class="list-table">
-        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>ETR Status</th><th class="col-center">Action</th></tr></thead>
+        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
         <tbody>${ongoingRows}</tbody>
       </table></div>
     </div>` : '';
@@ -1805,7 +1924,7 @@ function renderUpcomingTab(upcoming) {
     (ui.typeFilter  === 'all' || e.type    === ui.typeFilter)
   );
   if (!filtered.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">No scheduled PPM tasks in the next 30 days for this filter.</div>`;
-  const fmtD = (d) => d.toISOString().slice(0,10);
+  const fmtD = (d) => dstr(d);
   const todayStr = today();
   const rows = filtered.map(({ e, date, slot }) => {
     const ds = fmtD(date);
@@ -1814,7 +1933,7 @@ function renderUpcomingTab(upcoming) {
     const dueLabel = isToday ? `<span class="badge badge-mt">Due today</span>` : `<span class="badge badge-brand">In ${daysAway}d</span>`;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${e.make} ${e.model}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${ds}</div><div class="cell-muted">${slot}</div></td>
       <td>${dueLabel}</td>
       <td class="col-center"><button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Put in Maintenance</button></td>
@@ -1849,7 +1968,7 @@ function computeVisitDateRange() {
   } else if (ui.visitFilter === '30d') {
     start = new Date(todayD.getTime() - 30*86400000);
   }
-  return { from: start.toISOString().slice(0,10), to: todayStr };
+  return { from: dstr(start), to: todayStr };
 }
 
 function renderVisitsTab(visits) {
@@ -1964,8 +2083,9 @@ function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
   const equipment = [...new Set(logs.map(l => l.equipmentId))].map(eqById).filter(Boolean);
   const plants = [...new Set(equipment.map(e => e.plantId))].map(plantById).filter(Boolean);
   const technicians = [...new Set(logs.map(l => l.technician))];
-  const preparedBy = preparedByIn || technicians[0] || 'A. Mehta';
-  const approvedBy = approvedByIn || 'P. Kulkarni';
+  // Never fabricate signatories on a sign-off document — blank means "sign here".
+  const preparedBy = preparedByIn || technicians[0] || '';
+  const approvedBy = approvedByIn || '';
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait' });
@@ -2021,7 +2141,7 @@ function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
     doc.setFont(undefined,'bold'); doc.text(label, x, y);
     doc.setFont(undefined,'normal');
     doc.setDrawColor(160,160,160); doc.line(x, y + 16, x + cW - 6, y + 16);
-    doc.setFontSize(9); doc.text(name, x, y + 21);
+    doc.setFontSize(9); if (name) doc.text(name, x, y + 21);
     doc.setFontSize(7); doc.setTextColor(120,120,120);
     doc.text(role, x, y + 25);
     doc.text(`Date: ${date}`, x, y + 29);
@@ -2293,6 +2413,7 @@ function openMaintModal(eqId) {
 }
 async function submitMaint(ev, eqId) {
   ev.preventDefault();
+  if (openLogFor(eqId)) { alert('This equipment already has an open work-order. Complete it before starting a new one.'); return; }
   const f = new FormData(ev.target);
   const log = {
     id: 'L-' + Date.now(), equipmentId: eqId,
@@ -2303,14 +2424,17 @@ async function submitMaint(ev, eqId) {
   const newStatus = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
   const evKey = log.reason === 'Breakdown' ? 'breakdown' : 'maintenance';
   if (SUPA) {
-    try {
-      const { error: e1 } = await SUPA.from('maintenance_logs').insert(logToDb(log));
-      const { error: e2 } = await SUPA.rpc('set_equipment_status', { eq_id: eqId, new_status: newStatus });
-      if (e1 || e2) throw (e1 || e2);
-    } catch (err) { alert('Could not save: ' + err.message); return; }
+    const unlock = lockSubmit(ev);
+    // Atomic RPC: log insert + status change in one transaction, with a
+    // DB-side guard against duplicate open work-orders.
+    const { error } = await SUPA.rpc('log_maintenance_start', {
+      p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
+      p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
+    });
+    if (error) { unlock(); saveError(error); return; }
     await hydrateCloud();
     closeModal(); route();
-    pushEventNotification(evKey, eqById(eqId), log); renderHeaderChrome();
+    pushEventNotification(evKey, eqById(eqId), log);
     return;
   }
   state.logs.unshift(log);
@@ -2330,7 +2454,7 @@ function openCompleteModal(eqId) {
       ${log ? `<div class="p-3 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
         <div><span class="font-medium">Reason:</span> ${log.reason}</div>
         <div><span class="font-medium">Started:</span> ${log.startDate} · <span class="font-medium">Expected:</span> ${log.etr}</div>
-        <div class="mt-1"><span class="font-medium">Reason:</span> ${log.notes||'—'}</div>
+        <div class="mt-1"><span class="font-medium">Scope of work:</span> ${esc(log.notes)||'—'}</div>
       </div>` : ''}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion date <span class="text-red-500">*</span></label>
@@ -2358,15 +2482,16 @@ async function submitComplete(ev, eqId) {
   const log = openLogFor(eqId);
   if (SUPA) {
     if (!log) { alert('No open work-order found.'); return; }
-    try {
-      const { error: e1 } = await SUPA.from('maintenance_logs').update({ end_date: endDate, completion_notes: completionNotes }).eq('id', log.id);
-      const { error: e2 } = await SUPA.rpc('set_equipment_status', { eq_id: eqId, new_status: 'Operational' });
-      if (e1 || e2) throw (e1 || e2);
-    } catch (err) { alert('Could not save: ' + err.message); return; }
+    const unlock = lockSubmit(ev);
+    // Atomic RPC: closes the log and returns the equipment to service together.
+    const { error } = await SUPA.rpc('log_maintenance_complete', {
+      p_log: log.id, p_end: endDate, p_notes: completionNotes,
+    });
+    if (error) { unlock(); saveError(error); return; }
     const closedLog = { ...log, endDate, completionNotes };
     await hydrateCloud();
     closeModal(); route();
-    pushEventNotification('operational', eqById(eqId), closedLog); renderHeaderChrome();
+    pushEventNotification('operational', eqById(eqId), closedLog);
     if (wantReport) generateSingleServiceReport(eqId, closedLog);
     return;
   }
@@ -2434,7 +2559,7 @@ function generateSingleServiceReport(eqId, log) {
   });
   y = doc.lastAutoTable.finalY + 10;
 
-  // Sign-off (dummy)
+  // Sign-off — never fabricate names; blank line means "sign here".
   if (y > 230) { doc.addPage(); y = 24; }
   doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Sign-off', 14, y); y += 5;
   doc.setDrawColor(220,225,232); doc.line(14, y, W-14, y); y += 12;
@@ -2444,14 +2569,14 @@ function generateSingleServiceReport(eqId, log) {
     doc.setFont(undefined,'bold'); doc.text(label, x, y);
     doc.setFont(undefined,'normal');
     doc.setDrawColor(160,160,160); doc.line(x, y + 16, x + cW - 6, y + 16);
-    doc.setFontSize(9); doc.text(name, x, y + 21);
+    doc.setFontSize(9); if (name) doc.text(name, x, y + 21);
     doc.setFontSize(7); doc.setTextColor(120,120,120);
     doc.text(role, x, y + 25);
     doc.text(`Date: ${log.endDate}`, x, y + 29);
     doc.setFontSize(9); doc.setTextColor(15,23,42);
   };
-  sig('Prepared by', log.technician || 'A. Mehta',  'Maintenance Technician',  14);
-  sig('Approved by', 'P. Kulkarni',                  'Maintenance Lead',        14 + cW);
+  sig('Prepared by', log.technician || '', 'Technician', 14);
+  sig('Approved by', '', 'Maintenance Lead', 14 + cW);
 
   // Footer
   doc.setFontSize(7); doc.setTextColor(140,140,140);
@@ -2517,8 +2642,9 @@ async function submitEquipmentForm(ev, mode, eqId) {
     const cur = eqById(eqId); if (!cur) return;
     const patch = { tag: f.get('tag'), type: f.get('type'), make: f.get('make') || '', model: f.get('model') || '', plantId: f.get('plantId'), installed: f.get('installed') || cur.installed };
     if (SUPA) {
-      try { const { error } = await SUPA.from('equipment').update(eqToDb({ ...cur, ...patch })).eq('id', eqId); if (error) throw error; }
-      catch (err) { alert('Could not save: ' + err.message); return; }
+      const unlock = lockSubmit(ev);
+      const { error } = await SUPA.from('equipment').update(eqToDb({ ...cur, ...patch })).eq('id', eqId);
+      if (error) { unlock(); saveError(error); return; }
       await hydrateCloud(); closeModal(); route(); return;
     }
     Object.assign(cur, patch);
@@ -2530,8 +2656,9 @@ async function submitEquipmentForm(ev, mode, eqId) {
       installed: f.get('installed') || today(), status: 'Operational', slot: null,
     };
     if (SUPA) {
-      try { const { error } = await SUPA.from('equipment').insert(eqToDb(newEq)); if (error) throw error; }
-      catch (err) { alert('Could not add equipment: ' + err.message); return; }
+      const unlock = lockSubmit(ev);
+      const { error } = await SUPA.from('equipment').insert(eqToDb(newEq));
+      if (error) { unlock(); saveError(error); return; }
       await hydrateCloud(); closeModal(); route(); return;
     }
     state.equipment.push(newEq);
@@ -2726,10 +2853,9 @@ async function submitImportPPM(ev) {
   }));
 
   if (SUPA) {
-    try {
-      const { error } = await SUPA.from('equipment').insert(newEquipment.map(eqToDb));
-      if (error) throw error;
-    } catch (err) { alert('Could not import: ' + err.message); return; }
+    const unlock = lockSubmit(ev, 'Importing…');
+    const { error } = await SUPA.from('equipment').insert(newEquipment.map(eqToDb));
+    if (error) { unlock(); saveError(error); return; }
     await hydrateCloud();
     closeModal();
     alert(`Imported ${newEquipment.length} equipment into the plant.`);
@@ -2792,7 +2918,7 @@ const TOURS = {
         body:  { 'en-US':"After a site visit, open Visit Reports. Pick a quick date filter, then Generate Report produces a sign-off PDF covering everything you completed that day.",
                  'hi-IN':"Site visit के बाद Visit Reports tab खोलें। quick date filter चुनें, फिर Generate Report से उस दिन के completed कामों का sign-off PDF बनेगा।",
                  'es-ES':"Tras una visita, abra Reportes de visita. Use un filtro rápido y Generar reporte crea un PDF de cierre con todo lo realizado ese día." } },
-      { setup: () => { const t = (state.equipment.find(e => e.status !== 'Operational') || state.equipment[0]); location.hash = '#/equipment/' + (t ? t.id : ''); route(); },
+      { setup: () => { const mine = applyPlantFilter(state.equipment); const t = (mine.find(e => e.status !== 'Operational') || mine[0]); location.hash = '#/equipment/' + (t ? t.id : ''); route(); },
         target: '[data-tour="detail-actions"]',
         title: { 'en-US':"Close out the work", 'hi-IN':'काम complete करें', 'es-ES':'Cerrar el trabajo' },
         body:  { 'en-US':"From any equipment detail page you can mark it operational and instantly generate a single-event service report for sign-off. You're all set!",
@@ -2877,13 +3003,13 @@ function renderTourChooser() {
           <div class="ch-card-sub">${TOURS.engineer.sub[lang]}</div>
         </div>
       </button>
-      <button class="ch-card" onclick="startTour('manager')">
+      ${effRole(currentUser()) === 'Admin' ? `<button class="ch-card" onclick="startTour('manager')">
         <span style="font-size:20px">📊</span>
         <div>
           <div class="ch-card-title">${TOURS.manager.label[lang]}</div>
           <div class="ch-card-sub">${TOURS.manager.sub[lang]}</div>
         </div>
-      </button>
+      </button>` : ''}
     </div>
   `;
   document.body.insertAdjacentHTML('beforeend', html);
@@ -3018,6 +3144,9 @@ function mountTourFAB() {
 // ---------- Boot ----------
 async function boot() {
   if (SUPA) {
+    // Free the quota used by old prototype seeds — real mode never reads them.
+    [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS, LS_INVITES, LS_NOTIF, LS_OVERDUE_SEEN]
+      .forEach(k => localStorage.removeItem(k));
     try {
       const { data } = await SUPA.auth.getSession();
       if (data.session) { await loadAuthProfile(data.session.user); await hydrateCloud(); }

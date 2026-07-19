@@ -50,6 +50,14 @@ Deno.serve(async (req) => {
     });
     if (error) return json({ error: error.message }, 400);
 
+    // The profiles trigger always inserts role='Engineer' (it must never trust
+    // client metadata). Set the real role here with the service client.
+    if (data.user?.id) {
+      await admin.from("profiles")
+        .update({ role: finalRole, name: name || undefined })
+        .eq("id", data.user.id);
+    }
+
     return json({ ok: true, userId: data.user?.id, role: finalRole });
   } catch (e) {
     return json({ error: String(e) }, 500);
