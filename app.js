@@ -446,16 +446,15 @@ function renderHeaderChrome() {
   const fab = document.querySelector('.tour-fab'), fabLabel = document.querySelector('.tour-fab-label');
   [fab, fabLabel].forEach(el => { if (el) el.style.display = user ? '' : 'none'; });
   if (!user) { host.innerHTML = ''; return; }
-  const admin = user.role === 'Admin';
-  const resetLink = admin ? `<button onclick="if(confirm('Reset all demo data to seed?'))resetDemo()" class="hidden md:inline text-xs text-slate-400 hover:text-slate-700 px-2 py-1">Reset demo</button>` : '';
-  const unread = admin ? loadNotifs().filter(n => !n.read).length : 0;
-  const bell = admin ? `
+  // Bell for everyone — feed content is role-scoped (admins: upcoming + due/overdue + activity;
+  // engineers: due/overdue for their assigned plants).
+  const unread = unreadNotifCount();
+  const bell = `
     <button onclick="toggleNotifPanel()" class="relative p-2 rounded-md hover:bg-slate-100 text-slate-600" title="Notifications" aria-label="Notifications">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
       ${unread ? `<span class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-semibold grid place-items-center">${unread>9?'9+':unread}</span>` : ''}
-    </button>` : '';
+    </button>`;
   host.innerHTML = `
-    ${resetLink}
     ${bell}
     <div class="flex items-center gap-2 pl-1">
       <div class="text-right leading-tight hidden sm:block">
@@ -505,29 +504,79 @@ function sweepOverdue() {
   });
   if (changed) localStorage.setItem(LS_OVERDUE_SEEN, JSON.stringify([...seenSet]));
 }
+// ---------- Derived notification feed (per-user, role-scoped) ----------
+// Admins (Amit / Superadmin): upcoming maintenance (next 7 days) for ALL plants,
+// plus due-today, overdue PPM, overdue work-orders, and the activity outbox.
+// Engineers: due-today + overdue only, already scoped to their assigned plants
+// by getUpcomingPPM / getOverduePPM / getPendingTasks.
+function notifSeenKey() { const u = currentUser(); return 'mm.notifSeen.' + (u ? u.id : 'anon'); }
+function loadSeenNotifs() { try { return new Set(JSON.parse(localStorage.getItem(notifSeenKey()) || '[]')); } catch { return new Set(); } }
+function buildNotifFeed() {
+  const u = currentUser(); if (!u) return [];
+  const admin = effRole(u) === 'Admin';
+  const todayStr = today();
+  const feed = [];
+  // Overdue open work-orders
+  getPendingTasks().forEach(({ l, e }) => {
+    if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr,
+      message: `Work-order overdue — ${e.tag} at ${plantName(e.plantId)} (expected ${l.etr}).` });
+  });
+  // Overdue PPM (planned date passed, no completion this month)
+  getOverduePPM().forEach(({ e, date }) => {
+    const ds = date.toISOString().slice(0, 10);
+    feed.push({ key: `ppm-overdue-${e.id}-${ds}`, group: 'overdue', date: ds,
+      message: `PPM overdue — ${e.tag} at ${plantName(e.plantId)} (planned ${ds}).` });
+  });
+  // Due today + (admins only) upcoming within 7 days
+  getUpcomingPPM(7).forEach(({ e, date }) => {
+    const ds = date.toISOString().slice(0, 10);
+    if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds,
+      message: `Maintenance due today — ${e.tag} at ${plantName(e.plantId)}.` });
+    else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds,
+      message: `Upcoming — ${e.tag} at ${plantName(e.plantId)} on ${ds}.` });
+  });
+  // Activity outbox (admins only): breakdowns, status changes, per-plant channel config
+  if (admin) loadNotifs().forEach(n => feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event,
+    message: n.message, channels: n.channels, recipients: n.recipients }));
+  const order = { overdue: 0, due: 1, upcoming: 2, activity: 3 };
+  return feed.sort((a, b) => (order[a.group] - order[b.group]) || String(a.date).localeCompare(String(b.date)));
+}
+function unreadNotifCount() {
+  const seen = loadSeenNotifs();
+  return buildNotifFeed().filter(n => !seen.has(n.key)).length;
+}
 function toggleNotifPanel() {
   const existing = document.getElementById('notifPanel');
   if (existing) { existing.remove(); return; }
-  const notifs = loadNotifs();
-  const userName = id => (state.users.find(u=>u.id===id)?.name || id);
-  const chLabel = ch => ch === 'sms' ? 'SMS' : ch.charAt(0).toUpperCase()+ch.slice(1);
-  const eventBadge = { maintenance:'badge-brand', breakdown:'badge-bd', operational:'badge-op', overdue:'badge-bd' };
-  const rows = notifs.map(n => {
-    const eq = eqById(n.eqId);
-    return `<div class="p-3 border-b border-slate-100 ${n.read?'':'bg-brand-50/40'}">
-      <div class="flex items-start gap-2">
-        <span class="badge ${eventBadge[n.event]||'badge-neutral'} capitalize mt-0.5">${n.event}</span>
-        <div class="flex-1 min-w-0">
-          <div class="text-sm text-slate-800">${n.message}</div>
-          <div class="text-[11px] text-slate-500 mt-1">
-            ${n.channels.length ? 'via ' + n.channels.map(chLabel).join(', ') : 'no channel'}
-            ${n.recipients.length ? ' → ' + n.recipients.map(userName).join(', ') : ''}
-          </div>
-          <div class="text-[10px] text-slate-400 mt-0.5">${new Date(n.ts).toLocaleString()}</div>
-        </div>
-      </div>
-    </div>`;
-  }).join('') || `<div class="p-6 text-center text-sm text-slate-500">No notifications yet.</div>`;
+  const feed = buildNotifFeed();
+  const seen = loadSeenNotifs();
+  const userName = id => (state.users.find(x => x.id === id)?.name || id);
+  const chLabel = ch => ch === 'sms' ? 'SMS' : ch.charAt(0).toUpperCase() + ch.slice(1);
+  const GROUPS = [
+    ['overdue',  'Overdue',        'badge-bd'],
+    ['due',      'Due today',      'badge-mt'],
+    ['upcoming', 'Upcoming (7 days)', 'badge-brand'],
+    ['activity', 'Recent activity', 'badge-neutral'],
+  ];
+  const sections = GROUPS.map(([key, label, badgeCls]) => {
+    const items = feed.filter(n => n.group === key);
+    if (!items.length) return '';
+    const rows = items.map(n => `
+      <div class="px-4 py-2.5 border-b border-slate-100 ${seen.has(n.key) ? '' : 'bg-brand-50/40'}">
+        <div class="text-sm text-slate-800">${n.message}</div>
+        ${n.group === 'activity' && (n.channels?.length || n.recipients?.length) ? `
+          <div class="text-[11px] text-slate-500 mt-0.5">
+            ${n.channels?.length ? 'via ' + n.channels.map(chLabel).join(', ') : ''}
+            ${n.recipients?.length ? ' → ' + n.recipients.map(userName).join(', ') : ''}
+          </div>` : ''}
+        ${n.group === 'activity' ? `<div class="text-[10px] text-slate-400 mt-0.5">${new Date(n.date).toLocaleString()}</div>` : ''}
+      </div>`).join('');
+    return `<div>
+      <div class="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2 sticky top-0">
+        <span class="badge ${badgeCls}">${label}</span>
+        <span class="text-xs text-slate-500">${items.length}</span>
+      </div>${rows}</div>`;
+  }).join('') || `<div class="p-6 text-center text-sm text-slate-500">You're all caught up — nothing due or overdue.</div>`;
   document.body.insertAdjacentHTML('beforeend', `
     <div id="notifPanel" class="fixed inset-0 z-[70]" onclick="if(event.target===this)this.remove()">
       <div class="absolute right-0 top-0 h-full w-full max-w-sm bg-white shadow-xl flex flex-col">
@@ -538,20 +587,16 @@ function toggleNotifPanel() {
             <button onclick="document.getElementById('notifPanel').remove()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
           </div>
         </div>
-        <div class="px-4 py-2 bg-amber-50 border-b border-amber-100 text-[11px] text-amber-800">
-          Prototype outbox — records what would be delivered. Real Email/SMS/WhatsApp needs the backend (see plan).
-        </div>
-        <div class="flex-1 overflow-y-auto">${rows}</div>
+        <div class="flex-1 overflow-y-auto">${sections}</div>
       </div>
     </div>`);
 }
 function markAllNotifsRead() {
-  const notifs = loadNotifs().map(n => ({ ...n, read: true }));
-  saveNotifs(notifs);
+  const keys = buildNotifFeed().map(n => n.key);
+  localStorage.setItem(notifSeenKey(), JSON.stringify(keys.slice(0, 1000)));
   const panel = document.getElementById('notifPanel');
   if (panel) panel.remove();
   renderHeaderChrome();
-  toggleNotifPanel();
 }
 
 // ---------- Reusable controls ----------
