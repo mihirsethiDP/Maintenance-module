@@ -1212,7 +1212,10 @@ function renderTeam() {
           : `<span class="badge badge-mt">None assigned</span>`)
       : `<span class="text-xs text-slate-500">All plants</span>`;
     const actions = [];
-    if (isEng) actions.push(`<button onclick="openAssignPlantsModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100">Assign plants</button>`);
+    if (isEng) {
+      actions.push(`<button onclick="openAssignPlantsModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100">Assign plants</button>`);
+      actions.push(`<button onclick="openScheduleModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Generate Schedule</button>`);
+    }
     if (isSuperadmin() && !isSelf && u.role !== 'Superadmin')
       actions.push(`<select onchange="setUserRole('${u.id}', this.value)" class="text-xs border border-slate-300 rounded-md px-1.5 py-1 bg-white">
         <option value="Engineer" ${u.role==='Engineer'?'selected':''}>Engineer</option>
@@ -1606,6 +1609,160 @@ async function setUserRole(userId, role) {
   route();
 }
 
+// ---------- Per-engineer schedule (admin generates, shares manually) ----------
+function toggleScheduleCustom(preset) {
+  document.getElementById('scheduleCustomDates')?.classList.toggle('hidden', preset !== 'custom');
+}
+function openScheduleModal(userId) {
+  if (!isAdmin()) return;
+  const u = state.users.find(x => x.id === userId); if (!u) return;
+  const plantIds = assignmentsFor(userId);
+  const plants = state.plants.filter(p => plantIds.includes(p.id));
+  const plantSummary = plants.length
+    ? `Covers ${plants.length} assigned plant${plants.length===1?'':'s'}: ${plants.map(p=>esc(p.name)).join(', ')}.`
+    : `<span class="text-amber-700">This engineer has no plants assigned yet — the schedule will be empty. Assign plants first.</span>`;
+  document.getElementById('modalTitle').textContent = `Generate Schedule — ${esc(u.name)}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitSchedule(event, '${userId}')" class="space-y-4 text-sm">
+      <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-xs text-slate-600">${plantSummary}</div>
+      <div>
+        <div class="text-sm font-medium mb-2">Period</div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <label class="flex items-center justify-center gap-1.5 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
+            <input type="radio" name="preset" value="today" checked onchange="toggleScheduleCustom(this.value)" /> Today
+          </label>
+          <label class="flex items-center justify-center gap-1.5 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
+            <input type="radio" name="preset" value="7d" onchange="toggleScheduleCustom(this.value)" /> Next 7 days
+          </label>
+          <label class="flex items-center justify-center gap-1.5 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
+            <input type="radio" name="preset" value="30d" onchange="toggleScheduleCustom(this.value)" /> Next 30 days
+          </label>
+          <label class="flex items-center justify-center gap-1.5 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
+            <input type="radio" name="preset" value="custom" onchange="toggleScheduleCustom(this.value)" /> Custom
+          </label>
+        </div>
+        <div id="scheduleCustomDates" class="hidden grid grid-cols-2 gap-3 mt-2">
+          <div><label class="block text-xs text-slate-600 mb-1">From</label><input type="date" name="customFrom" value="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+          <div><label class="block text-xs text-slate-600 mb-1">To</label><input type="date" name="customTo" value="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+        </div>
+      </div>
+      <div class="text-xs text-slate-500">Includes any currently open or overdue work-orders (regardless of period) plus PPM tasks scheduled within the period.</div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button type="submit" name="action" value="download" class="px-3 py-1.5 rounded-md border border-brand bg-white text-brand hover:bg-brand-50 text-sm font-medium">Download</button>
+        <button type="submit" name="action" value="preview"  class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Preview</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function submitSchedule(ev, userId) {
+  ev.preventDefault();
+  if (!isAdmin()) return;
+  const f = new FormData(ev.target);
+  const preset = f.get('preset') || 'today';
+  const todayStr = today();
+  const addDays = (base, n) => { const d = new Date(base + 'T00:00:00'); d.setDate(d.getDate() + n); return dstr(d); };
+  let from = todayStr, to = todayStr;
+  if (preset === '7d') to = addDays(todayStr, 6);
+  else if (preset === '30d') to = addDays(todayStr, 29);
+  else if (preset === 'custom') { from = f.get('customFrom') || todayStr; to = f.get('customTo') || todayStr; }
+  if (to < from) [from, to] = [to, from];
+
+  const result = buildScheduleDoc(userId, from, to);
+  if (!result) return;
+  const action = (ev.submitter && ev.submitter.value) || 'preview';
+  closeModal();
+  if (action === 'download') result.doc.save(result.filename);
+  else openPdfPreview(result.doc, result.filename, `Schedule — ${result.userName}`);
+}
+function buildScheduleDoc(userId, from, to) {
+  const u = state.users.find(x => x.id === userId); if (!u) return null;
+  const plantIds = assignmentsFor(userId);
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait' });
+  const W = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(25,52,88);
+  doc.rect(0, 0, W, 22, 'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(16); doc.text('Maintenance Schedule', 14, 14);
+  doc.setFontSize(9);  doc.text(`Generated ${today()}`, W - 14, 14, { align: 'right' });
+  doc.setTextColor(15,23,42);
+
+  let y = 30;
+  doc.setFontSize(10);
+  doc.text(`Engineer:  ${u.name}`, 14, y); y += 6;
+  doc.text(`Period:  ${from}  to  ${to}`, 14, y); y += 6;
+  const plants = state.plants.filter(p => plantIds.includes(p.id));
+  doc.text(`Plants:  ${plants.length ? plants.map(p=>p.name).join(', ') : '(none assigned)'}`, 14, y); y += 8;
+
+  if (!plantIds.length) {
+    doc.setFontSize(10); doc.setTextColor(120,120,120);
+    doc.text('No plants are assigned to this engineer yet — nothing to schedule.', 14, y);
+    return { doc, filename: `schedule-${u.name.replace(/[^a-zA-Z0-9]+/g,'-')}-${from}.pdf`, userName: u.name };
+  }
+
+  // Open / overdue work-orders — shown regardless of the selected period,
+  // since this work is already active and the engineer needs to know about it.
+  const openRows = getPendingTasks(plantIds).map(({ l, e }) => [
+    e.tag, l.reason, l.startDate, l.etr || '—', isOverdue(l) ? 'Overdue' : 'Open', l.notes || '—',
+  ]);
+  if (openRows.length) {
+    doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Open & overdue work-orders', 14, y); y += 2;
+    doc.autoTable({
+      startY: y + 2,
+      head: [['Equipment', 'Reason', 'Start', 'Expected', 'Status', 'Notes']],
+      body: openRows,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [185,28,28], textColor: 255 },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 8;
+  }
+
+  // Overdue PPM (independent of the chosen period — it's already due)
+  const overdueRows = getOverduePPM(plantIds).map(({ e, date, slot }) => [e.tag, slot, dstr(date), 'Overdue']);
+  if (overdueRows.length) {
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Overdue PPM', 14, y); y += 2;
+    doc.autoTable({
+      startY: y + 2,
+      head: [['Equipment', 'Schedule', 'Planned date', 'Status']],
+      body: overdueRows,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [185,28,28], textColor: 255 },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 8;
+  }
+
+  // Upcoming PPM within the selected period
+  const spanDays = Math.max(1, daysBetween(today(), to) + 1);
+  const upcoming = getUpcomingPPM(spanDays, plantIds)
+    .map(({ e, date, slot }) => ({ e, ds: dstr(date), slot }))
+    .filter(x => x.ds >= from && x.ds <= to);
+  if (y > 240) { doc.addPage(); y = 20; }
+  doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text(`Scheduled PPM (${from} to ${to})`, 14, y); y += 2;
+  if (upcoming.length) {
+    doc.autoTable({
+      startY: y + 2,
+      head: [['Equipment', 'Type', 'Schedule', 'Date']],
+      body: upcoming.map(x => [x.e.tag, x.e.type, x.slot, x.ds]),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [25,52,88], textColor: 255 },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 6;
+  } else {
+    doc.setFontSize(9); doc.setTextColor(120,120,120);
+    doc.text('No PPM tasks scheduled in this period.', 14, y + 4);
+    doc.setTextColor(15,23,42);
+  }
+
+  return { doc, filename: `schedule-${u.name.replace(/[^a-zA-Z0-9]+/g,'-')}-${from}_to_${to}.pdf`, userName: u.name };
+}
+
 window._recipState = {};
 function renderRecipPicker(eventKey) {
   const ids = window._recipState[eventKey] || [];
@@ -1791,9 +1948,13 @@ function exportPDF(eqId) {
 // ---------- Engineering Corner ----------
 const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
 
-function getPendingTasks() {
-  const admin = effRole(currentUser()) === 'Admin';
-  const ids = accessiblePlantIds();
+// All three accept an optional explicit plant-id list (for generating a
+// schedule scoped to SOMEONE ELSE's assigned plants, e.g. an admin building
+// a schedule for a specific engineer). Defaults to the current user's own
+// accessible plants — every existing call site is unaffected.
+function getPendingTasks(plantIds) {
+  const admin = !plantIds && effRole(currentUser()) === 'Admin';
+  const ids = plantIds || accessiblePlantIds();
   return state.logs
     .filter(l => !l.endDate)
     .map(l => ({ l, e: eqById(l.equipmentId) }))
@@ -1801,11 +1962,11 @@ function getPendingTasks() {
     .sort((a,b) => a.l.startDate.localeCompare(b.l.startDate));
 }
 
-function getUpcomingPPM(days = 30) {
+function getUpcomingPPM(days = 30, plantIds) {
   const todayStr = today();
   const now = new Date(todayStr + 'T00:00:00');
   const horizon = new Date(now); horizon.setDate(horizon.getDate() + days);
-  const admin = effRole(currentUser()) === 'Admin'; const ids = accessiblePlantIds();
+  const admin = !plantIds && effRole(currentUser()) === 'Admin'; const ids = plantIds || accessiblePlantIds();
   const out = [];
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
@@ -1833,11 +1994,11 @@ function getUpcomingPPM(days = 30) {
 // live at launch; flagging months of pre-launch slots would flood day one.
 const PPM_BASELINE = '2026-07-19';
 
-function getOverduePPM() {
+function getOverduePPM(plantIds) {
   // PPM slots whose date is in the past but no completion log exists at-or-after that date in this month.
   const todayStr = today();
   const now = new Date(todayStr + 'T00:00:00');
-  const admin = effRole(currentUser()) === 'Admin'; const ids = accessiblePlantIds();
+  const admin = !plantIds && effRole(currentUser()) === 'Admin'; const ids = plantIds || accessiblePlantIds();
   const out = [];
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
