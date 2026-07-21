@@ -207,6 +207,18 @@ function toast(msg) {
 }
 // Escape user-authored text before injecting into innerHTML templates.
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// Normalize a phone number to E.164 (e.g. +919000010000) — the format WhatsApp
+// Business API and SMS providers require. Empty input is valid (no phone yet).
+function normalizePhone(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return { ok: true, value: '' };
+  const compact = trimmed.replace(/[\s\-().]/g, '');
+  if (!/^\+[1-9]\d{7,14}$/.test(compact)) {
+    return { ok: false, error: 'Enter a phone number with country code, e.g. +919000010000.' };
+  }
+  return { ok: true, value: compact };
+}
 const fmt = d => d ? d : '—';
 const eqById = id => state.equipment.find(e => e.id === id);
 const plantById = id => state.plants.find(p => p.id === id);
@@ -1212,6 +1224,7 @@ function renderTeam() {
           : `<span class="badge badge-mt">None assigned</span>`)
       : `<span class="text-xs text-slate-500">All plants</span>`;
     const actions = [];
+    actions.push(`<button onclick="openEditUserModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Edit</button>`);
     if (isEng) {
       actions.push(`<button onclick="openAssignPlantsModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100">Assign plants</button>`);
       actions.push(`<button onclick="openScheduleModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Generate Schedule</button>`);
@@ -1232,7 +1245,7 @@ function renderTeam() {
       </td>
       <td><span class="badge ${roleBadge}">${u.role}</span></td>
       <td>${plantsCell}</td>
-      <td><div class="cell-muted">${u.phone || '—'}</div></td>
+      <td><div class="cell-muted">${esc(u.phone) || '—'}</div></td>
       <td class="col-center">${actions.length ? `<div class="inline-flex gap-1.5 flex-wrap justify-center">${actions.join('')}</div>` : '<span class="text-xs text-slate-400">—</span>'}</td>
     </tr>`;
   }).join('');
@@ -1295,6 +1308,67 @@ function renderTeam() {
       </div>
     </div>
     ${pendingSection}`;
+}
+
+// ---------- Edit user contact details (admin) ----------
+// Email is the Supabase Auth sign-in identity — it is NOT editable here (that
+// requires supabase.auth.admin.updateUserById via a service-role Edge Function,
+// which would also need re-verification). Name and phone live on `profiles`
+// and are safe for an admin (or the user themself) to update directly.
+// Phone is stored E.164-normalized — the format WhatsApp/SMS delivery needs
+// once Phase 3b (real channel delivery) is wired up; email already drives
+// invite emails today and will drive email notifications the same way.
+function openEditUserModal(userId) {
+  if (!isAdmin()) return;
+  const u = state.users.find(x => x.id === userId); if (!u) return;
+  document.getElementById('modalTitle').textContent = `Edit ${esc(u.name)}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitEditUser(event, '${userId}')" class="space-y-3 text-sm">
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
+        <input name="name" required value="${esc(u.name)}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Full name" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Email</label>
+        <input value="${esc(u.email)}" disabled class="w-full border border-slate-200 rounded-md px-2 py-1.5 bg-slate-50 text-slate-500" />
+        <div class="text-[11px] text-slate-400 mt-1">Sign-in identity — used for invitations today, and for email notifications once that's enabled. Changed in Supabase, not here.</div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Phone</label>
+        <input name="phone" value="${esc(u.phone||'')}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="+919000010000" />
+        <div class="text-[11px] text-slate-400 mt-1">Include the country code. Used for WhatsApp notifications once that's enabled.</div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Save</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+async function submitEditUser(ev, userId) {
+  ev.preventDefault();
+  if (!isAdmin()) return;
+  const f = new FormData(ev.target);
+  const name = f.get('name').trim();
+  if (!name) return;
+  const phoneResult = normalizePhone(f.get('phone'));
+  if (!phoneResult.ok) { alert(phoneResult.error); return; }
+  const phone = phoneResult.value;
+
+  if (SUPA) {
+    const unlock = lockSubmit(ev);
+    const { error } = await SUPA.from('profiles').update({ name, phone }).eq('id', userId);
+    if (error) { unlock(); saveError(error); return; }
+    if (authUser && authUser.id === userId) { authUser.name = name; authUser.phone = phone; }
+    await hydrateCloud();
+    closeModal(); route();
+    toast('Contact details updated.');
+    return;
+  }
+  const u = state.users.find(x => x.id === userId);
+  if (u) { u.name = name; u.phone = phone; saveUsers(state.users); }
+  closeModal(); route();
+  toast('Contact details updated.');
 }
 
 // ---------- Invite workflow ----------
@@ -1458,7 +1532,9 @@ function submitAddTechnician(ev) {
   const f = new FormData(ev.target);
   const email = f.get('email').trim().toLowerCase();
   if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
-  state.users.push({ id: nextUserId(), name: f.get('name').trim(), email, role: 'Engineer', phone: (f.get('phone')||'').trim(), password: 'eng123', status: 'active' });
+  const phoneResult = normalizePhone(f.get('phone'));
+  if (!phoneResult.ok) { alert(phoneResult.error); return; }
+  state.users.push({ id: nextUserId(), name: f.get('name').trim(), email, role: 'Engineer', phone: phoneResult.value, password: 'eng123', status: 'active' });
   saveUsers(state.users);
   closeModal(); route();
 }
