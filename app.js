@@ -1130,7 +1130,12 @@ function renderPlants() {
     return `<tr>
       <td><div class="cell-primary">${p.name}</div><div class="cell-secondary">${p.location}</div></td>
       <td><div class="cell-primary">${eqCount}</div><div class="cell-muted">equipment</div></td>
-      <td class="col-center"><button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button></td>
+      <td class="col-center">
+        <div class="inline-flex gap-1.5 flex-wrap justify-center">
+          <button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button>
+          <button onclick="generateQrSheet('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">QR Codes</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
   document.getElementById('view').innerHTML = `
@@ -2622,6 +2627,74 @@ function generateServiceReport(ev) {
   } else {
     openPdfPreview(result.doc, result.filename, 'Service Report');
   }
+}
+
+// ---------- QR sticker sheets (per plant) ----------
+// Stickers always deep-link to the PRODUCTION app, regardless of where the
+// admin happens to generate them from (localhost, preview, etc.).
+const APP_URL = 'https://mihirsethidp.github.io/Maintenance-module/';
+
+// Draw one QR code as vector rects directly into the PDF (crisp at any print size).
+function drawQrInPdf(doc, text, x, y, sizeMm) {
+  const qr = qrcode(0, 'M');   // type 0 = auto-size, M = 15% error correction
+  qr.addData(text);
+  qr.make();
+  const n = qr.getModuleCount();
+  const cell = sizeMm / n;
+  doc.setFillColor(15, 23, 42);
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (qr.isDark(r, c)) doc.rect(x + c * cell, y + r * cell, cell, cell, 'F');
+    }
+  }
+}
+
+function generateQrSheet(plantId) {
+  if (typeof qrcode === 'undefined') { alert('QR library not loaded — check your connection and refresh.'); return; }
+  const plant = plantById(plantId); if (!plant) return;
+  const eqs = state.equipment.filter(e => e.plantId === plantId);
+  if (!eqs.length) { alert('This plant has no equipment yet.'); return; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait' });   // A4: 210 x 297 mm
+  const W = doc.internal.pageSize.getWidth();
+
+  const COLS = 4, MARGIN = 12, HEADER_H = 24;
+  const cellW = (W - MARGIN * 2) / COLS;      // ~46.5mm
+  const qrSize = 32, cellH = 46;
+
+  const pageHeader = () => {
+    doc.setFillColor(25, 52, 88);
+    doc.rect(0, 0, W, 16, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11); doc.setFont(undefined, 'bold');
+    doc.text(`Equipment QR Codes — ${plant.name}`, MARGIN, 10.5);
+    doc.setFont(undefined, 'normal'); doc.setFontSize(8);
+    doc.text(`Scan to view / report — ${today()}`, W - MARGIN, 10.5, { align: 'right' });
+    doc.setTextColor(15, 23, 42);
+  };
+  pageHeader();
+
+  const perPage = COLS * Math.floor((297 - HEADER_H - MARGIN) / cellH);
+  eqs.forEach((e, i) => {
+    const idx = i % perPage;
+    if (i > 0 && idx === 0) { doc.addPage(); pageHeader(); }
+    const col = idx % COLS, row = Math.floor(idx / COLS);
+    const x = MARGIN + col * cellW, y = HEADER_H + row * cellH;
+    // Light frame so the sheet cuts cleanly into stickers
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(x + 1, y - 3, cellW - 2, cellH - 2);
+    drawQrInPdf(doc, `${APP_URL}#/equipment/${e.id}`, x + (cellW - qrSize) / 2, y, qrSize);
+    doc.setFontSize(7.5); doc.setFont(undefined, 'bold');
+    const tag = e.tag.length > 30 ? e.tag.slice(0, 29) + '…' : e.tag;
+    doc.text(tag, x + cellW / 2, y + qrSize + 4, { align: 'center' });
+    doc.setFont(undefined, 'normal'); doc.setFontSize(6.5); doc.setTextColor(100, 116, 139);
+    doc.text(`${e.type} · ${plant.name}`.slice(0, 40), x + cellW / 2, y + qrSize + 7.5, { align: 'center' });
+    doc.setTextColor(15, 23, 42);
+  });
+
+  const filename = `qr-codes-${plant.name.replace(/[^a-zA-Z0-9]+/g, '-')}-${today()}.pdf`;
+  openPdfPreview(doc, filename, `QR Codes — ${plant.name}`);
 }
 
 // ---------- PDF preview ----------
