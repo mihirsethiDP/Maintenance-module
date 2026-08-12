@@ -235,6 +235,7 @@ const reasonBadge = r => `<span class="badge ${r === 'Breakdown' ? 'badge-bd' : 
 function ongoingStatusPill(log) {
   if (log.endDate) return `<span class="badge badge-op">Completed</span>`;
   if (isOverdue(log)) return `<span class="badge badge-bd">Overdue</span>`;
+  if (woStateOf(log) === 'open') return `<span class="badge badge-neutral">Not started</span>`;
   return `<span class="badge badge-brand">Ongoing</span>`;
 }
 function ecStatus(etr, endDate) {
@@ -290,8 +291,13 @@ async function loadAuthProfile(u) {
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
 const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
-const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '' });
-const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '' });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal' });
+const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
+
+// Work-order state, tolerant of prototype logs that predate the column.
+const woStateOf = l => l.woState || (l.endDate ? 'done' : 'active');
+const priorityChip = p => (p === 'Critical') ? '<span class="badge badge-bd">Critical</span>'
+  : (p === 'High') ? '<span class="badge badge-mt">High</span>' : '';
 
 let cloudNotifs = null;   // activity feed rows from public.notifications (real mode)
 
@@ -621,10 +627,12 @@ function buildNotifFeed() {
   const admin = effRole(u) === 'Admin';
   const todayStr = today();
   const feed = [];
-  // Overdue open work-orders
+  // Open / overdue work-orders
   getPendingTasks().forEach(({ l, e }) => {
     if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId,
       message: `Work-order overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (expected ${l.etr}).` });
+    else if (woStateOf(l) === 'open') feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId,
+      message: `Scheduled task ready to start — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
   });
   // Overdue PPM (planned date passed, no completion this month)
   getOverduePPM().forEach(({ e, date }) => {
@@ -870,9 +878,12 @@ function renderEquipment() {
   const eq = applyTypeFilter(applyPlantFilter(state.equipment));
   const rows = eq.map(e => {
     const log = openLogFor(e.id);
-    const action = e.status === 'Operational'
-      ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
-      : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
+    const openWo = openLogFor(e.id);
+    const action = (openWo && woStateOf(openWo) === 'open')
+      ? `<button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium" onclick="startWorkOrder('${openWo.id}')">Start Work</button>`
+      : e.status === 'Operational'
+        ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
+        : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
@@ -943,9 +954,12 @@ function renderEquipmentDetail(id) {
     </div>
   `).join('') || `<div class="text-slate-500 text-sm">No maintenance history yet.</div>`;
 
-  const actionBtn = e.status === 'Operational'
-    ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
-    : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
+  const detailOpenWo = openLogFor(e.id);
+  const actionBtn = (detailOpenWo && woStateOf(detailOpenWo) === 'open')
+    ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button>`
+    : e.status === 'Operational'
+      ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
+      : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
 
   document.getElementById('view').innerHTML = `
     <a href="#/equipment" class="text-sm text-brand hover:underline">&larr; Back to equipment</a>
@@ -2052,6 +2066,7 @@ function getUpcomingPPM(days = 30, plantIds) {
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
     if (e.status !== 'Operational') continue; // already under maintenance
+    if (openLogFor(eqId)) continue;           // an open work-order already covers it
     if (slot === 'weekly') {
       let d = new Date('2026-01-01T00:00:00');
       while (d < now) { d.setDate(d.getDate() + 7); }
@@ -2084,6 +2099,7 @@ function getOverduePPM(plantIds) {
   for (const [eqId, slot] of Object.entries(state.slots || {})) {
     const e = eqById(eqId); if (!e || (!admin && !ids.includes(e.plantId))) continue;
     if (e.status !== 'Operational') continue; // already in maintenance — being handled
+    if (openLogFor(eqId)) continue;           // an open work-order already covers it
     if (slot === 'weekly') continue; // weekly noise — skip from "overdue"
     const day = SLOT_DAY[slot];
     const m = now.getMonth(), y = now.getFullYear();
@@ -2155,17 +2171,42 @@ function renderEngineer() {
 
 function renderPendingTab(pending, overdue) {
   const fEq = e => (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) && (ui.typeFilter === 'all' || e.type === ui.typeFilter);
-  const fOngoing = pending.filter(({e}) => fEq(e));
+  const fOpen    = pending.filter(({l, e}) => fEq(e) && woStateOf(l) === 'open');
+  const fOngoing = pending.filter(({l, e}) => fEq(e) && woStateOf(l) !== 'open');
   const fOverdue = overdue.filter(({e}) => fEq(e));
 
-  if (!fOngoing.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing pending — every equipment is operational and no PPM is overdue.</div>`;
+  if (!fOpen.length && !fOngoing.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing pending — every equipment is operational and no PPM is overdue.</div>`;
+
+  const openRows = fOpen.map(({l, e}) => {
+    const et = ecStatus(l.etr, null);
+    return `<tr>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
+      <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">${esc(l.notes).slice(0,60)}</div></td>
+      <td><div class="cell-primary">${l.etr || l.startDate}</div><div class="cell-muted">Scheduled</div></td>
+      <td><span class="${et.cls}">${et.label}</span></td>
+      <td class="col-center"><button onclick="startWorkOrder('${l.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Start Work</button></td>
+    </tr>`;
+  }).join('');
+
+  const openSection = fOpen.length ? `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+        <span>Scheduled tasks — ready to start <span class="text-slate-400 font-normal">(${fOpen.length})</span></span>
+        <span class="ml-auto text-xs text-slate-500 font-normal">Generated from the PPM schedule</span>
+      </div>
+      <div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Task</th><th>Due</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${openRows}</tbody>
+      </table></div>
+    </div>` : '';
 
   const ongoingRows = fOngoing.map(({l, e}) => {
     const et = ecStatus(l.etr, null);
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
-      <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">Tech: ${esc(l.technician)}</div></td>
+      <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">Tech: ${esc(l.technician)}</div></td>
       <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">Expected: ${l.etr||'—'}</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
       <td class="col-center"><button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium">Mark Complete</button></td>
@@ -2207,7 +2248,31 @@ function renderPendingTab(pending, overdue) {
       </table></div>
     </div>` : '';
 
-  return ongoingSection + overdueSection;
+  return openSection + ongoingSection + overdueSection;
+}
+
+// Start an auto-generated (open) work-order: flags the equipment and stamps
+// the acting engineer as technician if none was set.
+async function startWorkOrder(logId) {
+  const log = state.logs.find(l => l.id === logId);
+  if (!log || woStateOf(log) !== 'open') { alert('This work-order has already been started.'); return; }
+  const eq = eqById(log.equipmentId);
+  if (SUPA) {
+    const { error } = await SUPA.rpc('start_work_order', { p_log: logId });
+    if (error) { saveError(error); return; }
+    await hydrateCloud();
+    route();
+    pushEventNotification(log.reason === 'Breakdown' ? 'breakdown' : 'maintenance', eqById(log.equipmentId), log);
+    toast(`Work started — ${esc(eq?.tag || 'equipment')} is now in maintenance.`);
+    return;
+  }
+  log.woState = 'active';
+  log.startDate = today();
+  if (!log.technician) log.technician = currentUser()?.name || '';
+  if (eq) eq.status = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
+  saveLog(state.logs); saveEq(state.equipment);
+  route();
+  toast(`Work started — ${esc(eq?.tag || 'equipment')} is now in maintenance.`);
 }
 
 function renderUpcomingTab(upcoming) {
@@ -2739,11 +2804,19 @@ function openMaintModal(eqId) {
   document.getElementById('modalTitle').textContent = `Put ${e.tag} in maintenance`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitMaint(event, '${eqId}')" class="space-y-3 text-sm">
-      <div>
-        <label class="block text-xs text-slate-600 mb-1">Reason <span class="text-red-500">*</span></label>
-        <select name="reason" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
-          <option value="">Select…</option><option>Scheduled</option><option>Breakdown</option>
-        </select>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Reason <span class="text-red-500">*</span></label>
+          <select name="reason" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+            <option value="">Select…</option><option>Scheduled</option><option>Breakdown</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Priority</label>
+          <select name="priority" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+            <option>Normal</option><option>High</option><option>Critical</option>
+          </select>
+        </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
@@ -2780,6 +2853,7 @@ async function submitMaint(ev, eqId) {
     reason: f.get('reason'), startDate: f.get('startDate'), etr: f.get('etr'),
     endDate: null, technician: f.get('technician'),
     notes: f.get('notes') || '', completionNotes: '',
+    woState: 'active', priority: f.get('priority') || 'Normal',
   };
   const newStatus = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
   const evKey = log.reason === 'Breakdown' ? 'breakdown' : 'maintenance';
@@ -2790,6 +2864,7 @@ async function submitMaint(ev, eqId) {
     const { error } = await SUPA.rpc('log_maintenance_start', {
       p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
       p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
+      p_priority: log.priority,
     });
     if (error) { unlock(); saveError(error); return; }
     await hydrateCloud();
