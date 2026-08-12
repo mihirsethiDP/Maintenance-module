@@ -43,6 +43,36 @@ const PPM_NOTES = {
 };
 const PPM_DEFAULT = { sched: 'Scheduled PPM — inspection and servicing.', done: 'Inspected and serviced; operating normally.' };
 
+// Checklist template fallbacks (mirrors supabase/10_checklists.sql seed).
+// Real mode overrides these from the checklist_templates table.
+const DEFAULT_CHECKLISTS = {
+  Pump: [
+    { text: 'Isolate power and lock out before starting', mandatory: true },
+    { text: 'Check for leaks at seals and glands', mandatory: true },
+    { text: 'Grease bearings / check lubrication', mandatory: true },
+    { text: 'Check vibration and abnormal noise', mandatory: true },
+    { text: 'Verify coupling alignment', mandatory: false },
+    { text: 'Restore power and verify normal operation', mandatory: true },
+  ],
+  Blower: [
+    { text: 'Isolate power and lock out before starting', mandatory: true },
+    { text: 'Check oil level and top up if needed', mandatory: true },
+    { text: 'Clean / replace intake air filter', mandatory: true },
+    { text: 'Check vibration, temperature and noise', mandatory: true },
+    { text: 'Restore power and verify airflow', mandatory: true },
+  ],
+  Other: [
+    { text: 'Isolate equipment safely before working', mandatory: true },
+    { text: 'Perform scheduled service as per manual', mandatory: true },
+    { text: 'Restore and verify normal operation', mandatory: true },
+  ],
+};
+let cloudChecklists = null;   // eq_type -> items[] (real mode)
+function checklistFor(eqType) {
+  if (cloudChecklists && cloudChecklists[eqType]) return cloudChecklists[eqType];
+  return DEFAULT_CHECKLISTS[eqType] || DEFAULT_CHECKLISTS.Other;
+}
+
 // A small set of illustrative open work-orders so the Dashboard / Pending views show live activity.
 function buildSeedOpenLogs(equipment) {
   const NOW = new Date(today());
@@ -291,7 +321,7 @@ async function loadAuthProfile(u) {
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
 const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
-const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal' });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -345,6 +375,12 @@ async function hydrateCloud() {
         if (error) return fail('notifications', error);
         cloudNotifs = data || [];
       }, e => fail('notifications', e)),
+    SUPA.from('checklist_templates').select('eq_type,items')
+      .then(({ data, error }) => {
+        if (error) return;   // table may not exist yet — fall back to defaults silently
+        cloudChecklists = {};
+        (data || []).forEach(row => { cloudChecklists[row.eq_type] = row.items || []; });
+      }, () => {}),
   ]);
 }
 
@@ -950,6 +986,13 @@ function renderEquipmentDetail(id) {
       </div>
       <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${esc(l.notes) || '—'}</div>
       ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${esc(l.completionNotes)}</div>` : ''}
+      ${Array.isArray(l.checklist) && l.checklist.length ? `
+        <details class="mt-1">
+          <summary class="text-xs text-brand cursor-pointer">Checklist: ${l.checklist.filter(c=>c.done).length}/${l.checklist.length} completed</summary>
+          <ul class="mt-1 space-y-0.5">
+            ${l.checklist.map(c => `<li class="text-xs ${c.done ? 'text-slate-600' : 'text-slate-400'}">${c.done ? '✓' : '○'} ${esc(c.text)}${c.mandatory ? ' *' : ''}</li>`).join('')}
+          </ul>
+        </details>` : ''}
       <div class="text-xs text-slate-500 mt-1">Technician: ${esc(l.technician)}</div>
     </div>
   `).join('') || `<div class="text-slate-500 text-sm">No maintenance history yet.</div>`;
@@ -1159,6 +1202,7 @@ function renderPlants() {
         <p class="text-slate-500 text-sm mt-1">Per-plant notification settings and admin actions.</p>
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
+        ${SUPA ? `<button onclick="openChecklistEditor()" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium">PPM Checklists</button>` : ''}
         <button onclick="openAddPlantModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           Add Plant
@@ -2694,6 +2738,52 @@ function generateServiceReport(ev) {
   }
 }
 
+// ---------- Checklist template editor (admin, real mode) ----------
+function openChecklistEditor(selectedType) {
+  if (!isAdmin()) return;
+  const type = selectedType || EQ_TYPES[0];
+  const items = checklistFor(type);
+  const asText = items.map(it => (it.mandatory ? '* ' : '') + it.text).join('\n');
+  const typeOpts = EQ_TYPES.map(t => `<option ${t === type ? 'selected' : ''}>${t}</option>`).join('');
+  document.getElementById('modalTitle').textContent = 'PPM Checklists';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitChecklistEditor(event)" class="space-y-3 text-sm">
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Equipment type</label>
+        <select name="eqType" onchange="openChecklistEditor(this.value)" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">${typeOpts}</select>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Checklist items <span class="text-slate-400">(one per line — start a line with <b>*</b> to make it required)</span></label>
+        <textarea name="items" rows="10" class="w-full border border-slate-300 rounded-md px-2 py-1.5 font-mono text-xs">${esc(asText)}</textarea>
+      </div>
+      <div class="text-[11px] text-slate-500">Engineers must tick every required item before they can close a work-order on this equipment type.</div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Save ${esc(type)} checklist</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+async function submitChecklistEditor(ev) {
+  ev.preventDefault();
+  if (!isAdmin() || !SUPA) return;
+  const f = new FormData(ev.target);
+  const eqType = f.get('eqType');
+  const items = String(f.get('items') || '').split('\n')
+    .map(line => line.trim()).filter(Boolean)
+    .map(line => line.startsWith('*')
+      ? { text: line.replace(/^\*\s*/, ''), mandatory: true }
+      : { text: line, mandatory: false });
+  const unlock = lockSubmit(ev);
+  const { error } = await SUPA.from('checklist_templates')
+    .upsert({ eq_type: eqType, items, updated_at: new Date().toISOString() });
+  if (error) { unlock(); saveError(error); return; }
+  cloudChecklists = cloudChecklists || {};
+  cloudChecklists[eqType] = items;
+  closeModal();
+  toast(`${eqType} checklist saved (${items.length} items).`);
+}
+
 // ---------- QR sticker sheets (per plant) ----------
 // Stickers always deep-link to the PRODUCTION app, regardless of where the
 // admin happens to generate them from (localhost, preview, etc.).
@@ -2886,6 +2976,18 @@ async function submitMaint(ev, eqId) {
 function openCompleteModal(eqId) {
   const e = eqById(eqId);
   const log = openLogFor(eqId);
+  const items = checklistFor(e.type);
+  const checklistSection = items.length ? `
+      <div>
+        <div class="text-xs text-slate-600 mb-1.5">Service checklist — ${esc(e.type)} <span class="text-red-500">*</span> <span class="text-slate-400">= required</span></div>
+        <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[30vh] overflow-y-auto">
+          ${items.map((it, i) => `
+            <label class="flex items-start gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" name="chk-${i}" class="mt-0.5" />
+              <span class="text-xs text-slate-700">${esc(it.text)}${it.mandatory ? ' <span class="text-red-500">*</span>' : ''}</span>
+            </label>`).join('')}
+        </div>
+      </div>` : '';
   document.getElementById('modalTitle').textContent = `Mark ${e.tag} operational`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitComplete(event, '${eqId}')" class="space-y-3 text-sm">
@@ -2894,6 +2996,7 @@ function openCompleteModal(eqId) {
         <div><span class="font-medium">Started:</span> ${log.startDate} · <span class="font-medium">Expected:</span> ${log.etr}</div>
         <div class="mt-1"><span class="font-medium">Scope of work:</span> ${esc(log.notes)||'—'}</div>
       </div>` : ''}
+      ${checklistSection}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion date <span class="text-red-500">*</span></label>
         <input type="date" name="endDate" value="${today()}" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
@@ -2918,15 +3021,30 @@ async function submitComplete(ev, eqId) {
   const completionNotes = f.get('completionNotes') || '';
   const wantReport = (ev.submitter && ev.submitter.value === 'confirm-report');
   const log = openLogFor(eqId);
+
+  // Collect checklist state; block closure until every mandatory item is ticked.
+  const eqType = eqById(eqId)?.type;
+  const items = checklistFor(eqType);
+  const checklist = items.map((it, i) => ({ text: it.text, mandatory: !!it.mandatory, done: !!f.get('chk-' + i) }));
+  const missing = checklist.filter(c => c.mandatory && !c.done);
+  if (missing.length) {
+    alert(`Complete the required checklist item${missing.length === 1 ? '' : 's'} before closing:\n\n• ` + missing.map(m => m.text).join('\n• '));
+    return;
+  }
+
   if (SUPA) {
     if (!log) { alert('No open work-order found.'); return; }
     const unlock = lockSubmit(ev);
     // Atomic RPC: closes the log and returns the equipment to service together.
-    const { error } = await SUPA.rpc('log_maintenance_complete', {
-      p_log: log.id, p_end: endDate, p_notes: completionNotes,
+    let { error } = await SUPA.rpc('log_maintenance_complete', {
+      p_log: log.id, p_end: endDate, p_notes: completionNotes, p_checklist: checklist,
     });
+    if (error && error.code === 'PGRST202') {
+      // Checklist migration (10_checklists.sql) not applied yet — complete without it.
+      ({ error } = await SUPA.rpc('log_maintenance_complete', { p_log: log.id, p_end: endDate, p_notes: completionNotes }));
+    }
     if (error) { unlock(); saveError(error); return; }
-    const closedLog = { ...log, endDate, completionNotes };
+    const closedLog = { ...log, endDate, completionNotes, checklist };
     await hydrateCloud();
     closeModal(); route();
     pushEventNotification('operational', eqById(eqId), closedLog);
@@ -2934,7 +3052,7 @@ async function submitComplete(ev, eqId) {
     if (wantReport) generateSingleServiceReport(eqId, closedLog);
     return;
   }
-  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; }
+  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; }
   const eq = eqById(eqId);
   eq.status = 'Operational';
   saveLog(state.logs); saveEq(state.equipment);
@@ -2998,6 +3116,22 @@ function generateSingleServiceReport(eqId, log) {
     margin: { left: 14, right: 14 },
   });
   y = doc.lastAutoTable.finalY + 10;
+
+  // Service checklist (if one was completed with this work-order)
+  if (Array.isArray(log.checklist) && log.checklist.length) {
+    if (y > 240) { doc.addPage(); y = 24; }
+    doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.text('Service checklist', 14, y); y += 3;
+    doc.autoTable({
+      startY: y + 2,
+      head: [['Item', 'Required', 'Done']],
+      body: log.checklist.map(c => [c.text, c.mandatory ? 'Yes' : '—', c.done ? 'Yes' : 'No']),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [25,52,88], textColor: 255 },
+      columnStyles: { 1: { cellWidth: 22, halign: 'center' }, 2: { cellWidth: 18, halign: 'center' } },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  }
 
   // Sign-off — never fabricate names; blank line means "sign here".
   if (y > 230) { doc.addPage(); y = 24; }
