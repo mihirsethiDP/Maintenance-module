@@ -160,7 +160,7 @@ function seedIfNeeded() {
 let authUser = null;        // cached identity in real mode: {id,email,name,role,phone,status,plants}
 let cloudUsers = null;      // real users hydrated from Supabase profiles (real mode)
 let cloudAssignments = {};  // userId -> [plantId] (real mode)
-let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null, cloudParts = null;
+let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null, cloudParts = null, cloudLogParts = null;
 let hydrateErrors = [];     // table names that failed to hydrate (drives the error banner)
 
 function load() {
@@ -402,7 +402,18 @@ async function hydrateCloud() {
         cloudTypeLife = {};
         (data || []).forEach(row => { cloudTypeLife[row.eq_type] = row.expected_life_years; });
       }, () => {}),
+    SUPA.from('maintenance_log_parts').select('*')
+      .then(({ data, error }) => {
+        if (error) return;   // table may not exist yet
+        cloudLogParts = data || [];
+      }, () => {}),
   ]);
+}
+// Part actions recorded on a completed work-order (real mode: junction table;
+// prototype: stored directly on the log object).
+function partActionsFor(log) {
+  if (SUPA) return (cloudLogParts || []).filter(a => a.log_id === log.id);
+  return (log.partActions || []).map(a => ({ log_id: log.id, part_id: a.part_id, part_name: a.name, action: a.action }));
 }
 function partsFor(eqId) { return (cloudParts || []).filter(p => p.equipment_id === eqId); }
 
@@ -456,11 +467,15 @@ function healthScore(e) {
       const refDate = new Date((l.endDate || l.startDate) + 'T00:00:00').getTime();
       const monthsSince = Math.max(0, (now - refDate) / (30.44 * 86400000));
       const decay = Math.pow(0.5, monthsSince / 12);
-      const d = Math.round(Math.min(45, base * ageMult * decay));
+      // Cure: if the failed part has since been REPLACED, the old failure
+      // mostly stops counting — the machine has a new part in that slot.
+      const cured = part && part.last_replaced &&
+        new Date(part.last_replaced + 'T00:00:00').getTime() >= refDate;
+      const d = Math.round(Math.min(45, base * ageMult * decay * (cured ? 0.25 : 1)));
       if (d >= 1) {
         score -= d;
         const what = part ? esc(part.name) : (l.severity || 'breakdown');
-        factors.push({ label: `Breakdown ${l.startDate} (${what})`, delta: -d });
+        factors.push({ label: `Breakdown ${l.startDate} (${what})${cured ? ' — part since replaced' : ''}`, delta: -d });
       }
     }
     // Recovery: completed scheduled services in the last 12 months earn back points.
@@ -1099,6 +1114,16 @@ function renderEquipmentDetail(id) {
       </div>
       <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${esc(l.notes) || '—'}</div>
       ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${esc(l.completionNotes)}</div>` : ''}
+      ${(() => {
+        const acts = partActionsFor(l);
+        if (!acts.length) return '';
+        const replaced = acts.filter(a => a.action === 'replaced').map(a => esc(a.part_name));
+        const serviced = acts.filter(a => a.action === 'serviced').map(a => esc(a.part_name));
+        return `<div class="text-xs mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+          ${replaced.length ? `<span class="text-red-700"><span class="font-medium">Replaced:</span> ${replaced.join(', ')}</span>` : ''}
+          ${serviced.length ? `<span class="text-slate-600"><span class="font-medium">Serviced:</span> ${serviced.join(', ')}</span>` : ''}
+        </div>`;
+      })()}
       ${Array.isArray(l.checklist) && l.checklist.length ? `
         <details class="mt-1">
           <summary class="text-xs text-brand cursor-pointer">Checklist: ${l.checklist.filter(c=>c.done).length}/${l.checklist.length} completed</summary>
@@ -1262,6 +1287,7 @@ function partsCard(e) {
       <td><div class="cell-muted">${esc(p.spec) || '—'}</div></td>
       <td><div class="cell-primary">${p.qty}</div></td>
       <td><span class="badge ${critBadge(p.criticality)}">${p.criticality}/10</span></td>
+      <td><div class="cell-primary">${p.last_serviced || '—'}</div><div class="cell-muted">${p.last_replaced ? 'replaced ' + p.last_replaced : 'never replaced'}</div></td>
       <td class="col-center">${isAdmin() ? `<button onclick="deletePart(${p.id})" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>` : '—'}</td>
     </tr>`).join('');
   return `
@@ -1275,7 +1301,7 @@ function partsCard(e) {
         </div>` : ''}
       </div>
       ${parts.length ? `<div class="overflow-x-auto"><table class="list-table">
-        <thead><tr><th>Part</th><th>Specification</th><th>Qty</th><th>Criticality</th><th class="col-center">Action</th></tr></thead>
+        <thead><tr><th>Part</th><th>Specification</th><th>Qty</th><th>Criticality</th><th>Last serviced</th><th class="col-center">Action</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`
       : `<div class="px-5 py-6 text-center text-sm text-slate-500">No parts recorded yet.${isAdmin() ? ' Add them manually or auto-fill from the manufacturer\'s datasheet.' : ''}</div>`}
@@ -3468,6 +3494,29 @@ async function submitMaint(ev, eqId) {
 function openCompleteModal(eqId) {
   const e = eqById(eqId);
   const log = openLogFor(eqId);
+  const parts = SUPA ? partsFor(eqId) : [];
+  const failedPartId = log ? log.affectedPartId : null;
+  const partsSection = parts.length ? `
+      <div>
+        <div class="text-xs text-slate-600 mb-1.5">Parts maintained <span class="text-slate-400">— what was done to each part in this job</span></div>
+        <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[32vh] overflow-y-auto">
+          ${parts.map(p => `
+            <div class="px-3 py-2 ${p.id === failedPartId ? 'bg-red-50/60' : ''}">
+              <div class="flex items-center gap-2 flex-wrap">
+                <div class="flex-1 min-w-0">
+                  <span class="text-xs font-medium text-slate-800">${esc(p.name)}</span>
+                  ${p.id === failedPartId ? '<span class="badge badge-bd">failed</span>' : ''}
+                  <div class="text-[10px] text-slate-400">${esc(p.spec) || ''}${p.last_replaced ? ' · replaced ' + p.last_replaced : ''}</div>
+                </div>
+                <div class="flex gap-2 text-[11px]">
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="radio" name="pa-${p.id}" value="" ${p.id === failedPartId ? '' : 'checked'} /> —</label>
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="radio" name="pa-${p.id}" value="serviced" /> Serviced</label>
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="radio" name="pa-${p.id}" value="replaced" ${p.id === failedPartId ? 'checked' : ''} /> Replaced</label>
+                </div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>` : '';
   const items = checklistFor(e.type);
   const checklistSection = items.length ? `
       <div>
@@ -3488,6 +3537,7 @@ function openCompleteModal(eqId) {
         <div><span class="font-medium">Started:</span> ${log.startDate} · <span class="font-medium">Expected:</span> ${log.etr}</div>
         <div class="mt-1"><span class="font-medium">Scope of work:</span> ${esc(log.notes)||'—'}</div>
       </div>` : ''}
+      ${partsSection}
       ${checklistSection}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion date <span class="text-red-500">*</span></label>
@@ -3524,19 +3574,29 @@ async function submitComplete(ev, eqId) {
     return;
   }
 
+  // Collect per-part actions — the substance of the maintenance job.
+  const partActions = (SUPA ? partsFor(eqId) : [])
+    .map(p => ({ part_id: p.id, name: p.name, action: f.get('pa-' + p.id) || '' }))
+    .filter(a => a.action === 'serviced' || a.action === 'replaced');
+
   if (SUPA) {
     if (!log) { alert('No open work-order found.'); return; }
     const unlock = lockSubmit(ev);
-    // Atomic RPC: closes the log and returns the equipment to service together.
+    // Atomic RPC: closes the log, records part actions, stamps part history,
+    // and returns the equipment to service — one transaction.
     let { error } = await SUPA.rpc('log_maintenance_complete', {
       p_log: log.id, p_end: endDate, p_notes: completionNotes, p_checklist: checklist,
+      p_part_actions: partActions,
     });
     if (error && error.code === 'PGRST202') {
-      // Checklist migration (10_checklists.sql) not applied yet — complete without it.
-      ({ error } = await SUPA.rpc('log_maintenance_complete', { p_log: log.id, p_end: endDate, p_notes: completionNotes }));
+      // Parts-integration migration (13) not applied yet — fall back.
+      ({ error } = await SUPA.rpc('log_maintenance_complete', { p_log: log.id, p_end: endDate, p_notes: completionNotes, p_checklist: checklist }));
+      if (error && error.code === 'PGRST202') {
+        ({ error } = await SUPA.rpc('log_maintenance_complete', { p_log: log.id, p_end: endDate, p_notes: completionNotes }));
+      }
     }
     if (error) { unlock(); saveError(error); return; }
-    const closedLog = { ...log, endDate, completionNotes, checklist };
+    const closedLog = { ...log, endDate, completionNotes, checklist, partActions };
     await hydrateCloud();
     closeModal(); route();
     pushEventNotification('operational', eqById(eqId), closedLog);
@@ -3544,7 +3604,7 @@ async function submitComplete(ev, eqId) {
     if (wantReport) generateSingleServiceReport(eqId, closedLog);
     return;
   }
-  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; }
+  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; log.partActions = partActions; }
   const eq = eqById(eqId);
   eq.status = 'Operational';
   saveLog(state.logs); saveEq(state.equipment);
