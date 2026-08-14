@@ -160,7 +160,7 @@ function seedIfNeeded() {
 let authUser = null;        // cached identity in real mode: {id,email,name,role,phone,status,plants}
 let cloudUsers = null;      // real users hydrated from Supabase profiles (real mode)
 let cloudAssignments = {};  // userId -> [plantId] (real mode)
-let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null;
+let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null, cloudParts = null;
 let hydrateErrors = [];     // table names that failed to hydrate (drives the error banner)
 
 function load() {
@@ -381,8 +381,14 @@ async function hydrateCloud() {
         cloudChecklists = {};
         (data || []).forEach(row => { cloudChecklists[row.eq_type] = row.items || []; });
       }, () => {}),
+    SUPA.from('equipment_parts').select('*').order('criticality', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) return;   // table may not exist yet
+        cloudParts = data || [];
+      }, () => {}),
   ]);
 }
+function partsFor(eqId) { return (cloudParts || []).filter(p => p.equipment_id === eqId); }
 
 // Plant IDs the current user may see: admins → all; engineers → assigned (real mode) or all (prototype).
 function accessiblePlantIds() {
@@ -1029,9 +1035,252 @@ function renderEquipmentDetail(id) {
       </div>
     </div>
 
+    ${partsCard(e)}
+
     <h2 class="font-semibold mb-3">Maintenance history</h2>
     <div class="bg-white rounded-xl border border-slate-200 p-6">${timeline}</div>
   `;
+}
+
+// ---------- Parts & specifications (BOM) ----------
+function partsCard(e) {
+  if (!SUPA) return '';   // parts live in the database; not part of the offline prototype
+  const parts = partsFor(e.id);
+  const critBadge = c => c >= 8 ? 'badge-bd' : c >= 5 ? 'badge-mt' : 'badge-neutral';
+  const rows = parts.map(p => `<tr>
+      <td><div class="cell-primary">${esc(p.name)}</div>${p.source === 'ai' && p.source_url ? `<div class="cell-muted"><a href="${esc(p.source_url)}" target="_blank" rel="noopener" class="text-brand hover:underline">source</a></div>` : ''}</td>
+      <td><div class="cell-muted">${esc(p.spec) || '—'}</div></td>
+      <td><div class="cell-primary">${p.qty}</div></td>
+      <td><span class="badge ${critBadge(p.criticality)}">${p.criticality}/10</span></td>
+      <td class="col-center">${isAdmin() ? `<button onclick="deletePart(${p.id})" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>` : '—'}</td>
+    </tr>`).join('');
+  return `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
+      <div class="px-5 py-3 border-b border-slate-200 flex items-center flex-wrap gap-2">
+        <div class="font-semibold text-sm">Parts &amp; specifications</div>
+        <span class="text-xs text-slate-400">${parts.length ? parts.length + ' part' + (parts.length === 1 ? '' : 's') : ''}</span>
+        ${isAdmin() ? `<div class="ml-auto flex gap-2">
+          <button onclick="openAddPartModal('${e.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">Add part</button>
+          <button onclick="openEnrichModal('${e.id}')" class="text-xs px-2.5 py-1 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Auto-fill from web (AI)</button>
+        </div>` : ''}
+      </div>
+      ${parts.length ? `<div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Part</th><th>Specification</th><th>Qty</th><th>Criticality</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`
+      : `<div class="px-5 py-6 text-center text-sm text-slate-500">No parts recorded yet.${isAdmin() ? ' Add them manually or auto-fill from the manufacturer\'s datasheet.' : ''}</div>`}
+    </div>`;
+}
+function openAddPartModal(eqId) {
+  if (!isAdmin()) return;
+  document.getElementById('modalTitle').textContent = 'Add part';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitAddPart(event, '${eqId}')" class="space-y-3 text-sm">
+      <div><label class="block text-xs text-slate-600 mb-1">Part name <span class="text-red-500">*</span></label>
+        <input name="name" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Ball bearing (drive end)" /></div>
+      <div><label class="block text-xs text-slate-600 mb-1">Specification</label>
+        <input name="spec" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. 6309-2Z, 45mm bore" /></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs text-slate-600 mb-1">Quantity</label>
+          <input name="qty" type="number" min="1" value="1" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+        <div><label class="block text-xs text-slate-600 mb-1">Criticality (1–10)</label>
+          <input name="criticality" type="number" min="1" max="10" value="5" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+      </div>
+      <div class="text-[11px] text-slate-500">Criticality drives the future health score: 10 = failure stops the machine (motor), 1 = cosmetic/minor (filter pad).</div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add part</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+async function submitAddPart(ev, eqId) {
+  ev.preventDefault();
+  if (!isAdmin() || !SUPA) return;
+  const f = new FormData(ev.target);
+  const unlock = lockSubmit(ev);
+  const { error } = await SUPA.from('equipment_parts').insert({
+    equipment_id: eqId, name: f.get('name').trim(), spec: (f.get('spec') || '').trim(),
+    qty: parseInt(f.get('qty'), 10) || 1,
+    criticality: Math.min(10, Math.max(1, parseInt(f.get('criticality'), 10) || 5)),
+    source: 'manual',
+  });
+  if (error) { unlock(); saveError(error); return; }
+  await hydrateCloud();
+  closeModal(); route();
+  toast('Part added.');
+}
+async function deletePart(partId) {
+  if (!isAdmin() || !SUPA) return;
+  if (!confirm('Remove this part from the assembly?')) return;
+  const { error } = await SUPA.from('equipment_parts').delete().eq('id', partId);
+  if (error) { saveError(error); return; }
+  await hydrateCloud();
+  route();
+}
+
+// ---------- AI enrichment (make/model → datasheet → draft BOM) ----------
+window._enrich = null;   // { eqId, variant, draft }
+
+function openEnrichModal(eqId) {
+  if (!isAdmin() || !SUPA) return;
+  const e = eqById(eqId); if (!e) return;
+  if (!e.make || !e.model) {
+    alert('Set the equipment\'s Make and Model first (Edit button) — the search uses exactly what you entered.');
+    return;
+  }
+  window._enrich = { eqId, variant: null, draft: null };
+  document.getElementById('modalTitle').textContent = `Auto-fill — ${esc(e.tag)}`;
+  enrichSetBody(`
+    <div class="py-8 text-center">
+      <div class="w-8 h-8 mx-auto rounded-full border-4 border-slate-200 border-t-[#193458] animate-spin"></div>
+      <div class="text-sm text-slate-600 mt-3">Searching manufacturer data for<br/><b>${esc(e.make)} ${esc(e.model)}</b>…</div>
+      <div class="text-xs text-slate-400 mt-1">Usually takes 15–40 seconds.</div>
+    </div>`);
+  document.getElementById('modal').classList.remove('hidden');
+  runEnrichment(eqId, null);
+}
+function enrichSetBody(html) { document.getElementById('modalBody').innerHTML = html; }
+
+async function runEnrichment(eqId, variant) {
+  const e = eqById(eqId); if (!e) return;
+  let data, error;
+  try {
+    ({ data, error } = await SUPA.functions.invoke('enrich-equipment', {
+      body: { make: e.make, model: e.model, eqType: e.type, variant: variant || undefined },
+    }));
+  } catch (err) { error = err; }
+  if (error) {
+    let msg = error.message || String(error);
+    try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
+    const notConfigured = /not_configured|ANTHROPIC_API_KEY/i.test(msg);
+    enrichSetBody(`
+      <div class="space-y-3 text-sm">
+        <div class="p-3 rounded-md ${notConfigured ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-red-50 border border-red-200 text-red-700'}">
+          ${notConfigured
+            ? 'AI enrichment isn\'t configured yet. Add your Anthropic API key in Supabase → Edge Functions → Secrets as <b>ANTHROPIC_API_KEY</b>, then try again.'
+            : 'Search failed: ' + esc(msg)}
+        </div>
+        <div class="flex justify-end"><button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button></div>
+      </div>`);
+    return;
+  }
+  if (data.status === 'ambiguous' && Array.isArray(data.options) && data.options.length) {
+    enrichShowOptions(eqId, data.options);
+  } else if (data.status === 'match' && data.data) {
+    window._enrich.variant = variant;
+    window._enrich.draft = data.data;
+    enrichShowReview(eqId);
+  } else {
+    enrichSetBody(`
+      <div class="space-y-3 text-sm">
+        <div class="p-3 rounded-md bg-slate-50 border border-slate-200 text-slate-600">
+          No reliable manufacturer data found for this make and model. Double-check the spelling
+          (nameplates help), or add the parts manually.
+        </div>
+        <div class="flex justify-end gap-2">
+          <button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
+          <button onclick="closeModal(); openAddPartModal('${eqId}')" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add manually</button>
+        </div>
+      </div>`);
+  }
+}
+
+function enrichShowOptions(eqId, options) {
+  const e = eqById(eqId);
+  enrichSetBody(`
+    <form onsubmit="event.preventDefault(); enrichPickVariant('${eqId}')" class="space-y-3 text-sm">
+      <div class="text-slate-700">Multiple variants of <b>${esc(e.make)} ${esc(e.model)}</b> exist — pick the exact one:</div>
+      <div class="space-y-2 max-h-[40vh] overflow-y-auto">
+        ${options.map((o, i) => `
+          <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="variant" value="${esc(o.variant)}" ${i === 0 ? 'checked' : ''} class="mt-0.5" />
+            <div>
+              <div class="font-medium text-slate-800">${esc(o.variant)}</div>
+              ${o.detail ? `<div class="text-xs text-slate-500">${esc(o.detail)}</div>` : ''}
+            </div>
+          </label>`).join('')}
+      </div>
+      <div class="flex gap-2 justify-end pt-1">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button type="submit" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Continue with this variant</button>
+      </div>
+    </form>`);
+}
+function enrichPickVariant(eqId) {
+  const variant = document.querySelector('#modalBody input[name="variant"]:checked')?.value;
+  if (!variant) return;
+  enrichSetBody(`
+    <div class="py-8 text-center">
+      <div class="w-8 h-8 mx-auto rounded-full border-4 border-slate-200 border-t-[#193458] animate-spin"></div>
+      <div class="text-sm text-slate-600 mt-3">Fetching datasheet for the <b>${esc(variant)}</b> variant…</div>
+    </div>`);
+  runEnrichment(eqId, variant);
+}
+
+function enrichShowReview(eqId) {
+  const e = eqById(eqId);
+  const d = window._enrich.draft;
+  const parts = Array.isArray(d.parts) ? d.parts : [];
+  const sources = Array.isArray(d.sources) ? d.sources : [];
+  enrichSetBody(`
+    <form onsubmit="submitEnrichApprove(event, '${eqId}')" class="space-y-3 text-sm max-h-[70vh] overflow-y-auto pr-1">
+      <div class="p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
+        Draft for <b>${esc(e.make)} ${esc(e.model)}${window._enrich.variant ? ' ' + esc(window._enrich.variant) : ''}</b>
+        ${d.power ? ` · Power: <b>${esc(d.power)}</b>` : ''}
+        ${d.expected_life_years ? ` · Expected life: <b>${d.expected_life_years} yrs</b>` : ''}
+        — review before saving. Untick anything you don't want; adjust criticality freely.
+      </div>
+      ${parts.length ? `<div class="border border-slate-200 rounded-md divide-y divide-slate-100">
+        ${parts.map((p, i) => `
+          <div class="flex items-center gap-2 px-3 py-2">
+            <input type="checkbox" name="inc-${i}" checked />
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-medium text-slate-800">${esc(p.name)}</div>
+              <div class="text-[11px] text-slate-500">${esc(p.spec) || 'no spec found'} · qty ${p.qty || 1}</div>
+            </div>
+            <label class="text-[10px] text-slate-500">Crit
+              <input type="number" name="crit-${i}" min="1" max="10" value="${Math.min(10, Math.max(1, p.criticality || 5))}" class="w-12 border border-slate-300 rounded px-1 py-0.5 text-xs ml-1" />
+            </label>
+          </div>`).join('')}
+      </div>` : '<div class="p-3 text-center text-xs text-slate-500 border border-slate-200 rounded-md">The datasheet was found but no parts list could be extracted — add parts manually.</div>'}
+      ${sources.length ? `<div class="text-[11px] text-slate-500">Sources: ${sources.slice(0,3).map(s => `<a href="${esc(s)}" target="_blank" rel="noopener" class="text-brand hover:underline break-all">${esc(s.replace(/^https?:\/\//,'').slice(0,50))}</a>`).join(' · ')}</div>` : ''}
+      <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Discard</button>
+        ${parts.length ? '<button type="submit" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Approve &amp; save</button>' : ''}
+      </div>
+    </form>`);
+}
+async function submitEnrichApprove(ev, eqId) {
+  ev.preventDefault();
+  if (!isAdmin() || !SUPA || !window._enrich?.draft) return;
+  const f = new FormData(ev.target);
+  const d = window._enrich.draft;
+  const src = (Array.isArray(d.sources) && d.sources[0]) || '';
+  const rows = (d.parts || [])
+    .map((p, i) => ({ p, i }))
+    .filter(({ i }) => f.get('inc-' + i))
+    .map(({ p, i }) => ({
+      equipment_id: eqId, name: String(p.name).slice(0, 200), spec: String(p.spec || '').slice(0, 300),
+      qty: Math.max(1, parseInt(p.qty, 10) || 1),
+      criticality: Math.min(10, Math.max(1, parseInt(f.get('crit-' + i), 10) || 5)),
+      source: 'ai', source_url: src,
+    }));
+  if (!rows.length) { alert('Nothing selected to save.'); return; }
+  const unlock = lockSubmit(ev);
+  const { error } = await SUPA.from('equipment_parts').insert(rows);
+  if (error) { unlock(); saveError(error); return; }
+  // A chosen variant refines the model — persist it (e.g. "WX-001" → "WX-001 4.2 kW").
+  if (window._enrich.variant) {
+    const e = eqById(eqId);
+    if (e && !e.model.includes(window._enrich.variant)) {
+      await SUPA.from('equipment').update({ model: `${e.model} ${window._enrich.variant}` }).eq('id', eqId);
+    }
+  }
+  await hydrateCloud();
+  closeModal(); route();
+  toast(`${rows.length} part${rows.length === 1 ? '' : 's'} saved from datasheet.`);
+  window._enrich = null;
 }
 
 // ---------- Maintenance Log ----------
