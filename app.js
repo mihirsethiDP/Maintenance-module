@@ -284,7 +284,17 @@ function tagLink(e) {
 let state = load();
 const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '', notifPlant: 'all', notifTime: 'all' };
 const LOG_PAGE_SIZE = 50;
-const EQ_TYPES = ['Pump','Blower','Motor','Mixer','Screen','Filter','Centrifuge','UV System','Screw Press','Decanter','Fan','Other'];
+const EQ_TYPES = ['Pump','Blower','Motor','Mixer','Screen','Filter','Centrifuge','UV System','Screw Press','Decanter','Fan','Valve','NRV','Other'];
+const isValveType = t => t === 'Valve' || t === 'NRV';
+// Expected service life fallbacks (years) — mirrors type_config seed; the
+// per-equipment value (from datasheet enrichment or manual entry) wins.
+const TYPE_LIFE_DEFAULTS = { Pump:10, Blower:12, Motor:12, Mixer:10, Screen:15, Filter:12, Centrifuge:12, 'UV System':8, 'Screw Press':12, Decanter:12, Fan:10, Valve:5, NRV:5, Other:10 };
+let cloudTypeLife = null;
+function expectedLifeFor(e) {
+  if (e.expectedLifeYears) return e.expectedLifeYears;
+  if (cloudTypeLife && cloudTypeLife[e.type]) return cloudTypeLife[e.type];
+  return TYPE_LIFE_DEFAULTS[e.type] || 10;
+}
 
 const routes = [
   { hash: '#/dashboard', label: 'Dashboard',          roles: ['Admin'] },
@@ -319,9 +329,9 @@ async function loadAuthProfile(u) {
 }
 
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
-const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null });
+const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null, expectedLifeYears: r.expected_life_years || null, lineageId: r.lineage_id || r.id, retiredAt: r.retired_at || null, replacedBy: r.replaced_by || null });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
-const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -386,9 +396,91 @@ async function hydrateCloud() {
         if (error) return;   // table may not exist yet
         cloudParts = data || [];
       }, () => {}),
+    SUPA.from('type_config').select('eq_type,expected_life_years')
+      .then(({ data, error }) => {
+        if (error) return;   // table may not exist yet — fall back to constants
+        cloudTypeLife = {};
+        (data || []).forEach(row => { cloudTypeLife[row.eq_type] = row.expected_life_years; });
+      }, () => {}),
   ]);
 }
 function partsFor(eqId) { return (cloudParts || []).filter(p => p.equipment_id === eqId); }
+
+// Equipment that participates in day-to-day views (retired valves are history).
+function activeEquipment(list) { return (list || state.equipment).filter(e => e.status !== 'Retired'); }
+
+// ---------- Health score (0–100, computed live, fully explainable) ----------
+// Rotating equipment: age base − part-weighted breakdown deductions (age-
+// amplified, recency-decayed) − overdue penalty + on-time-PPM recovery credit.
+// Valves/NRV: age vs expected life + replacement churn at the same position.
+const HEALTH_BANDS = [
+  [80, 'Good',     'badge-op'],
+  [60, 'Watch',    'badge-neutral'],
+  [40, 'At Risk',  'badge-mt'],
+  [ 0, 'Critical', 'badge-bd'],
+];
+function healthBand(score) { return HEALTH_BANDS.find(([min]) => score >= min); }
+function healthBadge(score) {
+  const [, label, cls] = healthBand(score);
+  return `<span class="badge ${cls}" title="Health score">${score} · ${label}</span>`;
+}
+function healthScore(e) {
+  const factors = [];
+  const now = Date.now();
+  const life = expectedLifeFor(e);
+  const ageYears = e.installed ? Math.max(0, (now - new Date(e.installed + 'T00:00:00').getTime()) / 31557600000) : 0;
+  let score = 100;
+
+  // Age: gentle decline — up to −20 across expected life, capped at −30.
+  const agePenalty = Math.round(Math.min(30, (ageYears / life) * 20));
+  if (agePenalty > 0) { score -= agePenalty; factors.push({ label: `Age ${ageYears.toFixed(1)}y of ~${life}y expected life`, delta: -agePenalty }); }
+
+  if (isValveType(e.type)) {
+    // Position churn: prior generations at this position retired in the last 24 months.
+    const cutoff = new Date(now - 24 * 30.44 * 86400000);
+    const churn = state.equipment.filter(x =>
+      x.lineageId === e.lineageId && x.id !== e.id && x.retiredAt &&
+      new Date(x.retiredAt + 'T00:00:00') >= cutoff).length;
+    if (churn > 0) {
+      const p = Math.min(45, churn * 15);
+      score -= p;
+      factors.push({ label: `${churn} replacement${churn === 1 ? '' : 's'} at this position in 24 months`, delta: -p });
+    }
+  } else {
+    const ageMult = Math.min(2.5, 1 + ageYears / life);
+    for (const l of state.logs) {
+      if (l.equipmentId !== e.id || l.reason !== 'Breakdown') continue;
+      const part = l.affectedPartId ? (cloudParts || []).find(p => p.id === l.affectedPartId) : null;
+      const base = part ? part.criticality * 4
+        : ({ Minor: 8, Major: 20, Critical: 36 }[l.severity] || 16);
+      const refDate = new Date((l.endDate || l.startDate) + 'T00:00:00').getTime();
+      const monthsSince = Math.max(0, (now - refDate) / (30.44 * 86400000));
+      const decay = Math.pow(0.5, monthsSince / 12);
+      const d = Math.round(Math.min(45, base * ageMult * decay));
+      if (d >= 1) {
+        score -= d;
+        const what = part ? esc(part.name) : (l.severity || 'breakdown');
+        factors.push({ label: `Breakdown ${l.startDate} (${what})`, delta: -d });
+      }
+    }
+    // Recovery: completed scheduled services in the last 12 months earn back points.
+    const yearAgo = new Date(now - 365.25 * 86400000);
+    const services = state.logs.filter(l => l.equipmentId === e.id && l.reason === 'Scheduled' &&
+      l.endDate && new Date(l.endDate + 'T00:00:00') >= yearAgo).length;
+    if (services > 0) {
+      const credit = Math.min(10, services * 2);
+      score += credit;
+      factors.push({ label: `${services} on-time service${services === 1 ? '' : 's'} in 12 months`, delta: +credit });
+    }
+  }
+
+  // Neglect right now: an overdue open work-order, or an overdue PPM slot.
+  const open = openLogFor(e.id);
+  if (open && isOverdue(open)) { score -= 10; factors.push({ label: 'Open work-order is overdue', delta: -10 }); }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  return { score, band: healthBand(score)[1], factors };
+}
 
 // Plant IDs the current user may see: admins → all; engineers → assigned (real mode) or all (prototype).
 function accessiblePlantIds() {
@@ -690,6 +782,18 @@ function buildNotifFeed() {
     else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds, plantId: e.plantId,
       message: `Upcoming — ${esc(e.tag)} at ${esc(plantName(e.plantId))} on ${ds}.` });
   });
+  // Health alerts: equipment in the At Risk / Critical bands (scoped like
+  // everything else — admins see all, engineers their assigned plants).
+  if (SUPA) {
+    const ids = accessiblePlantIds();
+    activeEquipment().forEach(e => {
+      if (!admin && !ids.includes(e.plantId)) return;
+      const hs = healthScore(e);
+      if (hs.score >= 60) return;
+      feed.push({ key: `health-${e.id}-${hs.band}`, group: 'health', date: todayStr, plantId: e.plantId,
+        message: `Health ${hs.band.toLowerCase()} (${hs.score}/100) — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
+    });
+  }
   // Activity (admins only): breakdowns, status changes — shared table in real
   // mode (cross-device), localStorage outbox in prototype mode.
   if (admin) {
@@ -701,7 +805,7 @@ function buildNotifFeed() {
   }
   // Fresh activity belongs right under "Due today" (newest first);
   // the 7-day lookahead sits last so it never buries real events.
-  const order = { overdue: 0, due: 1, activity: 2, upcoming: 3 };
+  const order = { overdue: 0, due: 1, health: 2, activity: 3, upcoming: 4 };
   return feed.sort((a, b) =>
     (order[a.group] - order[b.group]) ||
     (a.group === 'activity'
@@ -737,6 +841,7 @@ function notifPanelBody() {
   const GROUPS = [
     ['overdue',  'Overdue',           'badge-bd'],
     ['due',      'Due today',         'badge-mt'],
+    ['health',   'Health alerts',     'badge-bd'],
     ['activity', 'Recent activity',   'badge-neutral'],
     ['upcoming', 'Upcoming (7 days)', 'badge-brand'],
   ];
@@ -835,7 +940,7 @@ function addEquipmentBtn() {
 
 // ---------- Dashboard ----------
 function renderDashboard() {
-  let eq = applyTypeFilter(applyPlantFilter(state.equipment));
+  let eq = applyTypeFilter(applyPlantFilter(activeEquipment()));
   const total = eq.length;
   const op = eq.filter(e => e.status === 'Operational').length;
   const mt = eq.filter(e => e.status === 'In Maintenance').length;
@@ -917,7 +1022,7 @@ function renderDashboard() {
 
 // ---------- Equipment list ----------
 function renderEquipment() {
-  const eq = applyTypeFilter(applyPlantFilter(state.equipment));
+  const eq = applyTypeFilter(applyPlantFilter(activeEquipment()));
   const rows = eq.map(e => {
     const log = openLogFor(e.id);
     const openWo = openLogFor(e.id);
@@ -926,15 +1031,17 @@ function renderEquipment() {
       : e.status === 'Operational'
         ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
+    const hs = SUPA ? healthScore(e) : null;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
+      ${hs ? `<td class="col-center">${healthBadge(hs.score)}</td>` : ''}
       <td class="col-center">${statusBadge(e.status)}</td>
       <td class="col-center">${action}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="6" class="py-6 text-center text-slate-500">No equipment for this plant.</td></tr>`;
+  }).join('') || `<tr><td colspan="${SUPA ? 7 : 6}" class="py-6 text-center text-slate-500">No equipment for this plant.</td></tr>`;
 
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-4 flex-wrap gap-3">
@@ -954,7 +1061,7 @@ function renderEquipment() {
         <table class="list-table" id="eqTable">
           <thead><tr>
             <th>Equipment</th><th>Plant</th><th>Type / Model</th>
-            <th>Expected Completion</th><th class="col-center">Status</th><th class="col-center">Action</th>
+            <th>Expected Completion</th>${SUPA ? '<th class="col-center">Health</th>' : ''}<th class="col-center">Status</th><th class="col-center">Action</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -1003,43 +1110,146 @@ function renderEquipmentDetail(id) {
     </div>
   `).join('') || `<div class="text-slate-500 text-sm">No maintenance history yet.</div>`;
 
+  const retired = e.status === 'Retired';
   const detailOpenWo = openLogFor(e.id);
-  const actionBtn = (detailOpenWo && woStateOf(detailOpenWo) === 'open')
+  const actionBtn = retired ? '' : (detailOpenWo && woStateOf(detailOpenWo) === 'open')
     ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button>`
     : e.status === 'Operational'
       ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
       : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
+  const replaceBtn = (!retired && isValveType(e.type))
+    ? `<button onclick="openReplaceValveModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium">Replace ${e.type}</button>` : '';
+
+  const hs = SUPA && !retired ? healthScore(e) : null;
+  const healthPanel = hs ? `
+    <div class="bg-white rounded-xl border border-slate-200 p-5 mb-6">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="font-semibold text-sm">Health score</div>
+        ${healthBadge(hs.score)}
+        <details class="ml-auto">
+          <summary class="text-xs text-brand cursor-pointer">Why this score?</summary>
+        </details>
+      </div>
+      <div class="mt-3 space-y-1">
+        <div class="text-xs text-slate-500">Starts at 100, then:</div>
+        ${hs.factors.length ? hs.factors.map(f => `
+          <div class="flex items-center gap-2 text-xs">
+            <span class="${f.delta < 0 ? 'text-red-600' : 'text-green-700'} font-mono w-10 text-right">${f.delta > 0 ? '+' : ''}${f.delta}</span>
+            <span class="text-slate-600">${f.label}</span>
+          </div>`).join('') : '<div class="text-xs text-slate-400">No deductions — new or spotless record.</div>'}
+      </div>
+    </div>` : '';
+
+  const retiredBanner = retired ? `
+    <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-3 mb-4 text-sm text-amber-800">
+      Retired on <b>${e.retiredAt || '—'}</b>${e.replacedBy && eqById(e.replacedBy) ? ` — replaced by ${tagLink(eqById(e.replacedBy))}` : ''}. This record is kept for history.
+    </div>` : '';
+
+  // Valve position history: every generation at this position, oldest first.
+  const lineage = isValveType(e.type)
+    ? state.equipment.filter(x => x.lineageId === e.lineageId).sort((a, b) => String(a.installed).localeCompare(String(b.installed)))
+    : [];
+  const lineagePanel = lineage.length > 1 ? `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Position history <span class="text-slate-400 font-normal">(${lineage.length} generation${lineage.length===1?'':'s'})</span></div>
+      <div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Tag</th><th>Make / Model</th><th>Installed</th><th>Retired</th><th>Status</th></tr></thead>
+        <tbody>${lineage.map(g => `<tr class="${g.id === e.id ? 'bg-brand-50/40' : ''}">
+          <td><div class="cell-primary">${g.id === e.id ? esc(g.tag) + ' <span class="text-[10px] text-slate-400">(this record)</span>' : tagLink(g)}</div></td>
+          <td><div class="cell-muted">${esc(g.make)} ${esc(g.model)}</div></td>
+          <td><div class="cell-primary">${g.installed || '—'}</div></td>
+          <td><div class="cell-primary">${g.retiredAt || '—'}</div></td>
+          <td>${statusBadge(g.status)}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>` : '';
 
   document.getElementById('view').innerHTML = `
     <a href="#/equipment" class="text-sm text-brand hover:underline">&larr; Back to equipment</a>
-    <div class="bg-white rounded-xl border border-slate-200 p-6 mt-3 mb-6">
+    ${retiredBanner}
+    <div class="bg-white rounded-xl border border-slate-200 p-6 ${retired ? '' : 'mt-3'} mb-6">
       <div class="flex items-start flex-wrap gap-3">
         <div>
-          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${e.tag}</h1>${statusBadge(e.status)}</div>
+          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? healthBadge(hs.score) : ''}</div>
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${plantName(e.plantId)}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
-          ${isAdmin() ? `<button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
+          ${!retired && isAdmin() ? `<button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
             Edit
           </button>` : ''}
           ${exportDropdown(`'${e.id}'`, 'detail-export')}
+          ${replaceBtn}
           ${actionBtn}
         </div>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 text-sm">
         <div><div class="text-xs uppercase text-slate-500">Plant</div><div>${plantName(e.plantId)}</div></div>
-        <div><div class="text-xs uppercase text-slate-500">Location</div><div>${esc(e.location)}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Installed</div><div>${e.installed}</div></div>
+        <div><div class="text-xs uppercase text-slate-500">Expected life</div><div>${expectedLifeFor(e)} yrs${e.expectedLifeYears ? '' : ' <span class="text-[10px] text-slate-400">(type default)</span>'}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Expected Completion</div><div>${open?.etr || '—'}</div></div>
       </div>
     </div>
 
-    ${partsCard(e)}
+    ${healthPanel}
+    ${lineagePanel}
+    ${isValveType(e.type) ? '' : partsCard(e)}
 
     <h2 class="font-semibold mb-3">Maintenance history</h2>
     <div class="bg-white rounded-xl border border-slate-200 p-6">${timeline}</div>
   `;
+}
+
+// ---------- Valve replacement (retire old, new tag, same position) ----------
+function openReplaceValveModal(eqId) {
+  const e = eqById(eqId); if (!e || !isValveType(e.type)) return;
+  document.getElementById('modalTitle').textContent = `Replace ${e.type} — ${esc(e.tag)}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitReplaceValve(event, '${eqId}')" class="space-y-3 text-sm">
+      <div class="p-2.5 rounded-md bg-amber-50 border border-amber-100 text-xs text-amber-800">
+        <b>${esc(e.tag)}</b> will be retired (its history stays intact) and a new ${e.type} takes over this position — same plant and PPM schedule.
+      </div>
+      <div><label class="block text-xs text-slate-600 mb-1">New tag <span class="text-red-500">*</span></label>
+        <input name="newTag" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. NRV-3B" /></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="block text-xs text-slate-600 mb-1">Make</label>
+          <input name="make" value="${esc(e.make)}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+        <div><label class="block text-xs text-slate-600 mb-1">Model</label>
+          <input name="model" value="${esc(e.model)}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+      </div>
+      <div><label class="block text-xs text-slate-600 mb-1">Installed on</label>
+        <input type="date" name="installed" value="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+      <div><label class="block text-xs text-slate-600 mb-1">Failure / replacement notes</label>
+        <textarea name="notes" rows="3" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Why was it replaced — seized, passing, corroded…"></textarea></div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white">Retire &amp; replace</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+async function submitReplaceValve(ev, eqId) {
+  ev.preventDefault();
+  const e = eqById(eqId); if (!e) return;
+  const f = new FormData(ev.target);
+  const newId = 'EQ-' + String(Date.now()).slice(-8);
+  if (SUPA) {
+    const unlock = lockSubmit(ev, 'Replacing…');
+    const { error } = await SUPA.rpc('replace_valve', {
+      p_old: eqId, p_new_id: newId, p_new_tag: f.get('newTag').trim(),
+      p_make: (f.get('make') || '').trim(), p_model: (f.get('model') || '').trim(),
+      p_installed: f.get('installed') || today(), p_notes: (f.get('notes') || '').trim(),
+    });
+    if (error) { unlock(); saveError(error); return; }
+    await hydrateCloud();
+    closeModal();
+    location.hash = '#/equipment/' + newId;
+    route();
+    pushEventNotification('breakdown', e, { etr: today() });
+    toast(`${esc(e.tag)} retired — ${esc(f.get('newTag'))} is now in service at this position.`);
+    return;
+  }
+  alert('Valve replacement requires the live database.');
 }
 
 // ---------- Parts & specifications (BOM) ----------
@@ -1271,11 +1481,16 @@ async function submitEnrichApprove(ev, eqId) {
   const { error } = await SUPA.from('equipment_parts').insert(rows);
   if (error) { unlock(); saveError(error); return; }
   // A chosen variant refines the model — persist it (e.g. "WX-001" → "WX-001 4.2 kW").
+  const eqPatch = {};
   if (window._enrich.variant) {
     const e = eqById(eqId);
-    if (e && !e.model.includes(window._enrich.variant)) {
-      await SUPA.from('equipment').update({ model: `${e.model} ${window._enrich.variant}` }).eq('id', eqId);
-    }
+    if (e && !e.model.includes(window._enrich.variant)) eqPatch.model = `${e.model} ${window._enrich.variant}`;
+  }
+  // Datasheet-sourced expected life feeds the health score's fallback chain.
+  const lifeYears = parseInt(d.expected_life_years, 10);
+  if (lifeYears > 0 && lifeYears < 60) eqPatch.expected_life_years = lifeYears;
+  if (Object.keys(eqPatch).length) {
+    await SUPA.from('equipment').update(eqPatch).eq('id', eqId);
   }
   await hydrateCloud();
   closeModal(); route();
@@ -3056,7 +3271,7 @@ function drawQrInPdf(doc, text, x, y, sizeMm) {
 function generateQrSheet(plantId) {
   if (typeof qrcode === 'undefined') { alert('QR library not loaded — check your connection and refresh.'); return; }
   const plant = plantById(plantId); if (!plant) return;
-  const eqs = state.equipment.filter(e => e.plantId === plantId);
+  const eqs = activeEquipment().filter(e => e.plantId === plantId);
   if (!eqs.length) { alert('This plant has no equipment yet.'); return; }
 
   const { jsPDF } = window.jspdf;
@@ -3146,7 +3361,8 @@ function openMaintModal(eqId) {
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-slate-600 mb-1">Reason <span class="text-red-500">*</span></label>
-          <select name="reason" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+          <select name="reason" required class="w-full border border-slate-300 rounded-md px-2 py-1.5"
+            onchange="document.getElementById('bdDetails')?.classList.toggle('hidden', this.value !== 'Breakdown')">
             <option value="">Select…</option><option>Scheduled</option><option>Breakdown</option>
           </select>
         </div>
@@ -3155,6 +3371,22 @@ function openMaintModal(eqId) {
           <select name="priority" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
             <option>Normal</option><option>High</option><option>Critical</option>
           </select>
+        </div>
+      </div>
+      <div id="bdDetails" class="hidden grid grid-cols-2 gap-3">
+        ${SUPA && partsFor(eqId).length ? `<div>
+          <label class="block text-xs text-slate-600 mb-1">Affected part <span class="text-slate-400">(if known)</span></label>
+          <select name="affectedPart" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
+            <option value="">— not sure —</option>
+            ${partsFor(eqId).map(p => `<option value="${p.id}">${esc(p.name)} (crit ${p.criticality})</option>`).join('')}
+          </select>
+        </div>` : ''}
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Failure severity</label>
+          <select name="severity" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
+            <option value="Major">Major</option><option value="Minor">Minor</option><option value="Critical">Critical</option>
+          </select>
+          <div class="text-[10px] text-slate-400 mt-0.5">Used for the health score${SUPA && partsFor(eqId).length ? ' when no part is selected' : ''}.</div>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
@@ -3187,12 +3419,15 @@ async function submitMaint(ev, eqId) {
   ev.preventDefault();
   if (openLogFor(eqId)) { alert('This equipment already has an open work-order. Complete it before starting a new one.'); return; }
   const f = new FormData(ev.target);
+  const isBd = f.get('reason') === 'Breakdown';
   const log = {
     id: 'L-' + Date.now(), equipmentId: eqId,
     reason: f.get('reason'), startDate: f.get('startDate'), etr: f.get('etr'),
     endDate: null, technician: f.get('technician'),
     notes: f.get('notes') || '', completionNotes: '',
     woState: 'active', priority: f.get('priority') || 'Normal',
+    affectedPartId: isBd && f.get('affectedPart') ? parseInt(f.get('affectedPart'), 10) : null,
+    severity: isBd ? (f.get('severity') || 'Major') : null,
   };
   const newStatus = log.reason === 'Breakdown' ? 'Broken Down' : 'In Maintenance';
   const evKey = log.reason === 'Breakdown' ? 'breakdown' : 'maintenance';
@@ -3200,11 +3435,19 @@ async function submitMaint(ev, eqId) {
     const unlock = lockSubmit(ev);
     // Atomic RPC: log insert + status change in one transaction, with a
     // DB-side guard against duplicate open work-orders.
-    const { error } = await SUPA.rpc('log_maintenance_start', {
+    let { error } = await SUPA.rpc('log_maintenance_start', {
       p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
       p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
-      p_priority: log.priority,
+      p_priority: log.priority, p_part_id: log.affectedPartId, p_severity: log.severity,
     });
+    if (error && error.code === 'PGRST202') {
+      // Health migration (12) not applied yet — start without part/severity.
+      ({ error } = await SUPA.rpc('log_maintenance_start', {
+        p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
+        p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
+        p_priority: log.priority,
+      }));
+    }
     if (error) { unlock(); saveError(error); return; }
     await hydrateCloud();
     closeModal(); route();
