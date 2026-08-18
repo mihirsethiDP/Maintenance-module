@@ -33,7 +33,7 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .badge { display:inline-flex; align-items:center; padding:3px 10px; border-radius:9999px; font-size:11px; font-weight:600; border:1px solid; }
+    .badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:9999px; font-size:10.5px; font-weight:600; border:1px solid; white-space:nowrap; line-height:1.5; }
     .badge-op { background:#f0fdf4; color:#15803d; border-color:#86efac; }
     .badge-mt { background:#fffbeb; color:#b45309; border-color:#fcd34d; }
     .badge-bd { background:#fef2f2; color:#b91c1c; border-color:#fca5a5; }
@@ -52,7 +52,8 @@
     .cell-primary { font-weight:600; color:#0f172a; }
     .cell-secondary { color:#193458; font-size:12px; margin-top:2px; }
     .cell-muted { color:#64748b; font-size:12px; margin-top:2px; }
-    .tag-chip { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; border-radius:8px; background:#f1f4f9; color:#193458 !important; font-weight:600; font-size:13px; text-decoration:none; border:1px solid #dde4ee; transition:background 0.15s, border-color 0.15s; }
+    .tag-chip { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:6px 10px; border-radius:8px; background:#f1f4f9; color:#193458 !important; font-weight:600; font-size:12.5px; text-decoration:none; border:1px solid #dde4ee; transition:background 0.15s, border-color 0.15s; max-width:230px; }
+    .tag-chip .tag-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .tag-chip:hover { background:#dde4ee; border-color:#bac9dc; }
     .tag-chip svg { opacity:0.65; flex-shrink:0; }
     .list-table tbody td .cell-primary:has(.tag-chip) { display:block; }
@@ -161,6 +162,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-config.js?v=1"></script>
   <script src="seed-data.js?v=1"></script>
-  <script src="app.js?v=44"></script>
+  <script src="app.js?v=45"></script>
 </body>
 </html>

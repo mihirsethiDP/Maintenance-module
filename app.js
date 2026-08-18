@@ -277,7 +277,7 @@ function ecStatus(etr, endDate) {
   return { label: `In ${d}d`, cls: 'text-[#193458]' };
 }
 function tagLink(e) {
-  return `<a class="tag-chip" href="#/equipment/${e.id}">${esc(e.tag)}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>`;
+  return `<a class="tag-chip" href="#/equipment/${e.id}" title="${esc(e.tag)}"><span class="tag-text">${esc(e.tag)}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>`;
 }
 
 // ---------- State / routing / filters ----------
@@ -1042,15 +1042,15 @@ function renderEquipment() {
     const log = openLogFor(e.id);
     const openWo = openLogFor(e.id);
     const action = (openWo && woStateOf(openWo) === 'open')
-      ? `<button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium" onclick="startWorkOrder('${openWo.id}')">Start Work</button>`
+      ? `<button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${openWo.id}')">Start Work</button>`
       : e.status === 'Operational'
-        ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
-        : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
+        ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
+        : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     const hs = SUPA ? healthScore(e) : null;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
       <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div>${SUPA && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<div class="text-[10px] font-medium text-amber-600 mt-0.5">No parts recorded</div>' : ''}</td>
       <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
       ${hs ? `<td class="col-center">${healthBadge(hs.score)}</td>` : ''}
       <td class="col-center">${statusBadge(e.status)}</td>
@@ -1286,9 +1286,12 @@ function partsCard(e) {
       <td><div class="cell-primary">${esc(p.name)}</div>${p.source === 'ai' && p.source_url ? `<div class="cell-muted"><a href="${esc(p.source_url)}" target="_blank" rel="noopener" class="text-brand hover:underline">source</a></div>` : ''}</td>
       <td><div class="cell-muted">${esc(p.spec) || '—'}</div></td>
       <td><div class="cell-primary">${p.qty}</div></td>
-      <td><span class="badge ${critBadge(p.criticality)}">${p.criticality}/10</span></td>
+      ${isAdmin() ? `<td><span class="badge ${critBadge(p.criticality)}">${p.criticality}/10</span></td>` : ''}
       <td><div class="cell-primary">${p.last_serviced || '—'}</div><div class="cell-muted">${p.last_replaced ? 'replaced ' + p.last_replaced : 'never replaced'}</div></td>
-      <td class="col-center">${isAdmin() ? `<button onclick="deletePart(${p.id})" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>` : '—'}</td>
+      ${isAdmin() ? `<td class="col-center"><div class="flex gap-1.5 justify-center">
+        <button onclick="openEditPartModal(${p.id})" class="text-xs px-2 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Edit</button>
+        <button onclick="deletePart(${p.id})" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>
+      </div></td>` : ''}
     </tr>`).join('');
   return `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
@@ -1301,50 +1304,59 @@ function partsCard(e) {
         </div>` : ''}
       </div>
       ${parts.length ? `<div class="overflow-x-auto"><table class="list-table">
-        <thead><tr><th>Part</th><th>Specification</th><th>Qty</th><th>Criticality</th><th>Last serviced</th><th class="col-center">Action</th></tr></thead>
+        <thead><tr><th>Part</th><th>Specification</th><th>Qty</th>${isAdmin() ? '<th>Criticality</th>' : ''}<th>Last serviced</th>${isAdmin() ? '<th class="col-center">Action</th>' : ''}</tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`
       : `<div class="px-5 py-6 text-center text-sm text-slate-500">No parts recorded yet.${isAdmin() ? ' Add them manually or auto-fill from the manufacturer\'s datasheet.' : ''}</div>`}
     </div>`;
 }
-function openAddPartModal(eqId) {
+function openPartFormModal(eqId, partId) {
   if (!isAdmin()) return;
-  document.getElementById('modalTitle').textContent = 'Add part';
+  const part = partId ? (cloudParts || []).find(x => x.id === partId) : null;
+  const q = v => String(v == null ? '' : v).replace(/"/g, '&quot;');
+  document.getElementById('modalTitle').textContent = part ? `Edit ${part.name}` : 'Add part';
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="submitAddPart(event, '${eqId}')" class="space-y-3 text-sm">
+    <form onsubmit="submitPartForm(event, '${eqId}', ${partId || 'null'})" class="space-y-3 text-sm">
       <div><label class="block text-xs text-slate-600 mb-1">Part name <span class="text-red-500">*</span></label>
-        <input name="name" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Ball bearing (drive end)" /></div>
+        <input name="name" required value="${part ? q(part.name) : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Ball bearing (drive end)" /></div>
       <div><label class="block text-xs text-slate-600 mb-1">Specification</label>
-        <input name="spec" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. 6309-2Z, 45mm bore" /></div>
+        <input name="spec" value="${part ? q(part.spec) : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. 6309-2Z, 45mm bore" /></div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="block text-xs text-slate-600 mb-1">Quantity</label>
-          <input name="qty" type="number" min="1" value="1" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+          <input name="qty" type="number" min="1" value="${part ? part.qty : 1}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
         <div><label class="block text-xs text-slate-600 mb-1">Criticality (1–10)</label>
-          <input name="criticality" type="number" min="1" max="10" value="5" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+          <input name="criticality" type="number" min="1" max="10" value="${part ? part.criticality : 5}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
       </div>
-      <div class="text-[11px] text-slate-500">Criticality drives the future health score: 10 = failure stops the machine (motor), 1 = cosmetic/minor (filter pad).</div>
+      <div class="text-[11px] text-slate-500">Criticality drives the health score: 10 = failure stops the machine (motor), 1 = cosmetic/minor (filter pad). Engineers never see this number.</div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add part</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${part ? 'Save changes' : 'Add part'}</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
 }
-async function submitAddPart(ev, eqId) {
+function openAddPartModal(eqId) { openPartFormModal(eqId, null); }
+function openEditPartModal(partId) {
+  const part = (cloudParts || []).find(x => x.id === partId);
+  if (part) openPartFormModal(part.equipment_id, partId);
+}
+async function submitPartForm(ev, eqId, partId) {
   ev.preventDefault();
   if (!isAdmin() || !SUPA) return;
   const f = new FormData(ev.target);
   const unlock = lockSubmit(ev);
-  const { error } = await SUPA.from('equipment_parts').insert({
-    equipment_id: eqId, name: f.get('name').trim(), spec: (f.get('spec') || '').trim(),
+  const fields = {
+    name: f.get('name').trim(), spec: (f.get('spec') || '').trim(),
     qty: parseInt(f.get('qty'), 10) || 1,
     criticality: Math.min(10, Math.max(1, parseInt(f.get('criticality'), 10) || 5)),
-    source: 'manual',
-  });
+  };
+  const { error } = partId
+    ? await SUPA.from('equipment_parts').update(fields).eq('id', partId)
+    : await SUPA.from('equipment_parts').insert({ equipment_id: eqId, source: 'manual', ...fields });
   if (error) { unlock(); saveError(error); return; }
   await hydrateCloud();
   closeModal(); route();
-  toast('Part added.');
+  toast(partId ? 'Part updated.' : 'Part added.');
 }
 async function deletePart(partId) {
   if (!isAdmin() || !SUPA) return;
@@ -3404,7 +3416,7 @@ function openMaintModal(eqId) {
           <label class="block text-xs text-slate-600 mb-1">Affected part <span class="text-slate-400">(if known)</span></label>
           <select name="affectedPart" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
             <option value="">— not sure —</option>
-            ${partsFor(eqId).map(p => `<option value="${p.id}">${esc(p.name)} (crit ${p.criticality})</option>`).join('')}
+            ${partsFor(eqId).map(p => `<option value="${p.id}">${esc(p.name)}${p.spec ? ' — ' + esc(p.spec) : ''}</option>`).join('')}
           </select>
         </div>` : ''}
         <div>
@@ -3519,16 +3531,14 @@ function openCompleteModal(eqId) {
       </div>` : '';
   const items = checklistFor(e.type);
   const checklistSection = items.length ? `
-      <div>
-        <div class="text-xs text-slate-600 mb-1.5">Service checklist — ${esc(e.type)} <span class="text-red-500">*</span> <span class="text-slate-400">= required</span></div>
-        <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[30vh] overflow-y-auto">
-          ${items.map((it, i) => `
-            <label class="flex items-start gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer">
-              <input type="checkbox" name="chk-${i}" class="mt-0.5" />
-              <span class="text-xs text-slate-700">${esc(it.text)}${it.mandatory ? ' <span class="text-red-500">*</span>' : ''}</span>
-            </label>`).join('')}
-        </div>
-      </div>` : '';
+      <details class="border border-slate-200 rounded-md bg-slate-50/60">
+        <summary class="px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer select-none hover:text-brand">
+          Service guide — ${esc(e.type)} <span class="text-slate-400 font-normal">(${items.length} reference point${items.length === 1 ? '' : 's'})</span>
+        </summary>
+        <ul class="px-4 pb-2.5 pt-0.5 space-y-1 max-h-[26vh] overflow-y-auto">
+          ${items.map(it => `<li class="text-xs text-slate-600 flex gap-1.5"><span class="text-brand">&bull;</span><span>${esc(it.text)}</span></li>`).join('')}
+        </ul>
+      </details>` : '';
   document.getElementById('modalTitle').textContent = `Mark ${e.tag} operational`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitComplete(event, '${eqId}')" class="space-y-3 text-sm">
@@ -3564,15 +3574,8 @@ async function submitComplete(ev, eqId) {
   const wantReport = (ev.submitter && ev.submitter.value === 'confirm-report');
   const log = openLogFor(eqId);
 
-  // Collect checklist state; block closure until every mandatory item is ticked.
-  const eqType = eqById(eqId)?.type;
-  const items = checklistFor(eqType);
-  const checklist = items.map((it, i) => ({ text: it.text, mandatory: !!it.mandatory, done: !!f.get('chk-' + i) }));
-  const missing = checklist.filter(c => c.mandatory && !c.done);
-  if (missing.length) {
-    alert(`Complete the required checklist item${missing.length === 1 ? '' : 's'} before closing:\n\n• ` + missing.map(m => m.text).join('\n• '));
-    return;
-  }
+  // The checklist is a reference guide, not a gate — no per-item ticking required.
+  const checklist = null;
 
   // Collect per-part actions — the substance of the maintenance job.
   const partActions = (SUPA ? partsFor(eqId) : [])
@@ -3712,6 +3715,26 @@ function generateSingleServiceReport(eqId, log) {
   openPdfPreview(doc, filename, `Service Report — ${eq.tag}`);
 }
 
+// Equipment name = Make + Model. Model is normally unique per plant; on a
+// collision within the plant we suffix #2, #3, ... so every name stays unique.
+function deriveTag(make, model, plantId, excludeId) {
+  const base = `${(make || '').trim()} ${(model || '').trim()}`.replace(/\s+/g, ' ').trim();
+  if (!base) return '';
+  const taken = new Set(state.equipment.filter(x => x.plantId === plantId && x.id !== excludeId).map(x => x.tag));
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base} #${n}`)) n++;
+  return `${base} #${n}`;
+}
+function updateEqNamePreview(form, excludeId) {
+  const el = document.getElementById('eqNamePreview');
+  if (!el || !form) return;
+  const make = form.querySelector('[name="make"]')?.value || '';
+  const model = form.querySelector('[name="model"]')?.value || '';
+  const plantId = form.querySelector('[name="plantId"]')?.value || '';
+  if (!make.trim() || !model.trim()) { el.textContent = '—'; return; }
+  el.textContent = deriveTag(make, model, plantId, excludeId || null);
+}
 function openEquipmentFormModal(mode, eqId) {
   const isEdit = mode === 'edit';
   const e = isEdit ? eqById(eqId) : null;
@@ -3722,8 +3745,12 @@ function openEquipmentFormModal(mode, eqId) {
     <form onsubmit="submitEquipmentForm(event, '${mode}', '${eqId||''}')" class="space-y-3 text-sm">
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
-          <input name="tag" required value="${e ? e.tag.replace(/"/g,'&quot;') : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. P-705" />
+          <label class="block text-xs text-slate-600 mb-1">Make <span class="text-red-500">*</span></label>
+          <input name="make" required value="${e ? (e.make||'').replace(/"/g,'&quot;') : ''}" oninput="updateEqNamePreview(this.form, '${eqId||''}')" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Kirloskar" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Model <span class="text-red-500">*</span></label>
+          <input name="model" required value="${e ? (e.model||'').replace(/"/g,'&quot;') : ''}" oninput="updateEqNamePreview(this.form, '${eqId||''}')" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. WX-001 4.2KW" />
         </div>
         <div>
           <label class="block text-xs text-slate-600 mb-1">Type <span class="text-red-500">*</span></label>
@@ -3732,23 +3759,20 @@ function openEquipmentFormModal(mode, eqId) {
           </select>
         </div>
         <div>
-          <label class="block text-xs text-slate-600 mb-1">Make</label>
-          <input name="make" value="${e ? (e.make||'').replace(/"/g,'&quot;') : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Grundfos" />
-        </div>
-        <div>
-          <label class="block text-xs text-slate-600 mb-1">Model</label>
-          <input name="model" value="${e ? (e.model||'').replace(/"/g,'&quot;') : ''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. NB 65-200" />
+          <label class="block text-xs text-slate-600 mb-1">Installed</label>
+          <input type="date" name="installed" value="${e ? e.installed : today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
         </div>
       </div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Plant <span class="text-red-500">*</span></label>
-        <select name="plantId" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+        <select name="plantId" required onchange="updateEqNamePreview(this.form, '${eqId||''}')" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
           <option value="">Select…</option>${plantOpts}
         </select>
       </div>
-      <div>
-        <label class="block text-xs text-slate-600 mb-1">Installed</label>
-        <input type="date" name="installed" value="${e ? e.installed : today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+      <div class="text-xs text-slate-600 bg-brand-50 border border-brand-100 rounded-md px-3 py-2">
+        Name is generated from Make + Model:
+        <span id="eqNamePreview" class="font-semibold text-brand">${e ? esc(e.tag) : '—'}</span>
+        <div class="text-[10px] text-slate-400 mt-0.5">If the same make &amp; model already exists at this plant, a #2, #3… suffix keeps names unique.</div>
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -3764,9 +3788,12 @@ async function submitEquipmentForm(ev, mode, eqId) {
   ev.preventDefault();
   if (!isAdmin()) return;
   const f = new FormData(ev.target);
+  const make = (f.get('make') || '').trim(), model = (f.get('model') || '').trim();
+  const tag = deriveTag(make, model, f.get('plantId'), mode === 'edit' ? eqId : null);
+  if (!tag) { alert('Make and Model are required — the equipment name is generated from them.'); return; }
   if (mode === 'edit') {
     const cur = eqById(eqId); if (!cur) return;
-    const patch = { tag: f.get('tag'), type: f.get('type'), make: f.get('make') || '', model: f.get('model') || '', plantId: f.get('plantId'), installed: f.get('installed') || cur.installed };
+    const patch = { tag, type: f.get('type'), make, model, plantId: f.get('plantId'), installed: f.get('installed') || cur.installed };
     if (SUPA) {
       const unlock = lockSubmit(ev);
       const { error } = await SUPA.from('equipment').update(eqToDb({ ...cur, ...patch })).eq('id', eqId);
@@ -3776,18 +3803,28 @@ async function submitEquipmentForm(ev, mode, eqId) {
     Object.assign(cur, patch);
   } else {
     const newEq = {
-      id: 'EQ-' + String(Date.now()).slice(-6), tag: f.get('tag'), type: f.get('type'),
-      make: f.get('make') || '', model: f.get('model') || '',
+      id: 'EQ-' + String(Date.now()).slice(-6), tag, type: f.get('type'),
+      make, model,
       plantId: f.get('plantId'), location: '',
       installed: f.get('installed') || today(), status: 'Operational', slot: null,
     };
+    const partsNudge = !isValveType(newEq.type);
     if (SUPA) {
       const unlock = lockSubmit(ev);
       const { error } = await SUPA.from('equipment').insert(eqToDb(newEq));
       if (error) { unlock(); saveError(error); return; }
-      await hydrateCloud(); closeModal(); route(); return;
+      await hydrateCloud(); closeModal();
+      // Land on the new equipment's page so its parts can be recorded right away.
+      location.hash = '#/equipment/' + newEq.id;
+      toast(partsNudge ? `${esc(newEq.tag)} added — now record its parts.` : `${esc(newEq.tag)} added.`);
+      return;
     }
     state.equipment.push(newEq);
+    saveEq(state.equipment);
+    closeModal();
+    location.hash = '#/equipment/' + newEq.id;
+    toast(partsNudge ? `${esc(newEq.tag)} added — now record its parts.` : `${esc(newEq.tag)} added.`);
+    return;
   }
   saveEq(state.equipment);
   closeModal(); route();
