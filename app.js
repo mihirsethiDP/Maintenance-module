@@ -161,6 +161,7 @@ let authUser = null;        // cached identity in real mode: {id,email,name,role
 let cloudUsers = null;      // real users hydrated from Supabase profiles (real mode)
 let cloudAssignments = {};  // userId -> [plantId] (real mode)
 let cloudQueue = null;      // background parts-research queue (admins, real mode)
+let cloudTechnicians = null; // technician registry (real mode)
 let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null, cloudParts = null, cloudLogParts = null;
 let hydrateErrors = [];     // table names that failed to hydrate (drives the error banner)
 
@@ -413,6 +414,11 @@ async function hydrateCloud() {
       .then(({ data, error }) => {
         if (error) return;   // table may not exist yet (run supabase/14) — feature hides itself
         cloudQueue = data || [];
+      }, () => {}),
+    SUPA.from('technicians').select('*').order('name')
+      .then(({ data, error }) => {
+        if (error) return;   // table may not exist yet (run supabase/15)
+        cloudTechnicians = data || [];
       }, () => {}),
   ]);
   // Resume / kick the background parts-research runner (single-flight, admin-only).
@@ -1932,7 +1938,77 @@ function renderTeam() {
         </table>
       </div>
     </div>
+    ${techniciansSection()}
     ${pendingSection}`;
+}
+
+// Technician registry card on the Team page (real mode). Removal never
+// touches history — names on past work-orders are snapshots.
+function techniciansSection() {
+  if (!SUPA) return '';
+  const techs = cloudTechnicians || [];
+  const jobCount = name => state.logs.filter(l => (l.technician || '').trim().toLowerCase() === name.toLowerCase()).length;
+  return `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
+      <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-2 flex-wrap">
+        <span class="font-semibold text-sm">Technicians <span class="text-slate-400 font-normal">(${techs.length})</span></span>
+        <span class="text-xs text-slate-400 hidden sm:inline">field workers named on work-orders — new names are recorded automatically</span>
+        <button onclick="openAddTechModal()" class="ml-auto text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">Add technician</button>
+      </div>
+      ${techs.length ? `<div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Name</th><th>Phone</th><th>Jobs on record</th><th>Added</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${techs.map(t => `<tr>
+          <td><div class="cell-primary">${esc(t.name)}</div></td>
+          <td><div class="cell-muted">${esc(t.phone) || '—'}</div></td>
+          <td><div class="cell-muted">${jobCount(t.name)}</div></td>
+          <td><div class="cell-muted">${t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}</div></td>
+          <td class="col-center"><button onclick="deleteTechnician(${t.id})" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>`
+      : `<div class="px-5 py-5 text-center text-xs text-slate-500">No technicians yet — they're recorded automatically the first time a name is used on a work-order.</div>`}
+    </div>`;
+}
+function openAddTechModal() {
+  if (!isAdmin() || !SUPA) return;
+  document.getElementById('modalTitle').textContent = 'Add technician';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitAddTech(event)" class="space-y-3 text-sm">
+      <div><label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
+        <input name="name" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. A. Mehta" /></div>
+      <div><label class="block text-xs text-slate-600 mb-1">Phone <span class="text-slate-400">(optional — used for WhatsApp/SMS later)</span></label>
+        <input name="phone" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="+91 98765 43210" /></div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add technician</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+async function submitAddTech(ev) {
+  ev.preventDefault();
+  if (!isAdmin() || !SUPA) return;
+  const f = new FormData(ev.target);
+  const name = (f.get('name') || '').trim();
+  if (!name) return;
+  if (technicianNames().some(t => t.toLowerCase() === name.toLowerCase())) {
+    alert('A technician with this name is already on the list.'); return;
+  }
+  const unlock = lockSubmit(ev);
+  const { data, error } = await SUPA.from('technicians')
+    .insert({ name, phone: (f.get('phone') || '').trim(), created_by: authUser?.id || null }).select().single();
+  if (error) { unlock(); saveError(error); return; }
+  if (cloudTechnicians) { cloudTechnicians.push(data); cloudTechnicians.sort((a, b) => a.name.localeCompare(b.name)); }
+  closeModal(); route();
+  toast(`${esc(name)} added to the technician list.`);
+}
+async function deleteTechnician(id) {
+  if (!isAdmin() || !SUPA) return;
+  const t = (cloudTechnicians || []).find(x => x.id === id);
+  if (!confirm(`Remove ${t ? t.name : 'this technician'} from the list?\n\nPast work-orders keep the name — only future suggestions change.`)) return;
+  const { error } = await SUPA.from('technicians').delete().eq('id', id);
+  if (error) { saveError(error); return; }
+  if (cloudTechnicians) cloudTechnicians = cloudTechnicians.filter(x => x.id !== id);
+  route();
 }
 
 // ---------- Edit user contact details (admin) ----------
@@ -3016,7 +3092,7 @@ function openVisitReportModal(date) {
         <div><span class="font-medium">Tasks:</span> ${logs.length} · <span class="font-medium">Technicians on record:</span> ${technicians.join(', ') || '—'}</div>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" placeholder="Service engineer" value="${technicians[0]||''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+        <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" list="techList" autocomplete="off" placeholder="Service engineer" value="${technicians[0]||''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />${techDatalist()}</div>
         <div><label class="block text-xs text-slate-600 mb-1">Approved by</label><input name="approvedBy" placeholder="Maintenance lead" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
       </div>
       <div class="flex gap-2 justify-end pt-2">
@@ -3499,7 +3575,9 @@ function openMaintModal(eqId) {
       </div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Technician <span class="text-red-500">*</span></label>
-        <input name="technician" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. A. Mehta" />
+        <input name="technician" required list="techList" autocomplete="off" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="${technicianNames().length ? 'Pick an existing technician or type a new name' : 'e.g. A. Mehta'}" />
+        ${techDatalist()}
+        <div class="text-[10px] text-slate-400 mt-0.5">New names are saved to the technician list and suggested next time.</div>
       </div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Reason / scope of work <span class="text-red-500">*</span></label>
@@ -3513,6 +3591,26 @@ function openMaintModal(eqId) {
   `;
   document.getElementById('modal').classList.remove('hidden');
 }
+// ---------- Technician registry ----------
+// Suggestions come from the registry (real mode) or from names already used
+// in logs (prototype). New names typed on a work-order are saved automatically.
+function technicianNames() {
+  if (SUPA) return (cloudTechnicians || []).map(t => t.name);
+  return [...new Set(state.logs.map(l => (l.technician || '').trim()).filter(Boolean))].sort();
+}
+function techDatalist() {
+  return `<datalist id="techList">${technicianNames().map(t => `<option value="${t.replace(/"/g, '&quot;')}"></option>`).join('')}</datalist>`;
+}
+async function recordTechnician(name) {
+  const n = (name || '').trim();
+  if (!n || !SUPA || cloudTechnicians === null) return;
+  if (technicianNames().some(t => t.toLowerCase() === n.toLowerCase())) return;
+  const { data, error } = await SUPA.from('technicians')
+    .insert({ name: n, created_by: authUser?.id || null }).select().single();
+  if (error) { if (error.code !== '23505') console.warn('technician save failed', error); return; }
+  cloudTechnicians.push(data);
+  cloudTechnicians.sort((a, b) => a.name.localeCompare(b.name));
+}
 async function submitMaint(ev, eqId) {
   ev.preventDefault();
   if (openLogFor(eqId)) { alert('This equipment already has an open work-order. Complete it before starting a new one.'); return; }
@@ -3521,7 +3619,7 @@ async function submitMaint(ev, eqId) {
   const log = {
     id: 'L-' + Date.now(), equipmentId: eqId,
     reason: f.get('reason'), startDate: f.get('startDate'), etr: f.get('etr'),
-    endDate: null, technician: f.get('technician'),
+    endDate: null, technician: (f.get('technician') || '').trim(),
     notes: f.get('notes') || '', completionNotes: '',
     woState: 'active', priority: f.get('priority') || 'Normal',
     affectedPartId: isBd && f.get('affectedPart') ? parseInt(f.get('affectedPart'), 10) : null,
@@ -3547,6 +3645,7 @@ async function submitMaint(ev, eqId) {
       }));
     }
     if (error) { unlock(); saveError(error); return; }
+    await recordTechnician(log.technician);
     await hydrateCloud();
     closeModal(); route();
     const eq0 = eqById(eqId);
