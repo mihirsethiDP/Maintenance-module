@@ -222,8 +222,52 @@ function renderHydrateBanner() {
 async function retryHydrate() { await hydrateCloud(); route(); }
 
 // Disable a form's submit button while an async save runs (prevents double-submit).
+// SubmitEvent.submitter is missing on iOS Safari < 15.4 — remember the last
+// submit button the user actually touched and fall back to it everywhere.
+document.addEventListener('click', (e) => {
+  const b = e.target && e.target.closest && e.target.closest('button');
+  if (b && b.form && b.type !== 'button') b.form._lastSubmitter = b;
+}, true);
+function submitterOf(ev) { return ev.submitter || (ev.target && ev.target._lastSubmitter) || null; }
+
+// iOS (especially the installed home-screen app) has no download UI — the
+// anchor-download trick silently does nothing. Share the file instead, or
+// open it in a viewer tab; every export funnels through these two helpers.
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_MOBILE_UA = IS_IOS || /Android/i.test(navigator.userAgent);
+async function saveBlob(blob, filename) {
+  if (IS_IOS) {
+    try {
+      const file = new File([blob], filename, { type: blob.type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+function savePdfDoc(doc, filename) {
+  if (IS_IOS) { saveBlob(doc.output('blob'), filename); return; }
+  doc.save(filename);
+}
+function saveWorkbook(wb, filename) {
+  if (!IS_IOS) { XLSX.writeFile(wb, filename); return; }
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  saveBlob(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename);
+}
+
 function lockSubmit(ev, label = 'Saving…') {
-  const btn = ev.submitter || ev.target.querySelector('button[type="submit"], button:not([type="button"])');
+  const btn = submitterOf(ev) || ev.target.querySelector('button[type="submit"], button:not([type="button"])');
   if (!btn) return () => {};
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = label;
@@ -330,9 +374,12 @@ const _initHash = location.hash || '';
 let needsPasswordSet = /(?:^|[#&])type=(invite|recovery|signup)/.test(_initHash);
 const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
   ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
-      // Plant Wi-Fi blips: retry a connection-level failure once, silently,
-      // before any error surfaces. Application errors (4xx/5xx) pass through.
-      global: { fetch: (...args) => fetch(...args).catch(async () => {
+      // Plant Wi-Fi blips: retry a connection-level failure once, silently —
+      // but only for reads. A dropped POST may have already been applied
+      // server-side; retrying it could double-insert or trip guards.
+      global: { fetch: (...args) => fetch(...args).catch(async (err) => {
+        const method = (args[1] && args[1].method) || 'GET';
+        if (method !== 'GET' && method !== 'HEAD') throw err;
         await new Promise(r => setTimeout(r, 1200));
         return fetch(...args);
       }) },
@@ -620,6 +667,19 @@ document.addEventListener('keydown', (e) => {
   const modal = document.getElementById('modal');
   if (modal && !modal.classList.contains('hidden')) closeModal();
 });
+// Android back button / iOS swipe-back closes the top overlay instead of
+// leaving the page (and losing a half-filled form) — standalone-PWA staple.
+function pushOverlayState() {
+  try { if (!history.state || !history.state.overlay) history.pushState({ overlay: true }, ''); } catch (e) {}
+}
+window.addEventListener('popstate', () => {
+  const panel = document.getElementById('notifPanel');
+  if (panel) { panel.remove(); return; }
+  const pdf = document.getElementById('pdfPreview');
+  if (pdf) { closePdfPreview(); return; }
+  const modal = document.getElementById('modal');
+  if (modal && !modal.classList.contains('hidden')) closeModal();
+});
 
 // ---------- Login screen ----------
 function renderLogin() {
@@ -718,6 +778,7 @@ async function sendPasswordReset() {
 }
 function loginError(msg) {
   const el = document.getElementById('loginError');
+  if (el) el.className = 'text-xs text-red-600';
   if (el) { el.textContent = msg; el.classList.remove('hidden'); }
 }
 async function submitLogin(ev) {
@@ -830,8 +891,8 @@ function sweepOverdue() {
   if (changed) localStorage.setItem(LS_OVERDUE_SEEN, JSON.stringify([...seenSet]));
 }
 // ---------- Derived notification feed (per-user, role-scoped) ----------
-// Admins (Amit / Superadmin): upcoming maintenance (next 7 days) for ALL plants,
-// plus due-today, overdue PPM, overdue work-orders, and the activity outbox.
+// Admins (Amit / Superadmin): due-today, overdue PPM, overdue work-orders,
+// health alerts, and the activity outbox — across ALL plants.
 // Engineers: due-today + overdue only, already scoped to their assigned plants
 // by getUpcomingPPM / getOverduePPM / getPendingTasks.
 function notifSeenKey() { const u = currentUser(); return 'mm.notifSeen.' + (u ? u.id : 'anon'); }
@@ -1004,6 +1065,7 @@ function toggleNotifPanel() {
   ).join('');
   const seg = [['all','All'],['today','Today'],['7d','7d'],['30d','30d']]
     .map(([v,l]) => `<button type="button" class="${ui.notifTime===v?'on':''}" onclick="ui.notifTime='${v}'; [...this.parentElement.children].forEach(b=>b.classList.toggle('on', b===this)); refreshNotifPanel()">${l}</button>`).join('');
+  pushOverlayState();
   document.body.insertAdjacentHTML('beforeend', `
     <div id="notifPanel" class="fixed inset-0 z-[70]">
       <div class="absolute inset-0 notif-backdrop" onclick="document.getElementById('notifPanel').remove()"></div>
@@ -1017,9 +1079,9 @@ function toggleNotifPanel() {
             <button onclick="document.getElementById('notifPanel').remove()" class="text-white/70 hover:text-white text-xl leading-none px-1.5" aria-label="Close">&times;</button>
           </div>
         </div>
-        <div class="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-white">
-          <select onchange="ui.notifPlant=this.value; refreshNotifPanel()" class="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1.5 text-xs bg-white">${plantOpts}</select>
-          <div class="notif-seg">${seg}</div>
+        <div class="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-white flex-wrap">
+          <select onchange="ui.notifPlant=this.value; refreshNotifPanel()" class="flex-1 min-w-[150px] border border-slate-300 rounded-md px-2 py-1.5 text-xs bg-white">${plantOpts}</select>
+          <div class="notif-seg ml-auto">${seg}</div>
         </div>
         <div id="notifPanelBody" class="flex-1 overflow-y-auto">${notifPanelBody()}</div>
       </div>
@@ -1299,7 +1361,7 @@ function renderEquipmentDetail(id) {
     <div class="bg-white rounded-xl border border-slate-200 p-6 ${retired ? '' : 'mt-3'} mb-6">
       <div class="flex items-start flex-wrap gap-3">
         <div>
-          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? `${healthBadge(hs.score)}<button onclick="openHealthModal('${e.id}')" class="w-[18px] h-[18px] rounded-full border border-slate-300 text-slate-500 hover:border-brand hover:text-brand text-[11px] font-semibold leading-none grid place-items-center" title="Why this score?" aria-label="Why this score?">?</button>` : ''}</div>
+          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? `${healthBadge(hs.score)}<button onclick="openHealthModal('${e.id}')" class="health-q w-[18px] h-[18px] rounded-full border border-slate-300 text-slate-500 hover:border-brand hover:text-brand text-[11px] font-semibold leading-none grid place-items-center" title="Why this score?" aria-label="Why this score?">?</button>` : ''}</div>
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${esc(plantName(e.plantId))}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
@@ -1358,6 +1420,7 @@ function openHealthModal(eqId) {
       </div>
     </div>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 
 // ---------- Valve replacement (retire old, new tag, same position) ----------
@@ -1387,6 +1450,7 @@ function openReplaceValveModal(eqId) {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitReplaceValve(ev, eqId) {
   ev.preventDefault();
@@ -1473,6 +1537,7 @@ function openPartFormModal(eqId, partId) {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
   setTimeout(() => document.querySelector('#modalBody input[name="name"]')?.focus(), 30);
 }
 function openAddPartModal(eqId) { openPartFormModal(eqId, null); }
@@ -1483,7 +1548,7 @@ function openEditPartModal(partId) {
 async function submitPartForm(ev, eqId, partId) {
   ev.preventDefault();
   if (!isAdmin() || !SUPA) return;
-  const again = !partId && ev.submitter && ev.submitter.value === 'again';
+  const again = !partId && submitterOf(ev)?.value === 'again';
   const f = new FormData(ev.target);
   const unlock = lockSubmit(ev);
   const fields = {
@@ -1531,6 +1596,7 @@ function openEnrichModal(eqId) {
       <div class="text-xs text-slate-400 mt-1">Usually takes 15–40 seconds.</div>
     </div>`);
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
   runEnrichment(eqId, null);
 }
 function enrichSetBody(html) { document.getElementById('modalBody').innerHTML = html; }
@@ -1894,6 +1960,7 @@ function openAddPlantModal() {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitAddPlant(ev) {
   ev.preventDefault();
@@ -2061,6 +2128,7 @@ function openAddTechModal() {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitAddTech(ev) {
   ev.preventDefault();
@@ -2127,6 +2195,7 @@ function openEditUserModal(userId) {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitEditUser(ev, userId) {
   ev.preventDefault();
@@ -2201,6 +2270,7 @@ function openInviteModal() {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitInvite(ev) {
   ev.preventDefault();
@@ -2271,6 +2341,7 @@ function showInviteLinkModal(inviteId) {
       </div>
     </div>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 function copyInviteLink() {
   const field = document.getElementById('inviteLinkField');
@@ -2308,6 +2379,7 @@ function openAddTechnicianModal() {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 function submitAddTechnician(ev) {
   ev.preventDefault();
@@ -2429,6 +2501,7 @@ function openAssignPlantsModal(userId) {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 function toggleAllPlants(on) {
   document.querySelectorAll('#modalBody input[type="checkbox"]').forEach(cb => cb.checked = on);
@@ -2513,6 +2586,7 @@ function openScheduleModal(userId) {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 function submitSchedule(ev, userId) {
   ev.preventDefault();
@@ -2529,9 +2603,9 @@ function submitSchedule(ev, userId) {
 
   const result = buildScheduleDoc(userId, from, to);
   if (!result) return;
-  const action = (ev.submitter && ev.submitter.value) || 'preview';
+  const action = submitterOf(ev)?.value || 'preview';
   closeModal();
-  if (action === 'download') result.doc.save(result.filename);
+  if (action === 'download') savePdfDoc(result.doc, result.filename);
   else openPdfPreview(result.doc, result.filename, `Schedule — ${result.userName}`);
 }
 function buildScheduleDoc(userId, from, to) {
@@ -2726,6 +2800,7 @@ function openPlantNotifModal(plantId) {
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 
 async function savePlantNotif(ev, plantId) {
@@ -2787,7 +2862,7 @@ function exportXLSX(eqId) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Maintenance Log');
   const name = eqId ? `maintenance-log-${eqById(eqId).tag}-${today()}.xlsx` : `maintenance-log-${today()}.xlsx`;
-  XLSX.writeFile(wb, name);
+  saveWorkbook(wb, name);
 }
 function exportPDF(eqId) {
   const { jsPDF } = window.jspdf;
@@ -2801,7 +2876,7 @@ function exportPDF(eqId) {
   const cols = Object.keys(rows[0] || { Tag:'' });
   doc.autoTable({ head: [cols], body: rows.map(r => cols.map(c => r[c])), startY: 26, styles: { fontSize: 7 }, headStyles: { fillColor: [25,52,88] } });
   const name = eqId ? `maintenance-log-${eqById(eqId).tag}-${today()}.pdf` : `maintenance-log-${today()}.pdf`;
-  doc.save(name);
+  savePdfDoc(doc, name);
 }
 
 // ---------- Engineering Corner ----------
@@ -3323,6 +3398,7 @@ function openReportModal(visitDate) {
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 function buildServiceReportDoc(args) {
   const { scope, from, to, preparedBy, approvedBy } = args;
@@ -3430,7 +3506,7 @@ function buildServiceReportDoc(args) {
 function generateReport(ev) {
   ev.preventDefault();
   const f = new FormData(ev.target);
-  const action = (ev.submitter && ev.submitter.value) || 'preview';
+  const action = submitterOf(ev)?.value || 'preview';
   const scope = f.get('scope') || 'filtered';
   const preparedBy = f.get('preparedBy') || '';
   const approvedBy = f.get('approvedBy') || '';
@@ -3440,7 +3516,7 @@ function generateReport(ev) {
     const result = buildVisitReportDoc(date, preparedBy, approvedBy);
     if (!result) return;   // builder alerts when the day has no completed work
     closeModal();
-    if (action === 'download') result.doc.save(result.filename);
+    if (action === 'download') savePdfDoc(result.doc, result.filename);
     else openPdfPreview(result.doc, result.filename, 'Visit Report');
     return;
   }
@@ -3448,7 +3524,7 @@ function generateReport(ev) {
   const result = buildServiceReportDoc(args);
   if (!result) { alert('No equipment matches the chosen scope.'); return; }
   closeModal();
-  if (action === 'download') result.doc.save(result.filename);
+  if (action === 'download') savePdfDoc(result.doc, result.filename);
   else openPdfPreview(result.doc, result.filename, 'Service Report');
 }
 
@@ -3477,6 +3553,7 @@ function openChecklistEditor(selectedType) {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitChecklistEditor(ev) {
   ev.preventDefault();
@@ -3568,6 +3645,9 @@ function generateQrSheet(plantId) {
 
 // ---------- PDF preview ----------
 function openPdfPreview(doc, filename, title) {
+  // Android Chrome shows a blank iframe for blob PDFs; iOS renders only page 1.
+  // On phones, hand the PDF to the platform viewer / share sheet instead.
+  if (IS_MOBILE_UA) { savePdfDoc(doc, filename); return; }
   closePdfPreview();
   const blob = doc.output('blob');
   const url = URL.createObjectURL(blob);
@@ -3592,7 +3672,7 @@ function openPdfPreview(doc, filename, title) {
   `);
 }
 function downloadCurrentPdfPreview() {
-  if (window._pdfPreview) window._pdfPreview.doc.save(window._pdfPreview.filename);
+  if (window._pdfPreview) savePdfDoc(window._pdfPreview.doc, window._pdfPreview.filename);
 }
 function closePdfPreview() {
   const el = document.getElementById('pdfPreview');
@@ -3669,6 +3749,7 @@ function openMaintModal(eqId) {
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 // ---------- Technician registry ----------
 // Suggestions come from the registry (real mode) or from names already used
@@ -3695,6 +3776,10 @@ async function submitMaint(ev, eqId) {
   if (openLogFor(eqId)) { alert('This equipment already has an open work-order. Complete it before starting a new one.'); return; }
   const f = new FormData(ev.target);
   const isBd = f.get('reason') === 'Breakdown';
+  if (isBd && !(f.get('notes') || '').trim()) {
+    alert('Describe the breakdown — what failed and what you observed. Required for breakdowns.');
+    return;
+  }
   const log = {
     id: 'L-' + Date.now(), equipmentId: eqId,
     reason: f.get('reason'), startDate: f.get('startDate'), etr: f.get('etr'),
@@ -3810,13 +3895,14 @@ function openCompleteModal(eqId) {
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitComplete(ev, eqId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
   const endDate = f.get('endDate');
   const completionNotes = f.get('completionNotes') || '';
-  const wantReport = (ev.submitter && ev.submitter.value === 'confirm-report');
+  const wantReport = submitterOf(ev)?.value === 'confirm-report';
   const log = openLogFor(eqId);
 
   // The checklist is a reference guide, not a gate — no per-item ticking required.
@@ -3828,7 +3914,16 @@ async function submitComplete(ev, eqId) {
     .filter(a => a.action === 'serviced' || a.action === 'replaced');
 
   if (SUPA) {
-    if (!log) { alert('No open work-order found.'); return; }
+    if (!log) {
+      // No open work-order on record (e.g. logs failed to hydrate) — don't
+      // strand the equipment: restore its status directly and move on.
+      const unlock0 = lockSubmit(ev);
+      const { error: stErr } = await SUPA.rpc('set_equipment_status', { eq_id: eqId, new_status: 'Operational' });
+      if (stErr) { unlock0(); saveError(stErr); return; }
+      await hydrateCloud(); closeModal(); route();
+      toast(`${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
+      return;
+    }
     const unlock = lockSubmit(ev);
     // Atomic RPC: closes the log, records part actions, stamps part history,
     // and returns the equipment to service — one transaction.
@@ -3845,10 +3940,15 @@ async function submitComplete(ev, eqId) {
     }
     if (error) { unlock(); saveError(error); return; }
     // Quick-completed auto-generated tasks were never "started" — stamp the
-    // acting user as technician so the job doesn't close anonymously.
-    if (!log.technician) {
-      await SUPA.from('maintenance_logs').update({ technician: currentUser()?.name || '' }).eq('id', log.id);
-      log.technician = currentUser()?.name || '';
+    // acting user as technician, and replace the scheduled start_date with the
+    // actual completion date so durations don't read as weeks of phantom work.
+    const quickPatch = {};
+    if (!log.technician) quickPatch.technician = currentUser()?.name || '';
+    if (woStateOf(log) === 'open') quickPatch.start_date = endDate;
+    if (Object.keys(quickPatch).length) {
+      await SUPA.from('maintenance_logs').update(quickPatch).eq('id', log.id);
+      if (quickPatch.technician) log.technician = quickPatch.technician;
+      if (quickPatch.start_date) log.startDate = endDate;
     }
     const closedLog = { ...log, endDate, completionNotes, checklist, partActions };
     await hydrateCloud();
@@ -3858,7 +3958,7 @@ async function submitComplete(ev, eqId) {
     if (wantReport) generateSingleServiceReport(eqId, closedLog);
     return;
   }
-  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; log.partActions = partActions; if (!log.technician) log.technician = currentUser()?.name || ''; }
+  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; log.partActions = partActions; if (!log.technician) log.technician = currentUser()?.name || ''; if (woStateOf(log) === 'open') log.startDate = endDate; }
   const eq = eqById(eqId);
   eq.status = 'Operational';
   saveLog(state.logs); saveEq(state.equipment);
@@ -4032,6 +4132,7 @@ function openEquipmentFormModal(mode, eqId) {
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 function openAddEquipmentModal() { openEquipmentFormModal('add'); }
 function openEditEquipmentModal(eqId) { openEquipmentFormModal('edit', eqId); }
@@ -4124,7 +4225,7 @@ function openImportPPMModal() {
 
       <div>
         <label class="block text-xs text-slate-600 mb-1">PPM schedule file <span class="text-red-500">*</span></label>
-        <input type="file" name="file" accept=".xlsx,.xls" required class="block w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-brand file:bg-brand-50 file:text-brand file:font-medium file:cursor-pointer" oninput="onPPMFileChosen(this)" />
+        <input type="file" name="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" required class="block w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-brand file:bg-brand-50 file:text-brand file:font-medium file:cursor-pointer" oninput="onPPMFileChosen(this)" />
         <div class="text-xs text-slate-500 mt-1">Expected layout: rows of equipment with columns <code>S.No · Name · Make · Capacity · Qty</code> followed by 52 weekly slot cells marked with frequency codes.</div>
       </div>
 
@@ -4137,6 +4238,7 @@ function openImportPPMModal() {
     </form>
   `;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 
 function onPPMFileChosen(input) {
@@ -4479,6 +4581,7 @@ function queueDraftFlags(q) {
   const flags = [];
   if (!parts.length) flags.push('no parts extracted');
   else if (parts.length === 1) flags.push('only 1 part');
+  if (parts.some(pt => !pt || !String(pt.name || '').trim())) flags.push('unnamed part');
   if (parts.some(pt => (parseInt(pt.criticality, 10) || 5) >= 8)) flags.push('high criticality suggested');
   if (!Array.isArray(d.sources) || !d.sources.filter(safeUrl).length) flags.push('no source');
   return flags;
@@ -4492,8 +4595,9 @@ async function quickApproveQueueRow(qid, silent) {
   const d = q && q.draft;
   const parts = d && Array.isArray(d.parts) ? d.parts : [];
   if (!q || q.status !== 'ready' || !e || !parts.length) return false;
+  if (!parts.some(pt => pt && String(pt.name || '').trim())) return false;   // nothing usable to save
   const src = safeUrl(Array.isArray(d.sources) && d.sources[0]) || '';
-  const rows = parts.map(pt => ({
+  const rows = parts.filter(pt => pt && String(pt.name || '').trim()).map(pt => ({
     equipment_id: e.id, name: String(pt.name).slice(0, 200), spec: String(pt.spec || '').slice(0, 300),
     qty: Math.max(1, parseInt(pt.qty, 10) || 1),
     criticality: Math.min(10, Math.max(1, parseInt(pt.criticality, 10) || 5)),
@@ -4572,8 +4676,8 @@ function renderReview() {
         <div class="review-row st-needs_info px-5 py-3">
           ${reviewRowHead(e)}
           <form onsubmit="submitQueueInfo(event, ${q.id})" class="mt-2 flex items-center gap-2 flex-wrap">
-            <input name="make" list="makesList" required placeholder="Make — e.g. Kirloskar" class="${inputCls} w-40" />
-            <input name="model" required placeholder="Model — e.g. WX-001" class="${inputCls} w-44" />
+            <input name="make" list="makesList" required placeholder="Make — e.g. Kirloskar" class="${inputCls} flex-1 min-w-[140px]" />
+            <input name="model" required placeholder="Model — e.g. WX-001" class="${inputCls} flex-1 min-w-[140px]" />
             <button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Save &amp; research</button>
           </form>
           <div class="text-[10px] text-slate-400 mt-1.5">The equipment is renamed to Make + Model; its imported duty name moves to Location.</div>
@@ -4705,6 +4809,7 @@ function openQueueDraftModal(qid) {
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 async function submitQueueApprove(ev, qid) {
   ev.preventDefault();
@@ -4717,7 +4822,7 @@ async function submitQueueApprove(ev, qid) {
   const src = safeUrl(Array.isArray(d.sources) && d.sources[0]) || '';
   const partRows = (d.parts || [])
     .map((pt, i) => ({ pt, i }))
-    .filter(({ i }) => f.get('inc-' + i))
+    .filter(({ pt, i }) => f.get('inc-' + i) && pt && String(pt.name || '').trim())
     .map(({ pt, i }) => ({
       equipment_id: e.id, name: String(pt.name).slice(0, 200), spec: String(pt.spec || '').slice(0, 300),
       qty: Math.max(1, parseInt(pt.qty, 10) || 1),
