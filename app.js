@@ -705,6 +705,9 @@ function route() {
   let h = location.hash || homeHashFor(user);
   if (!routeAllowed(h, user)) { location.hash = homeHashFor(user); return; }
   sweepOverdue();
+  // The status filter exists for KPI deep-links; it must never silently
+  // follow the user back to Equipment later and hide rows (import bug).
+  if (!h.startsWith('#/equipment')) ui.eqStatusFilter = 'all';
   if (h.startsWith('#/equipment/')) return renderEquipmentDetail(h.split('/')[2]);
   if (h === '#/equipment') return renderEquipment();
   if (h === '#/log')       return renderLog();
@@ -1293,13 +1296,16 @@ function renderEquipment() {
       <td class="col-center">${statusBadge(e.status)}</td>
       <td class="col-center">${action}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="${SUPA ? 7 : 6}" class="py-6 text-center text-slate-500">No equipment for this plant.</td></tr>`;
+  }).join('') || `<tr><td colspan="${SUPA ? 7 : 6}" class="py-6 text-center text-slate-500">${
+    (sf !== 'all' || ui.typeFilter !== 'all')
+      ? 'No equipment matches these filters — try clearing the status or type filter above.'
+      : 'No equipment for this plant.'}</td></tr>`;
 
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-4 flex-wrap gap-3">
-      <div>
+      <div class="min-w-0 flex-1">
         <h1 class="text-2xl font-semibold">Equipment</h1>
-        <p class="text-slate-500 text-sm">Click an equipment tag to view its full maintenance history.</p>
+        <p class="text-slate-500 text-sm truncate">Click an equipment tag to view its full maintenance history.</p>
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
         ${plantFilterControl()}
@@ -1308,7 +1314,7 @@ function renderEquipment() {
           ${[['all','All statuses'],['Operational','Operational'],['In Maintenance','In Maintenance'],['Broken Down','Broken Down']]
             .map(([v, l]) => `<option value="${v}" ${sf === v ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
-        <input id="eqSearch" placeholder="Filter…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-56" oninput="filterEq(this.value)" />
+        <input id="eqSearch" placeholder="Filter…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-40" oninput="filterEq(this.value)" />
         ${addEquipmentBtn()}
       </div>
     </div>
@@ -4470,7 +4476,9 @@ async function submitImportPPM(ev) {
     }
     await hydrateCloud();   // also kicks the queue runner
     closeModal();
-    ui.plantFilter = plantId; location.hash = '#/equipment'; route();
+    // Show exactly what was just imported: the plant, with no leftover filters.
+    ui.plantFilter = plantId; ui.typeFilter = 'all'; ui.eqStatusFilter = 'all';
+    location.hash = '#/equipment'; route();
     toast(`Imported ${newEquipment.length} equipment.` +
       (queued ? ` Parts research started for ${queued} — you'll be notified when it's done.` : '') +
       (needInfo ? ` ${needInfo} need make & model — see Review.` : ''));
@@ -4488,7 +4496,8 @@ async function submitImportPPM(ev) {
   catch (e) { alert('Import too large for browser storage — it was applied for this session only.'); }
   closeModal();
   alert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
-  location.hash = '#/equipment'; ui.plantFilter = plantId; route();
+  ui.plantFilter = plantId; ui.typeFilter = 'all'; ui.eqStatusFilter = 'all';
+  location.hash = '#/equipment'; route();
 }
 
 // ---------- Background parts-research queue (admins, real mode) ----------
