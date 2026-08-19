@@ -212,14 +212,30 @@ const today = () => dstr(new Date());
 // Banner shown when any cloud table failed to hydrate (real mode).
 function renderHydrateBanner() {
   document.getElementById('hydrateBanner')?.remove();
-  if (!SUPA || !currentUser() || !hydrateErrors.length) return;
+  if (!SUPA || !currentUser()) return;
+  if (window._offlineSince) {
+    document.querySelector('header')?.insertAdjacentHTML('afterend', `
+      <div id="hydrateBanner" class="bg-amber-50 border-b border-amber-200 text-amber-800 text-sm px-4 py-2 flex items-center gap-3">
+        <svg class="shrink-0" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+        <span>Offline — showing data saved ${timeAgo(window._offlineSince)}. Browsing works; saving needs a connection.</span>
+        <button onclick="retryHydrate()" class="ml-auto text-xs px-3 py-1 rounded-md border border-amber-300 bg-white hover:bg-amber-100 font-medium whitespace-nowrap">Reconnect</button>
+      </div>`);
+    return;
+  }
+  if (!hydrateErrors.length) return;
   document.querySelector('header')?.insertAdjacentHTML('afterend', `
     <div id="hydrateBanner" class="bg-red-50 border-b border-red-200 text-red-800 text-sm px-4 py-2 flex items-center gap-3">
       <span>Some data failed to load (${hydrateErrors.join(', ')}). What you see may be incomplete.</span>
       <button onclick="retryHydrate()" class="ml-auto text-xs px-3 py-1 rounded-md border border-red-300 bg-white hover:bg-red-100 font-medium">Retry</button>
     </div>`);
 }
-async function retryHydrate() { await hydrateCloud(); route(); }
+async function retryHydrate() {
+  await hydrateCloud();
+  // Still unreachable? Stay on the snapshot rather than an empty screen.
+  if ((hydrateErrors.includes('equipment') || !cloudEquipment) && window._offlineSince == null) restoreSnapshot();
+  route();
+  if (!window._offlineSince && !hydrateErrors.length) toast('Back online — data refreshed.');
+}
 
 // Disable a form's submit button while an async save runs (prevents double-submit).
 // SubmitEvent.submitter is missing on iOS Safari < 15.4 — remember the last
@@ -412,6 +428,41 @@ const priorityChip = p => (p === 'Critical') ? '<span class="badge badge-bd">Cri
 
 let cloudNotifs = null;   // activity feed rows from public.notifications (real mode)
 
+// ---------- Offline snapshot (real mode) ----------
+// Every successful sync is persisted; when the app boots (or hydrates) with no
+// connection, the snapshot restores read-only browsing with clear provenance.
+const SNAP_KEY = 'mm.snapshot.v1';
+function saveSnapshot() {
+  if (!SUPA || !authUser || !cloudEquipment) return;
+  try {
+    localStorage.setItem(SNAP_KEY, JSON.stringify({
+      ts: Date.now(), user: authUser,
+      plants: cloudPlants, equipment: cloudEquipment, logs: cloudLogs,
+      parts: cloudParts, slots: cloudSlots, techs: cloudTechnicians,
+      checklists: cloudChecklists, typeLife: cloudTypeLife,
+      users: cloudUsers, assignments: cloudAssignments, queue: cloudQueue,
+      notifs: (cloudNotifs || []).slice(0, 30),
+    }));
+  } catch (e) { /* quota — the snapshot is best-effort */ }
+}
+function restoreSnapshot() {
+  try {
+    const snap = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null');
+    if (!snap || !Array.isArray(snap.equipment)) return false;
+    // A snapshot only ever restores for the SAME signed-in user — role and
+    // plant scoping travel inside the stored authUser.
+    if (!authUser || !snap.user || snap.user.id !== authUser.id) return false;
+    authUser = snap.user;
+    cloudPlants = snap.plants || []; cloudEquipment = snap.equipment || []; cloudLogs = snap.logs || [];
+    cloudParts = snap.parts || []; cloudSlots = snap.slots || {}; cloudTechnicians = snap.techs || [];
+    cloudChecklists = snap.checklists || null; cloudTypeLife = snap.typeLife || null;
+    cloudUsers = snap.users || []; cloudAssignments = snap.assignments || {};
+    cloudQueue = snap.queue || []; cloudNotifs = snap.notifs || [];
+    window._offlineSince = snap.ts;
+    return true;
+  } catch { return false; }
+}
+
 async function hydrateCloud() {
   if (!SUPA || !authUser) return;
   hydrateErrors = [];
@@ -489,6 +540,12 @@ async function hydrateCloud() {
         cloudTechnicians = data || [];
       }, () => {}),
   ]);
+  // A sync that brought the core data back is the moment to (re)persist the
+  // offline snapshot and leave offline mode.
+  if (!hydrateErrors.includes('equipment') && cloudEquipment) {
+    window._offlineSince = null;
+    saveSnapshot();
+  }
   // Resume / kick the background parts-research runner (single-flight, admin-only).
   setTimeout(() => { try { runEnrichmentQueue(); } catch (e) { console.warn(e); } }, 1200);
 }
@@ -5123,12 +5180,31 @@ async function boot() {
       .forEach(k => localStorage.removeItem(k));
     try {
       const { data } = await SUPA.auth.getSession();
-      if (data.session) { await loadAuthProfile(data.session.user); await hydrateCloud(); }
+      if (data.session) {
+        await loadAuthProfile(data.session.user);
+        await hydrateCloud();
+        // Core fetches all failed (no connection)? Restore the last snapshot
+        // so the engineer can still browse equipment, tasks, and history.
+        if ((hydrateErrors.includes('equipment') || !cloudEquipment) && restoreSnapshot()) {
+          hydrateErrors = [];
+        }
+      }
     } catch (e) { console.warn('session restore failed', e); }
+    // The moment the connection returns, resync and leave offline mode.
+    window.addEventListener('online', async () => {
+      if (!authUser || !window._offlineSince) return;
+      await hydrateCloud();
+      route();
+      if (!window._offlineSince) toast('Back online — data refreshed.');
+    });
     // React to sign-in / sign-out / token refresh across tabs
     SUPA.auth.onAuthStateChange(async (event, session) => {
       if (event === 'PASSWORD_RECOVERY') needsPasswordSet = true;
-      if (event === 'SIGNED_OUT' || !session) { authUser = null; cloudUsers = null; cloudAssignments = {}; }
+      if (event === 'SIGNED_OUT' || !session) {
+        authUser = null; cloudUsers = null; cloudAssignments = {};
+        window._offlineSince = null;
+        try { localStorage.removeItem(SNAP_KEY); } catch (e) {}
+      }
       else if (!authUser || authUser.id !== session.user.id) { await loadAuthProfile(session.user); await hydrateCloud(); }
       route();
     });
@@ -5136,5 +5212,9 @@ async function boot() {
   route();
   mountTourFAB();
   if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+  // App shell + CDN libraries cache — the app itself boots without a network.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('sw register failed', e));
+  }
 }
 boot();
