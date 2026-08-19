@@ -1139,7 +1139,7 @@ function renderEquipment() {
     const log = openLogFor(e.id);
     const openWo = openLogFor(e.id);
     const action = (openWo && woStateOf(openWo) === 'open')
-      ? `<button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${openWo.id}')">Start Work</button>`
+      ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${openWo.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></div>`
       : e.status === 'Operational'
         ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
@@ -1239,7 +1239,7 @@ function renderEquipmentDetail(id) {
   const retired = e.status === 'Retired';
   const detailOpenWo = openLogFor(e.id);
   const actionBtn = retired ? '' : (detailOpenWo && woStateOf(detailOpenWo) === 'open')
-    ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button>`
+    ? `<span class="inline-flex gap-2"><button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button><button class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></span>`
     : e.status === 'Operational'
       ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
       : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
@@ -2921,7 +2921,7 @@ function renderPendingTab(pending, overdue) {
       <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">${esc(l.notes).slice(0,60)}</div></td>
       <td><div class="cell-primary">${l.etr || l.startDate}</div><div class="cell-muted">Scheduled</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
-      <td class="col-center"><button onclick="startWorkOrder('${l.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Start Work</button></td>
+      <td class="col-center"><div class="inline-flex gap-1.5"><button onclick="startWorkOrder('${l.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Start Work</button><button onclick="openCompleteModal('${l.equipmentId}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" title="Done on the spot — record start and completion in one go">Complete now</button></div></td>
     </tr>`;
   }).join('');
 
@@ -3584,7 +3584,7 @@ function openMaintModal(eqId) {
         <div>
           <label class="block text-xs text-slate-600 mb-1">Reason <span class="text-red-500">*</span></label>
           <select name="reason" required class="w-full border border-slate-300 rounded-md px-2 py-1.5"
-            onchange="document.getElementById('bdDetails')?.classList.toggle('hidden', this.value !== 'Breakdown')">
+            onchange="document.getElementById('bdDetails')?.classList.toggle('hidden', this.value !== 'Breakdown'); const nt = this.form.querySelector('[name=notes]'); if (nt) nt.required = this.value === 'Breakdown'; document.getElementById('notesReq')?.classList.toggle('hidden', this.value !== 'Breakdown'); document.getElementById('notesOpt')?.classList.toggle('hidden', this.value === 'Breakdown')">
             <option value="">Select…</option><option>Scheduled</option><option>Breakdown</option>
           </select>
         </div>
@@ -3618,18 +3618,21 @@ function openMaintModal(eqId) {
         </div>
         <div>
           <label class="block text-xs text-slate-600 mb-1">Expected completion <span class="text-red-500">*</span></label>
-          <input type="date" name="etr" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+          <input type="date" name="etr" required value="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
         </div>
       </div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Technician <span class="text-red-500">*</span></label>
-        <input name="technician" required list="techList" autocomplete="off" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="${technicianNames().length ? 'Pick an existing technician or type a new name' : 'e.g. A. Mehta'}" />
+        <input name="technician" required list="techList" autocomplete="off" value="${(currentUser()?.name || '').replace(/"/g, '&quot;')}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="${technicianNames().length ? 'Pick an existing technician or type a new name' : 'e.g. A. Mehta'}" />
         ${techDatalist()}
         <div class="text-[10px] text-slate-400 mt-0.5">New names are saved to the technician list and suggested next time.</div>
       </div>
       <div>
-        <label class="block text-xs text-slate-600 mb-1">Reason / scope of work <span class="text-red-500">*</span></label>
-        <textarea name="notes" rows="4" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Describe what triggered this maintenance and what work will be done — parts to replace, observed symptoms, vendor involvement, etc."></textarea>
+        <label class="block text-xs text-slate-600 mb-1">Reason / scope of work
+          <span id="notesReq" class="text-red-500 hidden">*</span>
+          <span id="notesOpt" class="text-slate-400">(optional for scheduled work)</span>
+        </label>
+        <textarea name="notes" rows="3" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="What triggered this and what will be done — required for breakdowns."></textarea>
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -3746,7 +3749,8 @@ function openCompleteModal(eqId) {
           ${items.map(it => `<li class="text-xs text-slate-600 flex gap-1.5"><span class="text-brand">&bull;</span><span>${esc(it.text)}</span></li>`).join('')}
         </ul>
       </details>` : '';
-  document.getElementById('modalTitle').textContent = `Mark ${e.tag} operational`;
+  document.getElementById('modalTitle').textContent = (log && woStateOf(log) === 'open')
+    ? `Complete work-order — ${e.tag}` : `Mark ${e.tag} operational`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitComplete(event, '${eqId}')" class="space-y-3 text-sm">
       ${log ? `<div class="p-3 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
@@ -3761,8 +3765,14 @@ function openCompleteModal(eqId) {
         <input type="date" name="endDate" value="${today()}" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
       </div>
       <div>
-        <label class="block text-xs text-slate-600 mb-1">Completion notes <span class="text-red-500">*</span></label>
-        <textarea name="completionNotes" rows="4" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Summarise work performed, parts replaced, test results, and any follow-ups."></textarea>
+        <label class="block text-xs text-slate-600 mb-1">Completion notes ${log?.reason === 'Breakdown' ? '<span class="text-red-500">*</span>' : '<span class="text-slate-400">(optional)</span>'}</label>
+        <div class="flex gap-1.5 flex-wrap mb-1.5">
+          ${[['No abnormalities', 'Routine service completed — no abnormalities found.'],
+             ['Tested OK', 'Serviced and tested OK.'],
+             ['Cleaned & restored', 'Cleaned, inspected, and restored to service.']]
+            .map(([l, t]) => `<button type="button" data-t="${t}" onclick="document.getElementById('cmpNotes').value = this.dataset.t" class="text-[11px] px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 hover:border-brand hover:text-brand">${l}</button>`).join('')}
+        </div>
+        <textarea id="cmpNotes" name="completionNotes" rows="3" ${log?.reason === 'Breakdown' ? 'required' : ''} class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="${log?.reason === 'Breakdown' ? 'What failed, what was done, test results — required for breakdowns.' : 'Anything worth noting — or tap a phrase above.'}"></textarea>
       </div>
       <div class="flex gap-2 justify-end pt-2 flex-wrap">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -3806,6 +3816,12 @@ async function submitComplete(ev, eqId) {
       }
     }
     if (error) { unlock(); saveError(error); return; }
+    // Quick-completed auto-generated tasks were never "started" — stamp the
+    // acting user as technician so the job doesn't close anonymously.
+    if (!log.technician) {
+      await SUPA.from('maintenance_logs').update({ technician: currentUser()?.name || '' }).eq('id', log.id);
+      log.technician = currentUser()?.name || '';
+    }
     const closedLog = { ...log, endDate, completionNotes, checklist, partActions };
     await hydrateCloud();
     closeModal(); route();
@@ -3814,7 +3830,7 @@ async function submitComplete(ev, eqId) {
     if (wantReport) generateSingleServiceReport(eqId, closedLog);
     return;
   }
-  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; log.partActions = partActions; }
+  if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; log.partActions = partActions; if (!log.technician) log.technician = currentUser()?.name || ''; }
   const eq = eqById(eqId);
   eq.status = 'Operational';
   saveLog(state.logs); saveEq(state.equipment);
@@ -4415,17 +4431,80 @@ function queueCompleteNotification(found, attention) {
 }
 
 // ---------- Review workspace (admin) ----------
-function reviewSection(title, hint, badgeCls, items, renderBody) {
+function reviewSection(title, hint, badgeCls, items, renderBody, extra = '') {
   if (!items.length) return '';
   return `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-5">
-      <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+      <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-2 flex-wrap">
         <div class="font-semibold text-sm">${title}</div>
         <span class="badge ${badgeCls}">${items.length}</span>
         <span class="text-xs text-slate-400 ml-1 hidden sm:inline">${hint}</span>
+        ${extra ? `<div class="ml-auto">${extra}</div>` : ''}
       </div>
       <div class="divide-y divide-slate-100">${items.map(renderBody).join('')}</div>
     </div>`;
+}
+// Flags worth a human glance before approving an AI draft wholesale.
+function queueDraftFlags(q) {
+  const d = q.draft || {};
+  const parts = Array.isArray(d.parts) ? d.parts : [];
+  const flags = [];
+  if (!parts.length) flags.push('no parts extracted');
+  else if (parts.length === 1) flags.push('only 1 part');
+  if (parts.some(pt => (parseInt(pt.criticality, 10) || 5) >= 8)) flags.push('high criticality suggested');
+  if (!Array.isArray(d.sources) || !d.sources.filter(safeUrl).length) flags.push('no source');
+  return flags;
+}
+// One-click approval of a ready draft exactly as suggested (all parts,
+// AI criticalities). The modal path stays for line-by-line control.
+async function quickApproveQueueRow(qid, silent) {
+  if (!isAdmin() || !SUPA) return false;
+  const q = queueRows().find(x => x.id === qid);
+  const e = q && eqById(q.equipment_id);
+  const d = q && q.draft;
+  const parts = d && Array.isArray(d.parts) ? d.parts : [];
+  if (!q || q.status !== 'ready' || !e || !parts.length) return false;
+  const src = safeUrl(Array.isArray(d.sources) && d.sources[0]) || '';
+  const rows = parts.map(pt => ({
+    equipment_id: e.id, name: String(pt.name).slice(0, 200), spec: String(pt.spec || '').slice(0, 300),
+    qty: Math.max(1, parseInt(pt.qty, 10) || 1),
+    criticality: Math.min(10, Math.max(1, parseInt(pt.criticality, 10) || 5)),
+    source: 'ai', source_url: src,
+  }));
+  if (!await setQueueRow(qid, { status: 'done' })) return false;
+  const { error } = await SUPA.from('equipment_parts').insert(rows);
+  if (error) { await setQueueRow(qid, { status: 'ready' }); if (!silent) saveError(error); return false; }
+  const eqPatch = {};
+  if (q.variant && !e.model.includes(q.variant)) {
+    eqPatch.model = `${e.model} ${q.variant}`;
+    eqPatch.tag = deriveTag(e.make, eqPatch.model, e.plantId, e.id);
+  }
+  const lifeYears = parseInt(d.expected_life_years, 10);
+  if (lifeYears > 0 && lifeYears < 60) eqPatch.expected_life_years = lifeYears;
+  if (Object.keys(eqPatch).length) await SUPA.from('equipment').update(eqPatch).eq('id', e.id);
+  if (!silent) {
+    await hydrateCloud(); route();
+    toast(`${rows.length} part${rows.length === 1 ? '' : 's'} saved for ${esc(e.tag)}.`);
+  }
+  return true;
+}
+async function bulkApproveReady() {
+  if (!isAdmin() || !SUPA) return;
+  const ready = queueRows().filter(q => q.status === 'ready' && eqById(q.equipment_id) && (q.draft?.parts || []).length);
+  if (!ready.length) return;
+  const flagged = ready.map(q => ({ q, flags: queueDraftFlags(q) })).filter(x => x.flags.length);
+  let msg = `Approve AI part drafts for ${ready.length} equipment exactly as suggested?`;
+  if (flagged.length) {
+    const NL = String.fromCharCode(10);
+    msg += NL + NL + `${flagged.length} carry flags worth a look first:` + NL +
+      flagged.slice(0, 8).map(x => `• ${eqById(x.q.equipment_id).tag} — ${x.flags.join(', ')}`).join(NL) +
+      (flagged.length > 8 ? NL + `…and ${flagged.length - 8} more` : '');
+  }
+  if (!confirm(msg)) return;
+  let ok = 0;
+  for (const q of ready) { if (await quickApproveQueueRow(q.id, true)) ok++; }
+  await hydrateCloud(); route();
+  toast(`Approved ${ok} of ${ready.length} equipment — parts are on their records.`);
 }
 function reviewRowHead(e) {
   return `<div class="flex items-center gap-2 flex-wrap min-w-0">
@@ -4487,12 +4566,15 @@ function renderReview() {
         <div class="review-row st-ready px-5 py-3 flex items-center gap-3 flex-wrap">
           <div class="flex-1 min-w-0">${reviewRowHead(e)}
             <div class="text-[11px] text-slate-500 mt-1">${(q.draft?.parts || []).length} part${(q.draft?.parts || []).length === 1 ? '' : 's'} drafted${q.draft?.power ? ' · ' + esc(q.draft.power) : ''}${parseInt(q.draft?.expected_life_years, 10) > 0 ? ' · life ~' + parseInt(q.draft.expected_life_years, 10) + ' yrs' : ''}</div>
+            ${queueDraftFlags(q).length ? `<div class="flex gap-1 flex-wrap mt-1.5">${queueDraftFlags(q).map(fl => `<span class="badge badge-mt">${fl}</span>`).join('')}</div>` : ''}
           </div>
-          <div class="flex gap-2">
-            <button onclick="openQueueDraftModal(${q.id})" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Review &amp; approve</button>
+          <div class="flex gap-2 flex-wrap">
+            ${(q.draft?.parts || []).length ? `<button onclick="quickApproveQueueRow(${q.id}, false)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Save every drafted part exactly as suggested">Quick approve</button>` : ''}
+            <button onclick="openQueueDraftModal(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Review</button>
             <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Skip</button>
           </div>
-        </div>`)}
+        </div>`,
+        ready.length > 1 ? `<button onclick="bulkApproveReady()" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Approve every ready draft as suggested — flagged items are listed before anything saves">Approve all (${ready.length})</button>` : '')}
       ${reviewSection('Needs attention', 'the search failed or found nothing', 'badge-bd', failed, ({ q, e }) => `
         <div class="review-row st-failed px-5 py-3 flex items-center gap-3 flex-wrap">
           <div class="flex-1 min-w-0">${reviewRowHead(e)}
