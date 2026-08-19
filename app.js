@@ -329,7 +329,14 @@ const routes = [
 const _initHash = location.hash || '';
 let needsPasswordSet = /(?:^|[#&])type=(invite|recovery|signup)/.test(_initHash);
 const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
-  ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+      // Plant Wi-Fi blips: retry a connection-level failure once, silently,
+      // before any error surfaces. Application errors (4xx/5xx) pass through.
+      global: { fetch: (...args) => fetch(...args).catch(async () => {
+        await new Promise(r => setTimeout(r, 1200));
+        return fetch(...args);
+      }) },
+    })
   : null;
 async function loadAuthProfile(u) {
   let name = (u.email || '').split('@')[0], role = 'Engineer', phone = '', status = 'active';
@@ -639,6 +646,7 @@ function renderLogin() {
             </div>
             <div id="loginError" class="hidden text-xs text-red-600"></div>
             <button class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Sign in</button>
+            ${SUPA ? `<button type="button" onclick="sendPasswordReset()" class="w-full text-center text-xs text-slate-500 hover:text-brand pt-1">Forgot password?</button>` : ''}
           </form>
           ${SUPA ? '' : `<div class="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500 leading-relaxed">
             <div class="font-medium text-slate-600 mb-1">Demo accounts</div>
@@ -694,6 +702,19 @@ async function submitSetPassword(ev) {
 function fillLogin(email, pw) {
   const f = document.querySelector('#view form');
   if (f) { f.email.value = email; f.password.value = pw; }
+}
+async function sendPasswordReset() {
+  const email = (document.querySelector('input[name="email"]')?.value || '').trim();
+  if (!email) { loginError('Type your email above first, then tap "Forgot password?" again.'); return; }
+  let error;
+  try { ({ error } = await SUPA.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname })); }
+  catch (e) { error = e; }
+  if (error) { loginError(error.message || 'Could not send the reset email — check your connection.'); return; }
+  const el = document.getElementById('loginError');
+  if (el) {
+    el.textContent = `Reset link sent to ${email} — open it on this device to set a new password.`;
+    el.className = 'text-xs text-green-700';
+  }
 }
 function loginError(msg) {
   const el = document.getElementById('loginError');
@@ -1445,12 +1466,14 @@ function openPartFormModal(eqId, partId) {
           <input name="criticality" type="number" min="1" max="10" value="${part ? part.criticality : 5}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
       </div>
       <div class="text-[11px] text-slate-500">Criticality drives the health score: 10 = failure stops the machine (motor), 1 = cosmetic/minor (filter pad). Engineers never see this number.</div>
-      <div class="flex gap-2 justify-end pt-2">
+      <div class="flex gap-2 justify-end pt-2 flex-wrap">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${part ? 'Save changes' : 'Add part'}</button>
+        ${part ? '' : '<button type="submit" name="action" value="again" class="px-3 py-1.5 rounded-md border border-brand bg-white text-brand hover:bg-brand-50">Save &amp; add another</button>'}
+        <button type="submit" name="action" value="save" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${part ? 'Save changes' : 'Add part'}</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
+  setTimeout(() => document.querySelector('#modalBody input[name="name"]')?.focus(), 30);
 }
 function openAddPartModal(eqId) { openPartFormModal(eqId, null); }
 function openEditPartModal(partId) {
@@ -1460,6 +1483,7 @@ function openEditPartModal(partId) {
 async function submitPartForm(ev, eqId, partId) {
   ev.preventDefault();
   if (!isAdmin() || !SUPA) return;
+  const again = !partId && ev.submitter && ev.submitter.value === 'again';
   const f = new FormData(ev.target);
   const unlock = lockSubmit(ev);
   const fields = {
@@ -1472,7 +1496,9 @@ async function submitPartForm(ev, eqId, partId) {
     : await SUPA.from('equipment_parts').insert({ equipment_id: eqId, source: 'manual', ...fields });
   if (error) { unlock(); saveError(error); return; }
   await hydrateCloud();
-  closeModal(); route();
+  route();
+  if (again) { openPartFormModal(eqId, null); toast('Part added — next one.'); return; }
+  closeModal();
   toast(partId ? 'Part updated.' : 'Part added.');
 }
 async function deletePart(partId) {
