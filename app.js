@@ -160,6 +160,7 @@ function seedIfNeeded() {
 let authUser = null;        // cached identity in real mode: {id,email,name,role,phone,status,plants}
 let cloudUsers = null;      // real users hydrated from Supabase profiles (real mode)
 let cloudAssignments = {};  // userId -> [plantId] (real mode)
+let cloudQueue = null;      // background parts-research queue (admins, real mode)
 let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null, cloudParts = null, cloudLogParts = null;
 let hydrateErrors = [];     // table names that failed to hydrate (drives the error banner)
 
@@ -301,6 +302,7 @@ const routes = [
   { hash: '#/equipment', label: 'Equipment',          roles: ['Admin','Engineer'] },
   { hash: '#/log',       label: 'Maintenance Log',     roles: ['Admin','Engineer'] },
   { hash: '#/engineer',  label: 'Engineering Corner',  roles: ['Admin','Engineer'] },
+  { hash: '#/review',    label: 'Review',             roles: ['Admin'] },
   { hash: '#/plants',    label: 'Plants',             roles: ['Admin'] },
   { hash: '#/team',      label: 'Team',               roles: ['Admin'] },
 ];
@@ -407,7 +409,14 @@ async function hydrateCloud() {
         if (error) return;   // table may not exist yet
         cloudLogParts = data || [];
       }, () => {}),
+    SUPA.from('enrichment_queue').select('*').order('id')
+      .then(({ data, error }) => {
+        if (error) return;   // table may not exist yet (run supabase/14) — feature hides itself
+        cloudQueue = data || [];
+      }, () => {}),
   ]);
+  // Resume / kick the background parts-research runner (single-flight, admin-only).
+  setTimeout(() => { try { runEnrichmentQueue(); } catch (e) { console.warn(e); } }, 1200);
 }
 // Part actions recorded on a completed work-order (real mode: junction table;
 // prototype: stored directly on the log object).
@@ -537,9 +546,12 @@ function renderNav() {
   const user = currentUser();
   if (!user) { document.getElementById('nav').innerHTML = ''; return; }
   const cur = location.hash || homeHashFor(user);
-  document.getElementById('nav').innerHTML = routes.filter(r => r.roles.includes(effRole(user))).map(r => {
+  document.getElementById('nav').innerHTML = routes.filter(r => r.roles.includes(effRole(user)))
+    .filter(r => r.hash !== '#/review' || SUPA)   // the review queue is a real-mode feature
+    .map(r => {
     const active = cur === r.hash || (r.hash === '#/equipment' && cur.startsWith('#/equipment/'));
-    return `<a href="${r.hash}" class="px-3 py-1.5 rounded-md ${active?'bg-brand-50 text-brand font-medium':'text-slate-600 hover:bg-slate-100'}">${r.label}</a>`;
+    const n = r.hash === '#/review' ? reviewAttentionCount() : 0;
+    return `<a href="${r.hash}" class="px-3 py-1.5 rounded-md ${active?'bg-brand-50 text-brand font-medium':'text-slate-600 hover:bg-slate-100'}">${r.label}${n ? `<span class="nav-badge">${n > 99 ? '99+' : n}</span>` : ''}</a>`;
   }).join('');
 }
 
@@ -567,6 +579,7 @@ function route() {
   if (h === '#/plants')    return renderPlants();
   if (h === '#/team')      return renderTeam();
   if (h === '#/engineer')  return renderEngineer();
+  if (h === '#/review')    return renderReview();
   if (h === '#/dashboard') return renderDashboard();
   location.hash = homeHashFor(user);
 }
@@ -698,6 +711,7 @@ function renderHeaderChrome() {
       ${unread ? `<span class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-semibold grid place-items-center">${unread>9?'9+':unread}</span>` : ''}
     </button>`;
   host.innerHTML = `
+    <span id="queuePillHost" class="hidden md:inline-flex items-center">${queuePillHtml()}</span>
     ${bell}
     <div class="flex items-center gap-2 pl-1">
       <div class="text-right leading-tight hidden sm:block">
@@ -740,7 +754,7 @@ function pushEventNotification(eventKey, eq, log) {
       message: rec.message,
     }).then(({ error }) => {
       if (error) { console.warn('notification insert failed', error); return; }
-      if (cloudNotifs) cloudNotifs.unshift({ id: rec.id, ts: rec.ts, event: rec.event, message: rec.message, channels: rec.channels, recipients: rec.recipients });
+      if (cloudNotifs) cloudNotifs.unshift({ id: rec.id, ts: rec.ts, event: rec.event, message: rec.message, channels: rec.channels, recipients: rec.recipients, plant_id: rec.plantId, equipment_id: rec.eqId });
       renderHeaderChrome();
     });
     return;
@@ -778,23 +792,23 @@ function buildNotifFeed() {
   const feed = [];
   // Open / overdue work-orders
   getPendingTasks().forEach(({ l, e }) => {
-    if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId,
+    if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Work-order overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (expected ${l.etr}).` });
-    else if (woStateOf(l) === 'open') feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId,
+    else if (woStateOf(l) === 'open') feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Scheduled task ready to start — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
   });
   // Overdue PPM (planned date passed, no completion this month)
   getOverduePPM().forEach(({ e, date }) => {
     const ds = dstr(date);
-    feed.push({ key: `ppm-overdue-${e.id}-${ds}`, group: 'overdue', date: ds, plantId: e.plantId,
+    feed.push({ key: `ppm-overdue-${e.id}-${ds}`, group: 'overdue', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `PPM overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (planned ${ds}).` });
   });
   // Due today + (admins only) upcoming within 7 days
   getUpcomingPPM(7).forEach(({ e, date }) => {
     const ds = dstr(date);
-    if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds, plantId: e.plantId,
+    if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Maintenance due today — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
-    else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds, plantId: e.plantId,
+    else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Upcoming — ${esc(e.tag)} at ${esc(plantName(e.plantId))} on ${ds}.` });
   });
   // Health alerts: equipment in the At Risk / Critical bands (scoped like
@@ -805,7 +819,7 @@ function buildNotifFeed() {
       if (!admin && !ids.includes(e.plantId)) return;
       const hs = healthScore(e);
       if (hs.score >= 60) return;
-      feed.push({ key: `health-${e.id}-${hs.band}`, group: 'health', date: todayStr, plantId: e.plantId,
+      feed.push({ key: `health-${e.id}-${hs.band}`, group: 'health', date: todayStr, plantId: e.plantId, href: '#/equipment/' + e.id,
         message: `Health ${hs.band.toLowerCase()} (${hs.score}/100) — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
     });
   }
@@ -813,9 +827,10 @@ function buildNotifFeed() {
   // mode (cross-device), localStorage outbox in prototype mode.
   if (admin) {
     const activity = SUPA
-      ? (cloudNotifs || []).map(n => ({ id: n.id, ts: n.ts, event: n.event, message: n.message, channels: n.channels || [], recipients: n.recipients || [], plantId: n.plant_id }))
+      ? (cloudNotifs || []).map(n => ({ id: n.id, ts: n.ts, event: n.event, message: n.message, channels: n.channels || [], recipients: n.recipients || [], plantId: n.plant_id, eqId: n.equipment_id }))
       : loadNotifs();
     activity.forEach(n => feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event, plantId: n.plantId,
+      href: n.event === 'import_review' ? '#/review' : (n.eqId ? '#/equipment/' + n.eqId : null),
       message: n.message, channels: n.channels, recipients: n.recipients }));
   }
   // Fresh activity belongs right under "Due today" (newest first);
@@ -848,40 +863,81 @@ function applyNotifFilters(feed) {
   }
   return out;
 }
+// Relative timestamps for the panel ("2h ago", "Yesterday", "12 Aug").
+function timeAgo(ts) {
+  const d = new Date(ts); if (isNaN(d)) return '';
+  const sec = (Date.now() - d.getTime()) / 1000;
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+  if (sec < 7 * 86400) return Math.floor(sec / 86400) + 'd ago';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+function notifWhen(n) {
+  if (n.group === 'activity') return timeAgo(n.date);
+  const ds = String(n.date).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) return '';
+  if (ds === today()) return 'Today';
+  const diff = Math.round((new Date(ds + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 86400000);
+  if (diff === 1) return 'Tomorrow';
+  if (diff === -1) return 'Yesterday';
+  return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+function markNotifSeen(key) {
+  const seen = loadSeenNotifs(); seen.add(key);
+  localStorage.setItem(notifSeenKey(), JSON.stringify([...seen].slice(-1000)));
+}
+function notifGo(href, key) {
+  markNotifSeen(key);
+  document.getElementById('notifPanel')?.remove();
+  renderHeaderChrome();
+  if (location.hash === href) route(); else location.hash = href;
+}
+const NOTIF_GROUPS = [
+  // key, label, accent colour, icon background, icon path (24×24 stroke)
+  ['overdue',  'Overdue',           '#dc2626', '#fef2f2', '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'],
+  ['due',      'Due today',         '#b45309', '#fffbeb', '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'],
+  ['health',   'Health alerts',     '#be123c', '#fff1f2', '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'],
+  ['activity', 'Recent activity',   '#193458', '#f1f4f9', '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>'],
+  ['upcoming', 'Upcoming (7 days)', '#3d5a83', '#f1f4f9', '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
+];
 function notifPanelBody() {
   const feed = applyNotifFilters(buildNotifFeed());
   const seen = loadSeenNotifs();
   const userName = id => (state.users.find(x => x.id === id)?.name || id);
   const chLabel = ch => ch === 'sms' ? 'SMS' : ch.charAt(0).toUpperCase() + ch.slice(1);
-  const GROUPS = [
-    ['overdue',  'Overdue',           'badge-bd'],
-    ['due',      'Due today',         'badge-mt'],
-    ['health',   'Health alerts',     'badge-bd'],
-    ['activity', 'Recent activity',   'badge-neutral'],
-    ['upcoming', 'Upcoming (7 days)', 'badge-brand'],
-  ];
-  return GROUPS.map(([key, label, badgeCls]) => {
+  const sections = NOTIF_GROUPS.map(([key, label, color, bg, icon]) => {
     const items = feed.filter(n => n.group === key);
     if (!items.length) return '';
-    const rows = items.map(n => `
-      <div class="px-4 py-2.5 border-b border-slate-100 ${seen.has(n.key) ? '' : 'bg-brand-50/40'}">
-        <div class="text-sm text-slate-800">${n.message}</div>
-        ${n.group === 'activity' && (n.channels?.length || n.recipients?.length) ? `
-          <div class="text-[11px] text-slate-500 mt-0.5">
-            ${n.channels?.length ? 'via ' + n.channels.map(chLabel).join(', ') : ''}
-            ${n.recipients?.length ? ' → ' + n.recipients.map(userName).join(', ') : ''}
-          </div>` : ''}
-        ${n.group === 'activity' ? `<div class="text-[10px] text-slate-400 mt-0.5">${new Date(n.date).toLocaleString()}</div>` : ''}
-      </div>`).join('');
+    const rows = items.map(n => {
+      const isSeen = seen.has(n.key);
+      const meta = [notifWhen(n)];
+      if (n.group === 'activity' && n.channels?.length) meta.push('via ' + n.channels.map(chLabel).join(', '));
+      if (n.group === 'activity' && n.recipients?.length) meta.push('→ ' + n.recipients.map(userName).join(', '));
+      return `
+      <div class="notif-item ${isSeen ? '' : 'unseen'} ${n.href ? 'clickable' : ''}" ${n.href ? `onclick="notifGo('${n.href}', '${n.key}')"` : ''}>
+        <div class="n-icon" style="background:${bg};color:${color}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="n-msg">${n.message}</div>
+          <div class="n-meta">${meta.filter(Boolean).join(' · ')}</div>
+        </div>
+        ${n.href ? '<svg class="n-go" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>' : ''}
+        ${isSeen ? '' : '<span class="n-unread"></span>'}
+      </div>`;
+    }).join('');
     return `<div>
-      <div class="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2 sticky top-0">
-        <span class="badge ${badgeCls}">${label}</span>
-        <span class="text-xs text-slate-500">${items.length}</span>
-      </div>${rows}</div>`;
-  }).join('') || `<div class="p-6 text-center text-sm text-slate-500">${
-    (ui.notifPlant !== 'all' || ui.notifTime !== 'all')
-      ? 'Nothing matches these filters.'
-      : "You're all caught up — nothing due or overdue."}</div>`;
+      <div class="notif-group-h"><span class="g-dot" style="background:${color}"></span>${label}<span class="g-count">${items.length}</span></div>
+      ${rows}</div>`;
+  }).join('');
+  const filtered = ui.notifPlant !== 'all' || ui.notifTime !== 'all';
+  return sections || `
+    <div class="notif-empty">
+      <div class="ne-ring"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+      <div class="text-sm font-semibold text-slate-700">${filtered ? 'Nothing matches these filters' : 'All caught up'}</div>
+      <div class="text-xs text-slate-500 mt-1">${filtered ? 'Try widening the plant or time window.' : 'Nothing due, overdue, or waiting on you.'}</div>
+    </div>`;
 }
 function refreshNotifPanel() {
   const body = document.getElementById('notifPanelBody');
@@ -890,25 +946,29 @@ function refreshNotifPanel() {
 function toggleNotifPanel() {
   const existing = document.getElementById('notifPanel');
   if (existing) { existing.remove(); return; }
+  const unread = unreadNotifCount();
   const plantOpts = ['<option value="all">All plants</option>'].concat(
     state.plants.filter(p => accessiblePlantIds().includes(p.id))
       .map(p => `<option value="${p.id}" ${ui.notifPlant===p.id?'selected':''}>${esc(p.name)}</option>`)
   ).join('');
-  const timeOpts = [['all','All time'],['today','Today'],['7d','Last 7 days'],['30d','Last 30 days']]
-    .map(([v,l]) => `<option value="${v}" ${ui.notifTime===v?'selected':''}>${l}</option>`).join('');
+  const seg = [['all','All'],['today','Today'],['7d','7d'],['30d','30d']]
+    .map(([v,l]) => `<button type="button" class="${ui.notifTime===v?'on':''}" onclick="ui.notifTime='${v}'; [...this.parentElement.children].forEach(b=>b.classList.toggle('on', b===this)); refreshNotifPanel()">${l}</button>`).join('');
   document.body.insertAdjacentHTML('beforeend', `
-    <div id="notifPanel" class="fixed inset-0 z-[70]" onclick="if(event.target===this)this.remove()">
-      <div class="absolute right-0 top-0 h-full w-full max-w-sm bg-white shadow-xl flex flex-col">
-        <div class="px-4 py-3 border-b border-slate-200 flex items-center">
-          <div class="font-semibold">Notifications</div>
-          <div class="ml-auto flex items-center gap-2">
-            <button onclick="markAllNotifsRead()" class="text-xs text-brand hover:underline">Mark all read</button>
-            <button onclick="document.getElementById('notifPanel').remove()" class="text-slate-400 hover:text-slate-700 text-xl leading-none" aria-label="Close">&times;</button>
+    <div id="notifPanel" class="fixed inset-0 z-[70]">
+      <div class="absolute inset-0 notif-backdrop" onclick="document.getElementById('notifPanel').remove()"></div>
+      <div class="absolute right-0 top-0 h-full w-full max-w-md bg-white notif-sheet flex flex-col">
+        <div class="notif-head px-5 py-3.5 flex items-center gap-2.5">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <div class="font-semibold text-[15px]">Notifications</div>
+          ${unread ? `<span class="nh-count">${unread} new</span>` : ''}
+          <div class="ml-auto flex items-center gap-1.5">
+            ${unread ? '<button class="nh-action" onclick="markAllNotifsRead()">Mark all read</button>' : ''}
+            <button onclick="document.getElementById('notifPanel').remove()" class="text-white/70 hover:text-white text-xl leading-none px-1.5" aria-label="Close">&times;</button>
           </div>
         </div>
-        <div class="px-4 py-2 border-b border-slate-200 flex items-center gap-2 bg-white">
-          <select onchange="ui.notifPlant=this.value; refreshNotifPanel()" class="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1 text-xs bg-white">${plantOpts}</select>
-          <select onchange="ui.notifTime=this.value; refreshNotifPanel()" class="border border-slate-300 rounded-md px-2 py-1 text-xs bg-white">${timeOpts}</select>
+        <div class="px-4 py-2.5 border-b border-slate-200 flex items-center gap-2 bg-white">
+          <select onchange="ui.notifPlant=this.value; refreshNotifPanel()" class="flex-1 min-w-0 border border-slate-300 rounded-md px-2 py-1.5 text-xs bg-white">${plantOpts}</select>
+          <div class="notif-seg">${seg}</div>
         </div>
         <div id="notifPanelBody" class="flex-1 overflow-y-auto">${notifPanelBody()}</div>
       </div>
@@ -917,9 +977,9 @@ function toggleNotifPanel() {
 function markAllNotifsRead() {
   const keys = buildNotifFeed().map(n => n.key);
   localStorage.setItem(notifSeenKey(), JSON.stringify(keys.slice(0, 1000)));
-  const panel = document.getElementById('notifPanel');
-  if (panel) panel.remove();
   renderHeaderChrome();
+  const panel = document.getElementById('notifPanel');
+  if (panel) { panel.remove(); toggleNotifPanel(); }
 }
 
 // ---------- Reusable controls ----------
@@ -4019,10 +4079,25 @@ async function submitImportPPM(ev) {
     const unlock = lockSubmit(ev, 'Importing…');
     const { error } = await SUPA.from('equipment').insert(newEquipment.map(eqToDb));
     if (error) { unlock(); saveError(error); return; }
-    await hydrateCloud();
+    // Queue every non-valve for background parts research — the admin doesn't
+    // review anything now; a notification arrives when the run completes.
+    const qRows = newEquipment.filter(e => !isValveType(e.type)).map(e => ({
+      equipment_id: e.id,
+      status: (e.make && e.model) ? 'pending' : 'needs_info',
+      batch_id: 'B-' + base,
+    }));
+    let queued = 0, needInfo = 0;
+    if (qRows.length) {
+      const { error: qErr } = await SUPA.from('enrichment_queue').insert(qRows);
+      if (qErr) console.warn('enqueue failed (is supabase/14_enrichment_queue.sql applied?)', qErr);
+      else { queued = qRows.filter(r => r.status === 'pending').length; needInfo = qRows.length - queued; }
+    }
+    await hydrateCloud();   // also kicks the queue runner
     closeModal();
-    alert(`Imported ${newEquipment.length} equipment into the plant.`);
     ui.plantFilter = plantId; location.hash = '#/equipment'; route();
+    toast(`Imported ${newEquipment.length} equipment.` +
+      (queued ? ` Parts research started for ${queued} — you'll be notified when it's done.` : '') +
+      (needInfo ? ` ${needInfo} need make & model — see Review.` : ''));
     return;
   }
 
@@ -4037,6 +4112,311 @@ async function submitImportPPM(ev) {
   closeModal();
   alert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
   location.hash = '#/equipment'; ui.plantFilter = plantId; route();
+}
+
+// ---------- Background parts-research queue (admins, real mode) ----------
+// PPM imports enqueue every non-valve equipment. This runner works through
+// the queue while the admin does other things: make/model → web search →
+// draft parts list. Results wait in the Review workspace; one notification
+// fires when the run completes. Single-flight per browser tab.
+let _queueActive = false;
+let _queueNotConfigured = false;
+
+function queueRows() { return cloudQueue || []; }
+function reviewAttentionCount() {
+  return queueRows().filter(q => ['needs_info', 'ambiguous', 'ready', 'failed'].includes(q.status)).length;
+}
+function queuePillHtml() {
+  if (!_queueActive) return '';
+  const left = queueRows().filter(q => q.status === 'pending' || q.status === 'running').length;
+  return `<button class="queue-pill" onclick="location.hash='#/review'" title="Background parts research — open the review queue">
+    <span class="qp-spin"></span>Researching parts · ${left} left</button>`;
+}
+function renderQueuePill() {
+  const host = document.getElementById('queuePillHost');
+  if (host) host.innerHTML = queuePillHtml();
+  if (currentUser()) renderNav();   // keep the Review badge fresh
+}
+async function setQueueRow(id, patch) {
+  patch.updated_at = new Date().toISOString();
+  const { error } = await SUPA.from('enrichment_queue').update(patch).eq('id', id);
+  if (error) { console.warn('queue update failed', error); return false; }
+  const row = queueRows().find(q => q.id === id);
+  if (row) Object.assign(row, patch);
+  return true;
+}
+async function runEnrichmentQueue() {
+  if (!SUPA || !authUser || !isAdmin() || _queueActive) return;
+  if (!queueRows().some(q => q.status === 'pending')) return;
+  _queueActive = true; _queueNotConfigured = false;
+  renderQueuePill();
+  let found = 0, attention = 0, processed = 0;
+  while (true) {
+    const q = queueRows().find(x => x.status === 'pending');
+    if (!q) break;
+    const e = eqById(q.equipment_id);
+    if (!e) { await setQueueRow(q.id, { status: 'skipped', error: 'Equipment no longer exists.' }); continue; }
+    if (!e.make || !e.model) { await setQueueRow(q.id, { status: 'needs_info' }); continue; }
+    await setQueueRow(q.id, { status: 'running' });
+    if (location.hash === '#/review') route();
+    let data, error;
+    try {
+      ({ data, error } = await SUPA.functions.invoke('enrich-equipment', {
+        body: { make: e.make, model: e.model, eqType: e.type, variant: q.variant || undefined },
+      }));
+    } catch (err) { error = err; }
+    if (error) {
+      let msg = error.message || String(error);
+      try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
+      if (/not_configured|ANTHROPIC_API_KEY|Failed to send a request/i.test(msg)) {
+        // Infrastructure missing (key / function) — nothing else will succeed. Pause the run.
+        _queueNotConfigured = true;
+        await setQueueRow(q.id, { status: 'pending' });
+        break;
+      }
+      await setQueueRow(q.id, { status: 'failed', error: String(msg).slice(0, 300) }); attention++;
+    } else if (data && data.status === 'ambiguous' && Array.isArray(data.options) && data.options.length) {
+      await setQueueRow(q.id, { status: 'ambiguous', variants: data.options }); attention++;
+    } else if (data && data.status === 'match' && data.data) {
+      await setQueueRow(q.id, { status: 'ready', draft: data.data }); found++;
+    } else {
+      await setQueueRow(q.id, { status: 'failed', error: 'No reliable manufacturer data found.' }); attention++;
+    }
+    processed++;
+    renderQueuePill();
+    if (location.hash === '#/review') route();
+  }
+  _queueActive = false;
+  renderQueuePill();
+  if (location.hash === '#/review') route();
+  if (processed) queueCompleteNotification(found, attention);
+}
+function queueCompleteNotification(found, attention) {
+  const msg = `Parts research complete — ${found} draft${found === 1 ? '' : 's'} ready to approve` +
+    (attention ? `, ${attention} need${attention === 1 ? 's' : ''} your attention` : '') + '. Open Review.';
+  const rec = { id: 'N-' + Date.now() + '-' + Math.floor(Math.random() * 1e4), ts: new Date().toISOString(),
+    event: 'import_review', plant_id: null, equipment_id: null, channels: [], recipients: [], message: msg };
+  SUPA.from('notifications').insert(rec).then(({ error }) => {
+    if (error) { console.warn('notification insert failed', error); return; }
+    if (cloudNotifs) cloudNotifs.unshift(rec);
+    renderHeaderChrome();
+    toast('Parts research complete — the review queue is ready.');
+  });
+}
+
+// ---------- Review workspace (admin) ----------
+function reviewSection(title, hint, badgeCls, items, renderBody) {
+  if (!items.length) return '';
+  return `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-5">
+      <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+        <div class="font-semibold text-sm">${title}</div>
+        <span class="badge ${badgeCls}">${items.length}</span>
+        <span class="text-xs text-slate-400 ml-1 hidden sm:inline">${hint}</span>
+      </div>
+      <div class="divide-y divide-slate-100">${items.map(renderBody).join('')}</div>
+    </div>`;
+}
+function reviewRowHead(e) {
+  return `<div class="flex items-center gap-2 flex-wrap min-w-0">
+    ${tagLink(e)}
+    <span class="text-xs text-slate-500 whitespace-nowrap">${e.type} · ${esc(plantName(e.plantId))}</span>
+    ${e.make || e.model ? `<span class="text-xs text-slate-400 whitespace-nowrap">${esc(e.make)} ${esc(e.model)}</span>` : ''}
+  </div>`;
+}
+function renderReview() {
+  const user = currentUser();
+  if (!SUPA || effRole(user) !== 'Admin') { location.hash = homeHashFor(user); return; }
+  const rows = queueRows().map(q => ({ q, e: eqById(q.equipment_id) })).filter(x => x.e);
+  const by = (...sts) => rows.filter(x => sts.includes(x.q.status));
+  const needsInfo = by('needs_info'), working = by('pending', 'running'),
+        ambiguous = by('ambiguous'), ready = by('ready'), failed = by('failed'),
+        finished = by('done', 'skipped');
+  const makesList = `<datalist id="makesList">${[...new Set(state.equipment.map(e => e.make).filter(Boolean))].sort().map(m => `<option value="${m.replace(/"/g, '&quot;')}"></option>`).join('')}</datalist>`;
+  const inputCls = 'border border-slate-300 rounded-md px-2 py-1.5 text-xs';
+
+  document.getElementById('view').innerHTML = `
+    <div class="flex items-center mb-4 flex-wrap gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold">Parts review</h1>
+        <p class="text-slate-500 text-sm">Background research on imported equipment — approve drafts, resolve variants, fill in missing make &amp; model.</p>
+      </div>
+      ${_queueActive ? `<div class="ml-auto">${queuePillHtml()}</div>` : ''}
+    </div>
+    ${_queueNotConfigured ? `<div class="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+      AI research isn't configured yet, so queued items are waiting. Add <b>ANTHROPIC_API_KEY</b> under Supabase → Edge Functions → Secrets (and deploy <b>enrich-equipment</b>), then reload.
+    </div>` : ''}
+    ${rows.length === 0 ? `
+      <div class="bg-white rounded-xl border border-slate-200 p-10 text-center">
+        <div class="text-sm font-semibold text-slate-700">Nothing to review</div>
+        <div class="text-xs text-slate-500 mt-1 max-w-md mx-auto">When you import a PPM schedule, every pump, blower and motor is queued here for automatic parts research. You'll get a notification when a run completes.</div>
+      </div>` : `
+      ${reviewSection('Needs make &amp; model', "research can't start without them", 'badge-mt', needsInfo, ({ q, e }) => `
+        <div class="review-row st-needs_info px-5 py-3">
+          ${reviewRowHead(e)}
+          <form onsubmit="submitQueueInfo(event, ${q.id})" class="mt-2 flex items-center gap-2 flex-wrap">
+            <input name="make" list="makesList" required placeholder="Make — e.g. Kirloskar" class="${inputCls} w-40" />
+            <input name="model" required placeholder="Model — e.g. WX-001" class="${inputCls} w-44" />
+            <button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Save &amp; research</button>
+          </form>
+          <div class="text-[10px] text-slate-400 mt-1.5">The equipment is renamed to Make + Model; its imported duty name moves to Location.</div>
+        </div>`)}
+      ${reviewSection('Choose the exact variant', 'multiple matches were found', 'badge-brand', ambiguous, ({ q, e }) => `
+        <div class="review-row st-ambiguous px-5 py-3">
+          ${reviewRowHead(e)}
+          <form onsubmit="queuePickVariant(event, ${q.id})" class="mt-2 space-y-1.5">
+            ${(q.variants || []).map((o, i) => `
+              <label class="flex items-start gap-2 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                <input type="radio" name="variant" value="${esc(o.variant)}" ${i === 0 ? 'checked' : ''} class="mt-0.5" />
+                <span class="text-xs"><span class="font-medium text-slate-800">${esc(o.variant)}</span>${o.detail ? `<span class="text-slate-500"> — ${esc(o.detail)}</span>` : ''}</span>
+              </label>`).join('')}
+            <div class="pt-1"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Continue with this variant</button></div>
+          </form>
+        </div>`)}
+      ${reviewSection('Ready to approve', 'drafted from manufacturer data', 'badge-op', ready, ({ q, e }) => `
+        <div class="review-row st-ready px-5 py-3 flex items-center gap-3 flex-wrap">
+          <div class="flex-1 min-w-0">${reviewRowHead(e)}
+            <div class="text-[11px] text-slate-500 mt-1">${(q.draft?.parts || []).length} part${(q.draft?.parts || []).length === 1 ? '' : 's'} drafted${q.draft?.power ? ' · ' + esc(q.draft.power) : ''}${q.draft?.expected_life_years ? ' · life ~' + q.draft.expected_life_years + ' yrs' : ''}</div>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="openQueueDraftModal(${q.id})" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Review &amp; approve</button>
+            <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Skip</button>
+          </div>
+        </div>`)}
+      ${reviewSection('Needs attention', 'the search failed or found nothing', 'badge-bd', failed, ({ q, e }) => `
+        <div class="review-row st-failed px-5 py-3 flex items-center gap-3 flex-wrap">
+          <div class="flex-1 min-w-0">${reviewRowHead(e)}
+            <div class="text-[11px] text-red-600 mt-1">${esc(q.error || 'Search failed.')}</div>
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="retryQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Retry</button>
+            <a href="#/equipment/${e.id}" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Add manually</a>
+            <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Dismiss</button>
+          </div>
+        </div>`)}
+      ${reviewSection('In the queue', 'being researched in the background', 'badge-neutral', working, ({ q, e }) => `
+        <div class="review-row st-${q.status} px-5 py-3 flex items-center gap-3">
+          <div class="flex-1 min-w-0">${reviewRowHead(e)}</div>
+          <span class="text-[11px] text-slate-500 inline-flex items-center gap-1.5 whitespace-nowrap">${q.status === 'running' ? '<span class="qp-spin" style="display:inline-block"></span> researching…' : 'queued'}</span>
+        </div>`)}
+      ${finished.length ? `<details class="bg-white rounded-xl border border-slate-200 px-5 py-3 mb-5">
+        <summary class="text-sm font-semibold cursor-pointer select-none">Completed <span class="text-xs font-normal text-slate-400">(${finished.length})</span></summary>
+        <div class="divide-y divide-slate-100 mt-2">
+          ${finished.map(({ q, e }) => `<div class="py-2 flex items-center gap-2 text-xs">${tagLink(e)}<span class="text-slate-400">${q.status === 'done' ? 'parts approved' : 'skipped'}</span></div>`).join('')}
+        </div>
+      </details>` : ''}
+    `}
+    ${makesList}
+  `;
+}
+async function submitQueueInfo(ev, qid) {
+  ev.preventDefault();
+  if (!isAdmin() || !SUPA) return;
+  const q = queueRows().find(x => x.id === qid);
+  const e = q && eqById(q.equipment_id); if (!e) return;
+  const f = new FormData(ev.target);
+  const make = (f.get('make') || '').trim(), model = (f.get('model') || '').trim();
+  if (!make || !model) return;
+  const unlock = lockSubmit(ev);
+  // Name follows Make + Model; the imported duty name is preserved in Location.
+  const newTag = deriveTag(make, model, e.plantId, e.id);
+  const { error } = await SUPA.from('equipment')
+    .update({ make, model, tag: newTag, location: e.location || e.tag }).eq('id', e.id);
+  if (error) { unlock(); saveError(error); return; }
+  await setQueueRow(qid, { status: 'pending', error: null });
+  await hydrateCloud();   // kicks the runner
+  route();
+  toast(`${esc(newTag)} queued for parts research.`);
+}
+async function queuePickVariant(ev, qid) {
+  ev.preventDefault();
+  if (!isAdmin()) return;
+  const variant = ev.target.querySelector('input[name="variant"]:checked')?.value;
+  if (!variant) return;
+  lockSubmit(ev);
+  await setQueueRow(qid, { status: 'pending', variant, variants: null });
+  route();
+  runEnrichmentQueue();
+}
+async function retryQueueRow(qid) {
+  if (!isAdmin()) return;
+  await setQueueRow(qid, { status: 'pending', error: null });
+  route();
+  runEnrichmentQueue();
+}
+async function skipQueueRow(qid) {
+  if (!isAdmin()) return;
+  await setQueueRow(qid, { status: 'skipped' });
+  route();
+}
+function openQueueDraftModal(qid) {
+  if (!isAdmin()) return;
+  const q = queueRows().find(x => x.id === qid);
+  const e = q && eqById(q.equipment_id);
+  if (!q || !e || !q.draft) return;
+  const d = q.draft, parts = Array.isArray(d.parts) ? d.parts : [];
+  const sources = Array.isArray(d.sources) ? d.sources : [];
+  document.getElementById('modalTitle').textContent = `Approve parts — ${e.tag}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitQueueApprove(event, ${qid})" class="space-y-3 text-sm max-h-[70vh] overflow-y-auto pr-1">
+      <div class="p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
+        Draft for <b>${esc(e.make)} ${esc(e.model)}${q.variant ? ' ' + esc(q.variant) : ''}</b>
+        ${d.power ? ` · Power: <b>${esc(d.power)}</b>` : ''}
+        ${d.expected_life_years ? ` · Expected life: <b>${d.expected_life_years} yrs</b>` : ''}
+        — untick anything you don't want; adjust criticality freely.
+      </div>
+      ${parts.length ? `<div class="border border-slate-200 rounded-md divide-y divide-slate-100">
+        ${parts.map((pt, i) => `
+          <div class="flex items-center gap-2 px-3 py-2">
+            <input type="checkbox" name="inc-${i}" checked />
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-medium text-slate-800">${esc(pt.name)}</div>
+              <div class="text-[11px] text-slate-500">${esc(pt.spec) || 'no spec found'} · qty ${pt.qty || 1}</div>
+            </div>
+            <label class="text-[10px] text-slate-500">Crit
+              <input type="number" name="crit-${i}" min="1" max="10" value="${Math.min(10, Math.max(1, pt.criticality || 5))}" class="w-12 border border-slate-300 rounded px-1 py-0.5 text-xs ml-1" />
+            </label>
+          </div>`).join('')}
+      </div>` : '<div class="p-3 text-center text-xs text-slate-500 border border-slate-200 rounded-md">The datasheet was found but no parts list could be extracted — add parts manually.</div>'}
+      ${sources.length ? `<div class="text-[11px] text-slate-500">Sources: ${sources.slice(0, 3).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener" class="text-brand hover:underline break-all">${esc(u.replace(/^https?:\/\//, '').slice(0, 50))}</a>`).join(' · ')}</div>` : ''}
+      <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        ${parts.length ? '<button type="submit" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Approve &amp; save</button>' : ''}
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+async function submitQueueApprove(ev, qid) {
+  ev.preventDefault();
+  if (!isAdmin() || !SUPA) return;
+  const q = queueRows().find(x => x.id === qid);
+  const e = q && eqById(q.equipment_id);
+  if (!q || !e || !q.draft) return;
+  const f = new FormData(ev.target);
+  const d = q.draft;
+  const src = (Array.isArray(d.sources) && d.sources[0]) || '';
+  const partRows = (d.parts || [])
+    .map((pt, i) => ({ pt, i }))
+    .filter(({ i }) => f.get('inc-' + i))
+    .map(({ pt, i }) => ({
+      equipment_id: e.id, name: String(pt.name).slice(0, 200), spec: String(pt.spec || '').slice(0, 300),
+      qty: Math.max(1, parseInt(pt.qty, 10) || 1),
+      criticality: Math.min(10, Math.max(1, parseInt(f.get('crit-' + i), 10) || 5)),
+      source: 'ai', source_url: src,
+    }));
+  if (!partRows.length) { alert('Nothing selected to save.'); return; }
+  const unlock = lockSubmit(ev);
+  const { error } = await SUPA.from('equipment_parts').insert(partRows);
+  if (error) { unlock(); saveError(error); return; }
+  const eqPatch = {};
+  if (q.variant && !e.model.includes(q.variant)) eqPatch.model = `${e.model} ${q.variant}`;
+  const lifeYears = parseInt(d.expected_life_years, 10);
+  if (lifeYears > 0 && lifeYears < 60) eqPatch.expected_life_years = lifeYears;
+  if (Object.keys(eqPatch).length) await SUPA.from('equipment').update(eqPatch).eq('id', e.id);
+  await setQueueRow(qid, { status: 'done' });
+  await hydrateCloud();
+  closeModal(); route();
+  toast(`${partRows.length} part${partRows.length === 1 ? '' : 's'} saved for ${esc(e.tag)}.`);
 }
 
 // ---------- Guide-me tour ----------
