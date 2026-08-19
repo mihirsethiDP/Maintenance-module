@@ -1239,24 +1239,6 @@ function renderEquipmentDetail(id) {
     ? `<button onclick="openReplaceValveModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium">Replace ${e.type}</button>` : '';
 
   const hs = SUPA && !retired ? healthScore(e) : null;
-  const healthPanel = hs ? `
-    <div class="bg-white rounded-xl border border-slate-200 p-5 mb-6">
-      <div class="flex items-center gap-3 flex-wrap">
-        <div class="font-semibold text-sm">Health score</div>
-        ${healthBadge(hs.score)}
-        <details class="ml-auto">
-          <summary class="text-xs text-brand cursor-pointer">Why this score?</summary>
-        </details>
-      </div>
-      <div class="mt-3 space-y-1">
-        <div class="text-xs text-slate-500">Starts at 100, then:</div>
-        ${hs.factors.length ? hs.factors.map(f => `
-          <div class="flex items-center gap-2 text-xs">
-            <span class="${f.delta < 0 ? 'text-red-600' : 'text-green-700'} font-mono w-10 text-right">${f.delta > 0 ? '+' : ''}${f.delta}</span>
-            <span class="text-slate-600">${f.label}</span>
-          </div>`).join('') : '<div class="text-xs text-slate-400">No deductions — new or spotless record.</div>'}
-      </div>
-    </div>` : '';
 
   const retiredBanner = retired ? `
     <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-3 mb-4 text-sm text-amber-800">
@@ -1288,7 +1270,7 @@ function renderEquipmentDetail(id) {
     <div class="bg-white rounded-xl border border-slate-200 p-6 ${retired ? '' : 'mt-3'} mb-6">
       <div class="flex items-start flex-wrap gap-3">
         <div>
-          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? healthBadge(hs.score) : ''}</div>
+          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? `${healthBadge(hs.score)}<button onclick="openHealthModal('${e.id}')" class="w-[18px] h-[18px] rounded-full border border-slate-300 text-slate-500 hover:border-brand hover:text-brand text-[11px] font-semibold leading-none grid place-items-center" title="Why this score?" aria-label="Why this score?">?</button>` : ''}</div>
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${esc(plantName(e.plantId))}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
@@ -1309,13 +1291,44 @@ function renderEquipmentDetail(id) {
       </div>
     </div>
 
-    ${healthPanel}
+    <h2 class="font-semibold mb-3">Maintenance history</h2>
+    <div class="bg-white rounded-xl border border-slate-200 p-6 mb-6">${timeline}</div>
+
     ${lineagePanel}
     ${isValveType(e.type) ? '' : partsCard(e)}
-
-    <h2 class="font-semibold mb-3">Maintenance history</h2>
-    <div class="bg-white rounded-xl border border-slate-200 p-6">${timeline}</div>
   `;
+}
+
+// "Why this score" breakdown — opened from the small ? beside the header badge.
+function openHealthModal(eqId) {
+  const e = eqById(eqId); if (!e) return;
+  const hs = healthScore(e);
+  document.getElementById('modalTitle').textContent = 'Why this score';
+  document.getElementById('modalBody').innerHTML = `
+    <div class="text-sm space-y-3">
+      <div class="flex items-center gap-2.5 flex-wrap">
+        ${healthBadge(hs.score)}
+        <span class="text-xs text-slate-500">${esc(e.tag)}</span>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500 mb-1.5">Starts at 100, then:</div>
+        <div class="space-y-1 max-h-[45vh] overflow-y-auto pr-1">
+          ${hs.factors.length ? hs.factors.map(f => `
+            <div class="flex items-center gap-2 text-xs">
+              <span class="${f.delta < 0 ? 'text-red-600' : 'text-green-700'} font-mono w-10 text-right shrink-0">${f.delta > 0 ? '+' : ''}${f.delta}</span>
+              <span class="text-slate-600">${f.label}</span>
+            </div>`).join('') : '<div class="text-xs text-slate-400">No deductions — new or spotless record.</div>'}
+        </div>
+      </div>
+      <div class="text-[11px] text-slate-400 border-t border-slate-100 pt-2">
+        Bands: <span class="text-green-700 font-medium">Good ≥ 80</span> · <span class="text-amber-600 font-medium">Watch ≥ 60</span> · <span class="text-orange-600 font-medium">At Risk ≥ 40</span> · <span class="text-red-600 font-medium">Critical &lt; 40</span>.
+        Breakdowns weigh by part criticality, fade with time, and are largely cured when the failed part is replaced.
+      </div>
+      <div class="flex justify-end pt-1">
+        <button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
+      </div>
+    </div>`;
+  document.getElementById('modal').classList.remove('hidden');
 }
 
 // ---------- Valve replacement (retire old, new tag, same position) ----------
@@ -1387,21 +1400,24 @@ function partsCard(e) {
       </div></td>` : ''}
     </tr>`).join('');
   return `
-    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
-      <div class="px-5 py-3 border-b border-slate-200 flex items-center flex-wrap gap-2">
-        <div class="font-semibold text-sm">Parts &amp; specifications</div>
-        <span class="text-xs text-slate-400">${parts.length ? parts.length + ' part' + (parts.length === 1 ? '' : 's') : ''}</span>
-        ${isAdmin() ? `<div class="ml-auto flex gap-2">
-          <button onclick="openAddPartModal('${e.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">Add part</button>
-          <button onclick="openEnrichModal('${e.id}')" class="text-xs px-2.5 py-1 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Auto-fill from web (AI)</button>
-        </div>` : ''}
-      </div>
+    <details class="parts-details bg-white rounded-xl border border-slate-200 overflow-hidden mb-6" ${isAdmin() && !parts.length ? 'open' : ''}>
+      <summary class="px-5 py-3 cursor-pointer select-none flex items-center flex-wrap gap-2 hover:bg-slate-50/60">
+        <svg class="parts-chevron shrink-0 text-slate-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        <span class="font-semibold text-sm">Parts &amp; specifications</span>
+        <span class="text-xs text-slate-400">${parts.length ? parts.length + ' part' + (parts.length === 1 ? '' : 's') : 'none recorded'}</span>
+      </summary>
+      <div class="border-t border-slate-200">
+      ${isAdmin() ? `<div class="px-5 py-2.5 border-b border-slate-100 flex gap-2 justify-end bg-slate-50/40">
+        <button onclick="openAddPartModal('${e.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">Add part</button>
+        <button onclick="openEnrichModal('${e.id}')" class="text-xs px-2.5 py-1 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Auto-fill from web (AI)</button>
+      </div>` : ''}
       ${parts.length ? `<div class="overflow-x-auto"><table class="list-table">
         <thead><tr><th>Part</th><th>Specification</th><th>Qty</th>${isAdmin() ? '<th>Criticality</th>' : ''}<th>Last serviced</th>${isAdmin() ? '<th class="col-center">Action</th>' : ''}</tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`
       : `<div class="px-5 py-6 text-center text-sm text-slate-500">No parts recorded yet.${isAdmin() ? ' Add them manually or auto-fill from the manufacturer\'s datasheet.' : ''}</div>`}
-    </div>`;
+      </div>
+    </details>`;
 }
 function openPartFormModal(eqId, partId) {
   if (!isAdmin()) return;

@@ -56,6 +56,10 @@
     .tag-chip .tag-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .tag-chip:hover { background:#dde4ee; border-color:#bac9dc; }
     .tag-chip svg { opacity:0.65; flex-shrink:0; }
+    .parts-details > summary { list-style: none; }
+    .parts-details > summary::-webkit-details-marker { display: none; }
+    .parts-details[open] .parts-chevron { transform: rotate(90deg); }
+    .parts-chevron { transition: transform 0.15s; }
     .list-table tbody td .cell-primary:has(.tag-chip) { display:block; }
     .list-table tbody td:has(> .cell-primary > .tag-chip) { padding-top:10px; padding-bottom:10px; }
     .recip-picker { position:relative; }
@@ -204,6 +208,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-config.js?v=1"></script>
   <script src="seed-data.js?v=1"></script>
-  <script src="app.js?v=49"></script>
+  <script src="app.js?v=50"></script>
 </body>
 </html>
