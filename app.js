@@ -1517,7 +1517,9 @@ function openEnrichModal(eqId) {
   if (!isAdmin() || !SUPA) return;
   const e = eqById(eqId); if (!e) return;
   if (!e.make || !e.model) {
-    alert('Set the equipment\'s Make and Model first (Edit button) — the search uses exactly what you entered.');
+    // No dead-end: open the edit form right here instead of describing where it is.
+    toast('Add Make & Model first — the search uses exactly what you enter.');
+    openEditEquipmentModal(eqId);
     return;
   }
   window._enrich = { eqId, variant: null, draft: null };
