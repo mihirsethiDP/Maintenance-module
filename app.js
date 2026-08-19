@@ -289,15 +289,55 @@ function lockSubmit(ev, label = 'Saving…') {
   btn.disabled = true; btn.textContent = label;
   return () => { btn.disabled = false; btn.textContent = orig; };
 }
+// ---------- In-app dialogs ----------
+// Browser appAlert()/confirm() pop OS chrome ("site says...") that breaks the
+// app feel, blocks JS, and can't be styled. These render inside the app.
+function showAppDialog({ title, msg, buttons }) {
+  return new Promise((resolve) => {
+    document.getElementById('appDialog')?.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'appDialog';
+    wrap.className = 'fixed inset-0 z-[95] grid place-items-center p-4';
+    wrap.innerHTML = `
+      <div class="absolute inset-0 bg-black/40" data-dismiss style="-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)"></div>
+      <div class="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-5" role="alertdialog" aria-modal="true">
+        <div class="font-semibold text-sm mb-1.5">${esc(title)}</div>
+        <div class="text-sm text-slate-600 whitespace-pre-line max-h-[50vh] overflow-y-auto">${esc(msg)}</div>
+        <div class="flex gap-2 justify-end pt-4" data-btns></div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const host = wrap.querySelector('[data-btns]');
+    buttons.forEach(({ label, value, cls }) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.className = cls;
+      b.onclick = () => { wrap.remove(); resolve(value); };
+      host.appendChild(b);
+    });
+    wrap.querySelector('[data-dismiss]').addEventListener('click', () => { wrap.remove(); resolve(false); });
+    setTimeout(() => host.lastElementChild?.focus(), 30);
+  });
+}
+function appAlert(msg, title = 'Notice') {
+  return showAppDialog({ title, msg, buttons: [
+    { label: 'OK', value: true, cls: 'px-4 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium' },
+  ] });
+}
+function appConfirm(msg, title = 'Please confirm') {
+  return showAppDialog({ title, msg, buttons: [
+    { label: 'Cancel', value: false, cls: 'px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 text-sm' },
+    { label: 'Confirm', value: true, cls: 'px-4 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium' },
+  ] });
+}
 function saveError(err) {
   const msg = String((err && err.message) || err);
   // Network-level failures (plant Wi-Fi, VPN blips) deserve a human message,
   // not "TypeError: Failed to fetch".
   if (/failed to fetch|networkerror|load failed/i.test(msg)) {
-    alert("Couldn't reach the server \u2014 check your internet connection and press the button again.\n\nYour entries are still in the form; nothing was lost.");
+    appAlert("Couldn't reach the server \u2014 check your internet connection and press the button again.\n\nYour entries are still in the form; nothing was lost.");
     return;
   }
-  alert('Could not save. Please try again.\n\nDetails: ' + msg);
+  appAlert('Could not save. Please try again.\n\nDetails: ' + msg);
 }
 // Transient success toast (bottom-center, auto-dismisses).
 function toast(msg) {
@@ -722,6 +762,8 @@ window.addEventListener('hashchange', route);
 // Escape closes the topmost overlay (notification panel, then modal).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  const dlg = document.getElementById('appDialog');
+  if (dlg) { dlg.querySelector('[data-dismiss]').click(); return; }
   const panel = document.getElementById('notifPanel');
   if (panel) { panel.remove(); return; }
   const modal = document.getElementById('modal');
@@ -733,6 +775,8 @@ function pushOverlayState() {
   try { if (!history.state || !history.state.overlay) history.pushState({ overlay: true }, ''); } catch (e) {}
 }
 window.addEventListener('popstate', () => {
+  const dlg = document.getElementById('appDialog');
+  if (dlg) { dlg.querySelector('[data-dismiss]').click(); return; }
   const panel = document.getElementById('notifPanel');
   if (panel) { panel.remove(); return; }
   const pdf = document.getElementById('pdfPreview');
@@ -1554,7 +1598,7 @@ async function submitReplaceValve(ev, eqId) {
     toast(`${esc(e.tag)} retired — ${esc(f.get('newTag'))} is now in service at this position.`);
     return;
   }
-  alert('Valve replacement requires the live database.');
+  appAlert('Valve replacement requires the live database.');
 }
 
 // ---------- Parts & specifications (BOM) ----------
@@ -1649,7 +1693,7 @@ async function submitPartForm(ev, eqId, partId) {
 }
 async function deletePart(partId) {
   if (!isAdmin() || !SUPA) return;
-  if (!confirm('Remove this part from the assembly?')) return;
+  if (!await appConfirm('Remove this part from the assembly?', 'Remove part')) return;
   const { error } = await SUPA.from('equipment_parts').delete().eq('id', partId);
   if (error) { saveError(error); return; }
   await hydrateCloud();
@@ -1806,7 +1850,7 @@ async function submitEnrichApprove(ev, eqId) {
       criticality: Math.min(10, Math.max(1, parseInt(f.get('crit-' + i), 10) || 5)),
       source: 'ai', source_url: src,
     }));
-  if (!rows.length) { alert('Nothing selected to save.'); return; }
+  if (!rows.length) { appAlert('Nothing selected to save.'); return; }
   const unlock = lockSubmit(ev);
   const { error } = await SUPA.from('equipment_parts').insert(rows);
   if (error) { unlock(); saveError(error); return; }
@@ -2228,14 +2272,14 @@ async function submitAddTech(ev) {
   const name = (f.get('name') || '').trim();
   if (!name) return;
   if (technicianNames().some(t => t.toLowerCase() === name.toLowerCase())) {
-    alert('A technician with this name is already on the list.'); return;
+    appAlert('A technician with this name is already on the list.'); return;
   }
   const unlock = lockSubmit(ev);
   const { data, error } = await SUPA.from('technicians')
     .insert({ name, phone: (f.get('phone') || '').trim(), created_by: authUser?.id || null }).select().single();
   if (error) {
     unlock();
-    if (error.code === '23505') { alert('A technician with this name is already on the list.'); return; }
+    if (error.code === '23505') { appAlert('A technician with this name is already on the list.'); return; }
     saveError(error); return;
   }
   if (cloudTechnicians) { cloudTechnicians.push(data); cloudTechnicians.sort((a, b) => a.name.localeCompare(b.name)); }
@@ -2245,7 +2289,7 @@ async function submitAddTech(ev) {
 async function deleteTechnician(id) {
   if (!isAdmin() || !SUPA) return;
   const t = (cloudTechnicians || []).find(x => x.id === id);
-  if (!confirm(`Remove ${t ? t.name : 'this technician'} from the list?\n\nPast work-orders keep the name — only future suggestions change.`)) return;
+  if (!await appConfirm(`Remove ${t ? t.name : 'this technician'} from the list?\n\nPast work-orders keep the name — only future suggestions change.`, 'Remove technician')) return;
   const { error } = await SUPA.from('technicians').delete().eq('id', id);
   if (error) { saveError(error); return; }
   if (cloudTechnicians) cloudTechnicians = cloudTechnicians.filter(x => x.id !== id);
@@ -2295,7 +2339,7 @@ async function submitEditUser(ev, userId) {
   const name = f.get('name').trim();
   if (!name) return;
   const phoneResult = normalizePhone(f.get('phone'));
-  if (!phoneResult.ok) { alert(phoneResult.error); return; }
+  if (!phoneResult.ok) { appAlert(phoneResult.error); return; }
   const phone = phoneResult.value;
 
   if (SUPA) {
@@ -2388,18 +2432,18 @@ async function submitInvite(ev) {
       }
       if (data && data.error) throw new Error(data.error);
       closeModal();
-      alert(`Invitation email sent to ${email} as ${data.role || role}. They'll set their own password from the email link.`);
+      appAlert(`Invitation email sent to ${email} as ${data.role || role}. They'll set their own password from the email link.`);
       await hydrateCloud(); route();
     } catch (err) {
       if (btn) { btn.disabled = false; btn.textContent = 'Send invite'; }
-      alert('Could not send invite: ' + err.message);
+      appAlert('Could not send invite: ' + err.message);
     }
     return;
   }
 
   // Prototype fallback: shareable link flow.
-  if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
-  if ((state.invites||[]).some(i => i.status === 'pending' && i.email.toLowerCase() === email)) { alert('An invite is already pending for this email.'); return; }
+  if (state.users.some(u => u.email.toLowerCase() === email)) { appAlert('A user with this email already exists.'); return; }
+  if ((state.invites||[]).some(i => i.status === 'pending' && i.email.toLowerCase() === email)) { appAlert('An invite is already pending for this email.'); return; }
   const invite = {
     id: 'INV-' + Date.now() + '-' + Math.floor(Math.random()*1e4),
     name, email, role,
@@ -2440,10 +2484,10 @@ function copyInviteLink() {
   if (navigator.clipboard) navigator.clipboard.writeText(field.value).then(done, () => { field.select(); document.execCommand('copy'); done(); });
   else { field.select(); document.execCommand('copy'); done(); }
 }
-function revokeInvite(id) {
+async function revokeInvite(id) {
   if (!isAdmin()) return;
   const inv = (state.invites||[]).find(i => i.id === id);
-  if (!inv || !confirm(`Revoke the invite for ${inv.name}? The link will stop working.`)) return;
+  if (!inv || !await appConfirm(`Revoke the invite for ${inv.name}? The link will stop working.`, 'Revoke invite')) return;
   state.invites = state.invites.filter(i => i.id !== id);
   saveInvites(state.invites);
   route();
@@ -2477,9 +2521,9 @@ function submitAddTechnician(ev) {
   if (!isAdmin()) return;
   const f = new FormData(ev.target);
   const email = f.get('email').trim().toLowerCase();
-  if (state.users.some(u => u.email.toLowerCase() === email)) { alert('A user with this email already exists.'); return; }
+  if (state.users.some(u => u.email.toLowerCase() === email)) { appAlert('A user with this email already exists.'); return; }
   const phoneResult = normalizePhone(f.get('phone'));
-  if (!phoneResult.ok) { alert(phoneResult.error); return; }
+  if (!phoneResult.ok) { appAlert(phoneResult.error); return; }
   state.users.push({ id: nextUserId(), name: f.get('name').trim(), email, role: 'Engineer', phone: phoneResult.value, password: 'eng123', status: 'active' });
   saveUsers(state.users);
   closeModal(); route();
@@ -2551,15 +2595,15 @@ function submitAcceptInvite(ev, token) {
   location.hash = homeHashFor(user);
   route();
 }
-function removeUser(id) {
+async function removeUser(id) {
   if (!isAdmin() || currentUser()?.id === id) return;
   const u = state.users.find(x => x.id === id);
   if (!u) return;
   // Superadmin can never be removed; only a Superadmin may remove an Admin.
-  if (u.role === 'Superadmin') { alert('The Superadmin account cannot be removed.'); return; }
-  if (u.role === 'Admin' && !isSuperadmin()) { alert('Only the Superadmin can remove an Admin.'); return; }
-  if (!confirm(`Remove ${u.name} from the team?`)) return;
-  if (SUPA) { alert('Delete the user in Supabase → Authentication → Users. This list reflects Supabase.'); return; }
+  if (u.role === 'Superadmin') { appAlert('The Superadmin account cannot be removed.'); return; }
+  if (u.role === 'Admin' && !isSuperadmin()) { appAlert('Only the Superadmin can remove an Admin.'); return; }
+  if (!await appConfirm(`Remove ${u.name} from the team?`, 'Remove user')) return;
+  if (SUPA) { appAlert('Delete the user in Supabase → Authentication → Users. This list reflects Supabase.'); return; }
   state.users = state.users.filter(x => x.id !== id);
   saveUsers(state.users);
   route();
@@ -2621,7 +2665,7 @@ async function submitAssignPlants(ev, userId) {
   closeModal(); route();
 }
 async function setUserRole(userId, role) {
-  if (!isSuperadmin()) { alert('Only the Superadmin can change roles.'); route(); return; }
+  if (!isSuperadmin()) { appAlert('Only the Superadmin can change roles.'); route(); return; }
   if (SUPA) {
     const { error } = await SUPA.from('profiles').update({ role }).eq('id', userId);
     if (error) { saveError(error); route(); return; }
@@ -3194,7 +3238,7 @@ async function startWorkOrder(logId) {
 }
 async function _startWorkOrderInner(logId) {
   const log = state.logs.find(l => l.id === logId);
-  if (!log || woStateOf(log) !== 'open') { alert('This work-order has already been started.'); return; }
+  if (!log || woStateOf(log) !== 'open') { appAlert('This work-order has already been started.'); return; }
   const eq = eqById(log.equipmentId);
   if (SUPA) {
     const { error } = await SUPA.rpc('start_work_order', { p_log: logId });
@@ -3346,7 +3390,7 @@ function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
     const e = eqById(l.equipmentId);
     return !!e && ids.includes(e.plantId);
   });
-  if (!logs.length) { alert('No completed tasks on this date.'); return null; }
+  if (!logs.length) { appAlert('No completed tasks on this date.'); return null; }
   const equipment = [...new Set(logs.map(l => l.equipmentId))].map(eqById).filter(Boolean);
   const plants = [...new Set(equipment.map(e => e.plantId))].map(plantById).filter(Boolean);
   const technicians = [...new Set(logs.map(l => l.technician))];
@@ -3606,7 +3650,7 @@ function generateReport(ev) {
   const approvedBy = f.get('approvedBy') || '';
   if (scope === 'visit') {
     const date = f.get('visitDate');
-    if (!date) { alert('Pick the visit date.'); return; }
+    if (!date) { appAlert('Pick the visit date.'); return; }
     const result = buildVisitReportDoc(date, preparedBy, approvedBy);
     if (!result) return;   // builder alerts when the day has no completed work
     closeModal();
@@ -3616,7 +3660,7 @@ function generateReport(ev) {
   }
   const args = { scope, from: f.get('from') || '', to: f.get('to') || today(), preparedBy, approvedBy };
   const result = buildServiceReportDoc(args);
-  if (!result) { alert('No equipment matches the chosen scope.'); return; }
+  if (!result) { appAlert('No equipment matches the chosen scope.'); return; }
   closeModal();
   if (action === 'download') savePdfDoc(result.doc, result.filename);
   else openPdfPreview(result.doc, result.filename, 'Service Report');
@@ -3690,10 +3734,10 @@ function drawQrInPdf(doc, text, x, y, sizeMm) {
 }
 
 function generateQrSheet(plantId) {
-  if (typeof qrcode === 'undefined') { alert('QR library not loaded — check your connection and refresh.'); return; }
+  if (typeof qrcode === 'undefined') { appAlert('QR library not loaded — check your connection and refresh.'); return; }
   const plant = plantById(plantId); if (!plant) return;
   const eqs = activeEquipment().filter(e => e.plantId === plantId);
-  if (!eqs.length) { alert('This plant has no equipment yet.'); return; }
+  if (!eqs.length) { appAlert('This plant has no equipment yet.'); return; }
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait' });   // A4: 210 x 297 mm
@@ -3867,11 +3911,11 @@ async function recordTechnician(name) {
 }
 async function submitMaint(ev, eqId) {
   ev.preventDefault();
-  if (openLogFor(eqId)) { alert('This equipment already has an open work-order. Complete it before starting a new one.'); return; }
+  if (openLogFor(eqId)) { appAlert('This equipment already has an open work-order. Complete it before starting a new one.'); return; }
   const f = new FormData(ev.target);
   const isBd = f.get('reason') === 'Breakdown';
   if (isBd && !(f.get('notes') || '').trim()) {
-    alert('Describe the breakdown — what failed and what you observed. Required for breakdowns.');
+    appAlert('Describe the breakdown — what failed and what you observed. Required for breakdowns.');
     return;
   }
   const log = {
@@ -4236,7 +4280,7 @@ async function submitEquipmentForm(ev, mode, eqId) {
   const f = new FormData(ev.target);
   const make = (f.get('make') || '').trim(), model = (f.get('model') || '').trim();
   const tag = deriveTag(make, model, f.get('plantId'), mode === 'edit' ? eqId : null);
-  if (!tag) { alert('Make and Model are required — the equipment name is generated from them.'); return; }
+  if (!tag) { appAlert('Make and Model are required — the equipment name is generated from them.'); return; }
   if (mode === 'edit') {
     const cur = eqById(eqId); if (!cur) return;
     const patch = { tag, type: f.get('type'), make, model, plantId: f.get('plantId'), installed: f.get('installed') || cur.installed };
@@ -4479,7 +4523,7 @@ async function submitImportPPM(ev) {
   const existingBase = new Set(state.equipment.filter(x => x.plantId === plantId).map(x => x.tag));
   const dupCount = rows.filter(r => existingBase.has((!r.make || !r.model) ? r.tag : `${r.make} ${r.model}`.replace(/\s+/g, ' ').trim())).length;
   if (dupCount === rows.length && rows.length > 0 &&
-      !confirm(`All ${rows.length} equipment in this file already exist at this plant — this looks like a re-import and would create duplicates.\n\nImport anyway?`)) return;
+      !(await appConfirm(`All ${rows.length} equipment in this file already exist at this plant — this looks like a re-import and would create duplicates.\n\nImport anyway?`, 'Possible re-import'))) return;
   const newEquipment = rows.map((r, idx) => ({
     id: `EQ-IMP-${base}-${idx}`,
     tag: importTagFor(r), type: r.type, make: r.make, model: r.model,
@@ -4524,9 +4568,9 @@ async function submitImportPPM(ev) {
   state.slots = Object.assign({}, state.slots || {}, newSlots);
   state.logs = state.logs.concat(newLogs);
   try { saveEq(state.equipment); saveSlots(state.slots); saveLog(state.logs); }
-  catch (e) { alert('Import too large for browser storage — it was applied for this session only.'); }
+  catch (e) { appAlert('Import too large for browser storage — it was applied for this session only.'); }
   closeModal();
-  alert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
+  appAlert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
   ui.plantFilter = plantId; ui.typeFilter = 'all'; ui.eqStatusFilter = 'all';
   location.hash = '#/equipment'; route();
 }
@@ -4628,6 +4672,14 @@ async function runEnrichmentQueue() {
       }
       if (!await setQueueRow(q.id, { status: 'failed', error: String(msg).slice(0, 300) })) break; attention++;
     } else if (data && data.status === 'ambiguous' && Array.isArray(data.options) && data.options.length) {
+      if (!q.variant && data.options[0] && data.options[0].variant) {
+        // Auto-pick the first (most likely) variant and research again with it.
+        // The choice is flagged on the ready row; Review still shows it before
+        // anything saves, and the manual picker remains for repeat-ambiguity.
+        if (!await setQueueRow(q.id, { status: 'pending', variant: String(data.options[0].variant), variants: data.options })) break;
+        refreshReview();
+        continue;
+      }
       if (!await setQueueRow(q.id, { status: 'ambiguous', variants: data.options })) break; attention++;
     } else if (data && data.status === 'match' && data.data) {
       if (!await setQueueRow(q.id, { status: 'ready', draft: data.data })) break; found++;
@@ -4668,6 +4720,7 @@ function queueDraftFlags(q) {
   if (parts.some(pt => !pt || !String(pt.name || '').trim())) flags.push('unnamed part');
   if (parts.some(pt => (parseInt(pt.criticality, 10) || 5) >= 8)) flags.push('high criticality suggested');
   if (!Array.isArray(d.sources) || !d.sources.filter(safeUrl).length) flags.push('no source');
+  if (q.variant && Array.isArray(q.variants) && q.variants.length > 1) flags.push(`variant auto-selected: ${q.variant}`);
   return flags;
 }
 // One-click approval of a ready draft exactly as suggested (all parts,
@@ -4723,7 +4776,7 @@ async function bulkApproveReady(plantId) {
       flagged.slice(0, 8).map(x => `• ${eqById(x.q.equipment_id).tag} — ${x.flags.join(', ')}`).join(NL) +
       (flagged.length > 8 ? NL + `…and ${flagged.length - 8} more` : '');
   }
-  if (!confirm(msg)) return;
+  if (!await appConfirm(msg, plantId ? `Quick approve — ${plantName(plantId)}` : 'Approve all ready drafts')) return;
   let ok = 0;
   for (const q of ready) { if (await quickApproveQueueRow(q.id, true)) ok++; }
   await hydrateCloud(); route();
@@ -4779,7 +4832,7 @@ function reviewRowFor({ q, e }) {
     <div class="review-row st-ready px-5 py-3 flex items-center gap-3 flex-wrap">
       <div class="flex-1 min-w-0">${reviewRowHead(e, badge)}
         <div class="text-[11px] text-slate-500 mt-1">${(q.draft?.parts || []).length} part${(q.draft?.parts || []).length === 1 ? '' : 's'} drafted${q.draft?.power ? ' · ' + esc(q.draft.power) : ''}${parseInt(q.draft?.expected_life_years, 10) > 0 ? ' · life ~' + parseInt(q.draft.expected_life_years, 10) + ' yrs' : ''}</div>
-        ${queueDraftFlags(q).length ? `<div class="flex gap-1 flex-wrap mt-1.5">${queueDraftFlags(q).map(fl => `<span class="badge badge-mt">${fl}</span>`).join('')}</div>` : ''}
+        ${queueDraftFlags(q).length ? `<div class="flex gap-1 flex-wrap mt-1.5">${queueDraftFlags(q).map(fl => `<span class="badge badge-mt">${esc(fl)}</span>`).join('')}</div>` : ''}
       </div>
       <div class="flex gap-2 flex-wrap">
         ${(q.draft?.parts || []).some(pt => pt && String(pt.name || '').trim()) ? `<button onclick="quickApproveQueueRow(${q.id}, false)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Save every drafted part exactly as suggested">Quick approve</button>` : ''}
@@ -4989,11 +5042,11 @@ async function submitQueueApprove(ev, qid) {
       criticality: Math.min(10, Math.max(1, parseInt(f.get('crit-' + i), 10) || 5)),
       source: 'ai', source_url: src,
     }));
-  if (!partRows.length) { alert('Nothing selected to save.'); return; }
+  if (!partRows.length) { appAlert('Nothing selected to save.'); return; }
   const unlock = lockSubmit(ev);
   // Mark done FIRST so a re-submit can never double-insert the parts; revert
   // to 'ready' if the parts write then fails.
-  if (!await setQueueRow(qid, { status: 'done' })) { unlock(); alert('Could not update the queue — try again.'); return; }
+  if (!await setQueueRow(qid, { status: 'done' })) { unlock(); appAlert('Could not update the queue — try again.'); return; }
   const { error } = await SUPA.from('equipment_parts').insert(partRows);
   if (error) { await setQueueRow(qid, { status: 'ready' }); unlock(); saveError(error); return; }
   const eqPatch = {};
