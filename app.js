@@ -298,7 +298,7 @@ function tagLink(e) {
 
 // ---------- State / routing / filters ----------
 let state = load();
-const ui = { plantFilter: 'all', typeFilter: 'all', dashStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '', notifPlant: 'all', notifTime: 'all' };
+const ui = { plantFilter: 'all', typeFilter: 'all', eqStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '', notifPlant: 'all', notifTime: 'all' };
 const LOG_PAGE_SIZE = 50;
 const EQ_TYPES = ['Pump','Blower','Motor','Mixer','Screen','Filter','Centrifuge','UV System','Screw Press','Decanter','Fan','Valve','NRV','Other'];
 const isValveType = t => t === 'Valve' || t === 'NRV';
@@ -836,10 +836,10 @@ function buildNotifFeed() {
   // Due today + (admins only) upcoming within 7 days
   getUpcomingPPM(7).forEach(({ e, date }) => {
     const ds = dstr(date);
+    // Only due-today rings here — the 7-day lookahead lives in Engineering
+    // Corner's Upcoming tab (one owner per view; the bell never counted it).
     if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Maintenance due today — ${e.tag} at ${plantName(e.plantId)}.` });
-    else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
-      message: `Upcoming — ${e.tag} at ${plantName(e.plantId)} on ${ds}.` });
   });
   // Health alerts: equipment in the At Risk / Critical bands (scoped like
   // everything else — admins see all, engineers their assigned plants).
@@ -863,20 +863,19 @@ function buildNotifFeed() {
       href: n.event === 'import_review' ? '#/review' : (n.eqId ? '#/equipment/' + n.eqId : null),
       message: n.message, channels: n.channels, recipients: n.recipients }));
   }
-  // Fresh activity belongs right under "Due today" (newest first);
-  // the 7-day lookahead sits last so it never buries real events.
-  const order = { overdue: 0, due: 1, health: 2, activity: 3, upcoming: 4 };
+  // Fresh activity belongs right under "Due today" (newest first).
+  const order = { overdue: 0, due: 1, health: 2, activity: 3 };
   return feed.sort((a, b) =>
     (order[a.group] - order[b.group]) ||
     (a.group === 'activity'
       ? String(b.date).localeCompare(String(a.date))   // activity: newest first
       : String(a.date).localeCompare(String(b.date)))); // schedule items: soonest first
 }
-// Badge counts unseen actionable items + activity. Only the 7-day "upcoming"
-// lookahead is excluded — merely-scheduled PPM shouldn't ring the bell.
+// Badge counts every unseen item — the feed now only carries actionable
+// groups (overdue / due today / health / activity).
 function unreadNotifCount() {
   const seen = loadSeenNotifs();
-  return buildNotifFeed().filter(n => n.group !== 'upcoming' && !seen.has(n.key)).length;
+  return buildNotifFeed().filter(n => !seen.has(n.key)).length;
 }
 // Panel filters (plant + time window)
 function applyNotifFilters(feed) {
@@ -931,7 +930,6 @@ const NOTIF_GROUPS = [
   ['due',      'Due today',         '#b45309', '#fffbeb', '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'],
   ['health',   'Health alerts',     '#be123c', '#fff1f2', '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'],
   ['activity', 'Recent activity',   '#193458', '#f1f4f9', '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>'],
-  ['upcoming', 'Upcoming (7 days)', '#3d5a83', '#f1f4f9', '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
 ];
 function notifPanelBody() {
   const feed = applyNotifFilters(buildNotifFeed());
@@ -1054,12 +1052,9 @@ function renderDashboard() {
   const mt = eq.filter(e => e.status === 'In Maintenance').length;
   const bd = eq.filter(e => e.status === 'Broken Down').length;
 
-  let down;
-  if (ui.dashStatusFilter === 'all')          down = eq.filter(e => e.status !== 'Operational');
-  else if (ui.dashStatusFilter === 'total')   down = eq;
-  else if (ui.dashStatusFilter === 'op')      down = eq.filter(e => e.status === 'Operational');
-  else if (ui.dashStatusFilter === 'mt')      down = eq.filter(e => e.status === 'In Maintenance');
-  else if (ui.dashStatusFilter === 'bd')      down = eq.filter(e => e.status === 'Broken Down');
+  // The dashboard's one table: what's out of service right now. Full lists
+  // live on the Equipment page — the KPI cards deep-link there, pre-filtered.
+  const down = eq.filter(e => e.status !== 'Operational');
 
   const KPI_ICONS = {
     total: ['#f1f4f9', '#193458', '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'],
@@ -1067,11 +1062,12 @@ function renderDashboard() {
     mt:    ['#fffbeb', '#b45309', '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'],
     bd:    ['#fef2f2', '#b91c1c', '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'],
   };
+  const KPI_DEST = { total: 'all', op: 'Operational', mt: 'In Maintenance', bd: 'Broken Down' };
   const card = (key, label, value, numCls) => {
-    const active = ui.dashStatusFilter === key;
     const [bg, color, icon] = KPI_ICONS[key] || KPI_ICONS.total;
-    return `<button onclick="ui.dashStatusFilter='${active?'all':key}'; renderDashboard()"
-        class="text-left bg-white rounded-xl border ${active?'border-brand ring-2 ring-brand-50':'border-slate-200'} p-5 hover:border-brand transition flex items-start gap-3">
+    return `<button onclick="ui.eqStatusFilter='${KPI_DEST[key] || 'all'}'; location.hash='#/equipment'"
+        title="Open in the Equipment list"
+        class="text-left bg-white rounded-xl border border-slate-200 p-5 hover:border-brand transition flex items-start gap-3">
       <div class="flex-1 min-w-0">
         <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
         <div class="text-3xl font-semibold mt-1 ${numCls||''}">${value}</div>
@@ -1094,15 +1090,9 @@ function renderDashboard() {
       <td><span class="${et.cls}">${et.label}</span></td>
       <td>${statusBadge(e.status)}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="7" class="py-6 text-center text-slate-500">No equipment to show for this filter.</td></tr>`;
+  }).join('') || `<tr><td colspan="7" class="py-6 text-center text-slate-500">Everything is operational — nothing out of service right now.</td></tr>`;
 
-  const heading = {
-    all: 'Currently out of service',
-    total: 'All equipment',
-    op: 'Operational equipment',
-    mt: 'Equipment in maintenance',
-    bd: 'Equipment broken down',
-  }[ui.dashStatusFilter];
+  const heading = 'Currently out of service';
 
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-1 flex-wrap gap-3">
@@ -1113,7 +1103,7 @@ function renderDashboard() {
         ${addEquipmentBtn()}
       </div>
     </div>
-    <p class="text-slate-500 mb-6">Live status of plant equipment. Click any card below to filter the table.</p>
+    <p class="text-slate-500 mb-6">Live status across your plants. Click a card to open that list on the Equipment page.</p>
 
     <div data-tour="kpi-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
       ${card('total','Total Equipment', total, 'text-slate-800')}
@@ -1142,7 +1132,9 @@ function renderDashboard() {
 
 // ---------- Equipment list ----------
 function renderEquipment() {
-  const eq = applyTypeFilter(applyPlantFilter(activeEquipment()));
+  const sf = ui.eqStatusFilter || 'all';
+  let eq = applyTypeFilter(applyPlantFilter(activeEquipment()));
+  if (sf !== 'all') eq = eq.filter(e => e.status === sf);
   const rows = eq.map(e => {
     const log = openLogFor(e.id);
     const openWo = openLogFor(e.id);
@@ -1172,6 +1164,10 @@ function renderEquipment() {
       <div class="ml-auto flex gap-2 flex-wrap">
         ${plantFilterControl()}
         ${typeFilterControl()}
+        <select onchange="ui.eqStatusFilter=this.value; renderEquipment()" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white">
+          ${[['all','All statuses'],['Operational','Operational'],['In Maintenance','In Maintenance'],['Broken Down','Broken Down']]
+            .map(([v, l]) => `<option value="${v}" ${sf === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
         <input id="eqSearch" placeholder="Filter…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-56" oninput="filterEq(this.value)" />
         ${addEquipmentBtn()}
       </div>
@@ -1666,7 +1662,7 @@ function renderLog() {
         <p class="text-slate-500 text-sm">Full history across all equipment.</p>
       </div>
       <div data-tour="log-actions" class="ml-auto flex items-center gap-2">
-        <button onclick="openServiceReportModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Service Report</button>
+        <button onclick="openReportModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium">Report</button>
         ${exportDropdown('', 'log-export')}
       </div>
     </div>
@@ -1812,7 +1808,6 @@ function renderPlants() {
       <td><div class="cell-primary">${eqCount}</div><div class="cell-muted">equipment</div></td>
       <td class="col-center">
         <div class="inline-flex gap-1.5 flex-wrap justify-center">
-          <button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Configure Notifications</button>
           <button onclick="generateQrSheet('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">QR Codes</button>
         </div>
       </td>
@@ -3133,7 +3128,7 @@ function renderVisitsTabInner(visits, pills, customPanel) {
       <td><div class="cell-primary">${v.equipment.length} equipment</div><div class="cell-muted">${v.logs.length} task${v.logs.length===1?'':'s'} completed</div></td>
       <td><div class="cell-primary">${plantNames}</div></td>
       <td><div class="text-xs text-slate-600 max-w-md truncate" title="${v.equipment.map(e=>e.tag).join(', ').replace(/"/g,'&quot;')}">${v.equipment.map(e=>e.tag).join(', ')}</div></td>
-      <td class="col-center"><button onclick="openVisitReportModal('${v.date}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Generate Report</button></td>
+      <td class="col-center"><button onclick="openReportModal('${v.date}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Generate Report</button></td>
     </tr>`;
   }).join('');
   return filterHeader + `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -3145,42 +3140,6 @@ function renderVisitsTabInner(visits, pills, customPanel) {
   </div>`;
 }
 
-function openVisitReportModal(date) {
-  const logs = state.logs.filter(l => l.endDate === date);
-  if (!logs.length) { alert('No completed tasks on this date.'); return; }
-  const technicians = [...new Set(logs.map(l => l.technician))];
-  document.getElementById('modalTitle').textContent = `Visit Report — ${date}`;
-  document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="submitVisitReport(event, '${date}')" class="space-y-3 text-sm">
-      <div class="p-3 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
-        <div><span class="font-medium">Visit date:</span> ${date}</div>
-        <div><span class="font-medium">Tasks:</span> ${logs.length} · <span class="font-medium">Technicians on record:</span> ${technicians.join(', ') || '—'}</div>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
-        <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" list="techList" autocomplete="off" placeholder="Service engineer" value="${technicians[0]||''}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />${techDatalist()}</div>
-        <div><label class="block text-xs text-slate-600 mb-1">Approved by</label><input name="approvedBy" placeholder="Maintenance lead" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
-      </div>
-      <div class="flex gap-2 justify-end pt-2">
-        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button type="submit" name="action" value="download" class="px-3 py-1.5 rounded-md border border-brand bg-white text-brand hover:bg-brand-50 text-sm font-medium">Download</button>
-        <button type="submit" name="action" value="preview"  class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Preview</button>
-      </div>
-    </form>
-  `;
-  document.getElementById('modal').classList.remove('hidden');
-}
-function submitVisitReport(ev, date) {
-  ev.preventDefault();
-  const f = new FormData(ev.target);
-  const action = (ev.submitter && ev.submitter.value) || 'preview';
-  const preparedBy = f.get('preparedBy') || '';
-  const approvedBy = f.get('approvedBy') || '';
-  closeModal();
-  const result = buildVisitReportDoc(date, preparedBy, approvedBy);
-  if (!result) return;
-  if (action === 'download') result.doc.save(result.filename);
-  else openPdfPreview(result.doc, result.filename, 'Visit Report');
-}
 function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
   // Scope like the on-screen list: engineers only see their assigned plants,
   // and logs whose equipment was deleted can't be reported on.
@@ -3268,36 +3227,48 @@ function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
 }
 
 // ---------- Service Report ----------
-function openServiceReportModal() {
+// ONE report flow — service/visit reports were the same document reached two
+// ways. Scope decides the layout: a date range across equipment, or a single
+// visit day grouped by plant. Openable pre-scoped from the Visit Reports tab.
+function openReportModal(visitDate) {
   const filtered = getFilteredLogs();
   const filteredEqIds = [...new Set(filtered.map(({l}) => l.equipmentId))];
-  const filteredCount = filteredEqIds.length;
-  const allCount = state.equipment.length;
-
-  document.getElementById('modalTitle').textContent = 'Generate Service Report';
+  const plantIds = accessiblePlantIds();
+  const allCount = activeEquipment().filter(e => plantIds.includes(e.plantId)).length;
+  const sel = visitDate ? 'visit' : 'filtered';
+  document.getElementById('modalTitle').textContent = 'Generate Report';
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="generateServiceReport(event)" class="space-y-4 max-h-[75vh] overflow-y-auto pr-1 text-sm">
+    <form onsubmit="generateReport(event)" class="space-y-4 max-h-[75vh] overflow-y-auto pr-1 text-sm">
       <div>
         <div class="text-sm font-medium mb-2">Scope</div>
-        <div class="grid grid-cols-2 gap-2">
+        <div class="space-y-2">
           <label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
-            <input type="radio" name="scope" value="filtered" checked class="mt-1" />
+            <input type="radio" name="scope" value="filtered" ${sel === 'filtered' ? 'checked' : ''} class="mt-1" />
             <div>
-              <div class="font-medium text-slate-800 text-sm">Filtered</div>
-              <div class="text-xs text-slate-500">Use the current Maintenance Log filters. ${filteredCount} equipment · ${filtered.length} log entr${filtered.length===1?'y':'ies'}.</div>
+              <div class="font-medium text-slate-800 text-sm">Current filters</div>
+              <div class="text-xs text-slate-500">Uses the Maintenance Log filters as they are now · ${filteredEqIds.length} equipment · ${filtered.length} log entr${filtered.length === 1 ? 'y' : 'ies'}.</div>
             </div>
           </label>
           <label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="scope" value="all" class="mt-1" />
             <div>
-              <div class="font-medium text-slate-800 text-sm">All</div>
-              <div class="text-xs text-slate-500">Every equipment on record · ${allCount} equipment.</div>
+              <div class="font-medium text-slate-800 text-sm">All equipment</div>
+              <div class="text-xs text-slate-500">Everything you have access to · ${allCount} equipment.</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="scope" value="visit" ${sel === 'visit' ? 'checked' : ''} class="mt-1" />
+            <div class="flex-1">
+              <div class="font-medium text-slate-800 text-sm">Single visit (one day)</div>
+              <div class="text-xs text-slate-500 mb-1.5">Everything completed on one date, grouped by plant — the sign-off document for a site visit.</div>
+              <input type="date" name="visitDate" value="${visitDate || today()}" class="border border-slate-300 rounded-md px-2 py-1 text-xs"
+                onclick="this.closest('label').querySelector('input[type=radio]').checked = true" />
             </div>
           </label>
         </div>
       </div>
-      <div>
-        <div class="text-sm font-medium mb-1">Reporting period <span class="text-xs text-slate-500 font-normal">(optional)</span></div>
+      <div data-report-period>
+        <div class="text-sm font-medium mb-1">Reporting period <span class="text-xs text-slate-500 font-normal">(optional — ignored for a single visit)</span></div>
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs text-slate-600 mb-1">From</label>
@@ -3312,7 +3283,7 @@ function openServiceReportModal() {
       <div>
         <div class="text-sm font-medium mb-1">Sign-off</div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" placeholder="Technician name" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
+          <div><label class="block text-xs text-slate-600 mb-1">Prepared by</label><input name="preparedBy" list="techList" autocomplete="off" placeholder="Service engineer" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />${techDatalist()}</div>
           <div><label class="block text-xs text-slate-600 mb-1">Approved by</label><input name="approvedBy" placeholder="Maintenance lead" class="w-full border border-slate-300 rounded-md px-2 py-1.5" /></div>
         </div>
       </div>
@@ -3428,25 +3399,29 @@ function buildServiceReportDoc(args) {
   return { doc, filename: `service-report-${today()}.pdf` };
 }
 
-function generateServiceReport(ev) {
+function generateReport(ev) {
   ev.preventDefault();
   const f = new FormData(ev.target);
   const action = (ev.submitter && ev.submitter.value) || 'preview';
-  const args = {
-    scope: f.get('scope') || 'filtered',
-    from: f.get('from') || '',
-    to: f.get('to') || today(),
-    preparedBy: f.get('preparedBy') || '',
-    approvedBy: f.get('approvedBy') || '',
-  };
+  const scope = f.get('scope') || 'filtered';
+  const preparedBy = f.get('preparedBy') || '';
+  const approvedBy = f.get('approvedBy') || '';
+  if (scope === 'visit') {
+    const date = f.get('visitDate');
+    if (!date) { alert('Pick the visit date.'); return; }
+    const result = buildVisitReportDoc(date, preparedBy, approvedBy);
+    if (!result) return;   // builder alerts when the day has no completed work
+    closeModal();
+    if (action === 'download') result.doc.save(result.filename);
+    else openPdfPreview(result.doc, result.filename, 'Visit Report');
+    return;
+  }
+  const args = { scope, from: f.get('from') || '', to: f.get('to') || today(), preparedBy, approvedBy };
   const result = buildServiceReportDoc(args);
   if (!result) { alert('No equipment matches the chosen scope.'); return; }
   closeModal();
-  if (action === 'download') {
-    result.doc.save(result.filename);
-  } else {
-    openPdfPreview(result.doc, result.filename, 'Service Report');
-  }
+  if (action === 'download') result.doc.save(result.filename);
+  else openPdfPreview(result.doc, result.filename, 'Service Report');
 }
 
 // ---------- Checklist template editor (admin, real mode) ----------
@@ -4723,7 +4698,7 @@ const TOURS = {
       { setup: () => { route(); },
         target: '[data-tour="kpi-cards"]',
         title: { 'en-US':"Live KPI cards", 'hi-IN':'Live KPI cards', 'es-ES':'Tarjetas KPI en vivo' },
-        body:  { 'en-US':"These cards show real-time equipment counts. Click any card to filter the table below — for example, In Maintenance shows exactly what's down right now.",
+        body:  { 'en-US':"These cards show real-time equipment counts. Click any card to open that list on the Equipment page — for example, In Maintenance shows exactly what's down right now.",
                  'hi-IN':"ये cards real-time equipment counts दिखाते हैं। किसी भी card पर click करें — नीचे का table filter हो जाएगा। जैसे In Maintenance click करें तो अभी जो equipment down हैं वो दिखेंगे।",
                  'es-ES':"Estas tarjetas muestran conteos en vivo de equipos. Toque cualquiera para filtrar la tabla — por ejemplo, En mantenimiento muestra justo lo que está fuera de servicio." } },
       { setup: () => { route(); },
