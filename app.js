@@ -4627,19 +4627,6 @@ function queueCompleteNotification(found, attention) {
 }
 
 // ---------- Review workspace (admin) ----------
-function reviewSection(title, hint, badgeCls, items, renderBody, extra = '') {
-  if (!items.length) return '';
-  return `
-    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-5">
-      <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-2 flex-wrap">
-        <div class="font-semibold text-sm">${title}</div>
-        <span class="badge ${badgeCls}">${items.length}</span>
-        <span class="text-xs text-slate-400 ml-1 hidden sm:inline">${hint}</span>
-        ${extra ? `<div class="ml-auto">${extra}</div>` : ''}
-      </div>
-      <div class="divide-y divide-slate-100">${items.map(renderBody).join('')}</div>
-    </div>`;
-}
 // Flags worth a human glance before approving an AI draft wholesale.
 function queueDraftFlags(q) {
   const d = q.draft || {};
@@ -4686,14 +4673,21 @@ async function quickApproveQueueRow(qid, silent) {
   }
   return true;
 }
-async function bulkApproveReady() {
+// Bulk approval — plant-scoped when a plantId is given (the per-plant Quick
+// approve button), otherwise everything ready.
+async function bulkApproveReady(plantId) {
   if (!isAdmin() || !SUPA) return;
-  const ready = queueRows().filter(q => q.status === 'ready' && eqById(q.equipment_id) && (q.draft?.parts || []).length);
+  const ready = queueRows().filter(q => {
+    if (q.status !== 'ready') return false;
+    const e = eqById(q.equipment_id);
+    if (!e || (plantId && e.plantId !== plantId)) return false;
+    return (q.draft?.parts || []).some(pt => pt && String(pt.name || '').trim());
+  });
   if (!ready.length) return;
   const flagged = ready.map(q => ({ q, flags: queueDraftFlags(q) })).filter(x => x.flags.length);
-  let msg = `Approve AI part drafts for ${ready.length} equipment exactly as suggested?`;
+  const NL = String.fromCharCode(10);
+  let msg = `Approve AI part drafts for ${ready.length} equipment${plantId ? ` at ${plantName(plantId)}` : ''} exactly as suggested?`;
   if (flagged.length) {
-    const NL = String.fromCharCode(10);
     msg += NL + NL + `${flagged.length} carry flags worth a look first:` + NL +
       flagged.slice(0, 8).map(x => `• ${eqById(x.q.equipment_id).tag} — ${x.flags.join(', ')}`).join(NL) +
       (flagged.length > 8 ? NL + `…and ${flagged.length - 8} more` : '');
@@ -4704,29 +4698,124 @@ async function bulkApproveReady() {
   await hydrateCloud(); route();
   toast(`Approved ${ok} of ${ready.length} equipment — parts are on their records.`);
 }
-function reviewRowHead(e) {
+
+function reviewRowHead(e, badge = '') {
   return `<div class="flex items-center gap-2 flex-wrap min-w-0">
     ${tagLink(e)}
-    <span class="text-xs text-slate-500 whitespace-nowrap">${e.type} · ${esc(plantName(e.plantId))}</span>
+    <span class="text-xs text-slate-500 whitespace-nowrap">${e.type}</span>
     ${e.make || e.model ? `<span class="text-xs text-slate-400 whitespace-nowrap">${esc(e.make)} ${esc(e.model)}</span>` : ''}
+    ${badge}
   </div>`;
 }
+
+const REVIEW_STATUS_META = {
+  needs_info: ['needs make & model', 'badge-mt'],
+  ambiguous:  ['choose variant',     'badge-brand'],
+  ready:      ['ready to approve',   'badge-op'],
+  failed:     ['needs attention',    'badge-bd'],
+  pending:    ['queued',             'badge-neutral'],
+  running:    ['researching',        'badge-neutral'],
+};
+
+// One row per equipment, controls decided by its queue status.
+function reviewRowFor({ q, e }) {
+  const inputCls = 'border border-slate-300 rounded-md px-2 py-1.5 text-xs';
+  const meta = REVIEW_STATUS_META[q.status] || [q.status, 'badge-neutral'];
+  const badge = `<span class="badge ${meta[1]}">${meta[0]}</span>`;
+  if (q.status === 'needs_info') return `
+    <div class="review-row st-needs_info px-5 py-3">
+      ${reviewRowHead(e, badge)}
+      <form onsubmit="submitQueueInfo(event, ${q.id})" class="mt-2 flex items-center gap-2 flex-wrap">
+        <input name="make" list="makesList" required placeholder="Make — e.g. Kirloskar" class="${inputCls} flex-1 min-w-[140px]" />
+        <input name="model" required placeholder="Model — e.g. WX-001" class="${inputCls} flex-1 min-w-[140px]" />
+        <button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Save &amp; research</button>
+      </form>
+      <div class="text-[10px] text-slate-400 mt-1.5">The equipment is renamed to Make + Model; its imported duty name moves to Location.</div>
+    </div>`;
+  if (q.status === 'ambiguous') return `
+    <div class="review-row st-ambiguous px-5 py-3">
+      ${reviewRowHead(e, badge)}
+      <form onsubmit="queuePickVariant(event, ${q.id})" class="mt-2 space-y-1.5">
+        ${(q.variants || []).map((o, i) => `
+          <label class="flex items-start gap-2 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="variant" value="${esc(o.variant)}" ${i === 0 ? 'checked' : ''} class="mt-0.5" />
+            <span class="text-xs"><span class="font-medium text-slate-800">${esc(o.variant)}</span>${o.detail ? `<span class="text-slate-500"> — ${esc(o.detail)}</span>` : ''}</span>
+          </label>`).join('')}
+        <div class="pt-1"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Continue with this variant</button></div>
+      </form>
+    </div>`;
+  if (q.status === 'ready') return `
+    <div class="review-row st-ready px-5 py-3 flex items-center gap-3 flex-wrap">
+      <div class="flex-1 min-w-0">${reviewRowHead(e, badge)}
+        <div class="text-[11px] text-slate-500 mt-1">${(q.draft?.parts || []).length} part${(q.draft?.parts || []).length === 1 ? '' : 's'} drafted${q.draft?.power ? ' · ' + esc(q.draft.power) : ''}${parseInt(q.draft?.expected_life_years, 10) > 0 ? ' · life ~' + parseInt(q.draft.expected_life_years, 10) + ' yrs' : ''}</div>
+        ${queueDraftFlags(q).length ? `<div class="flex gap-1 flex-wrap mt-1.5">${queueDraftFlags(q).map(fl => `<span class="badge badge-mt">${fl}</span>`).join('')}</div>` : ''}
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        ${(q.draft?.parts || []).some(pt => pt && String(pt.name || '').trim()) ? `<button onclick="quickApproveQueueRow(${q.id}, false)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Save every drafted part exactly as suggested">Quick approve</button>` : ''}
+        <button onclick="openQueueDraftModal(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Review</button>
+        <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Skip</button>
+      </div>
+    </div>`;
+  if (q.status === 'failed') return `
+    <div class="review-row st-failed px-5 py-3 flex items-center gap-3 flex-wrap">
+      <div class="flex-1 min-w-0">${reviewRowHead(e, badge)}
+        <div class="text-[11px] text-red-600 mt-1">${esc(q.error || 'Search failed.')}</div>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <button onclick="retryQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Retry</button>
+        <a href="#/equipment/${e.id}" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Add manually</a>
+        <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Dismiss</button>
+      </div>
+    </div>`;
+  return `
+    <div class="review-row st-${q.status} px-5 py-3 flex items-center gap-3">
+      <div class="flex-1 min-w-0">${reviewRowHead(e, badge)}</div>
+      <span class="text-[11px] text-slate-500 inline-flex items-center gap-1.5 whitespace-nowrap">${q.status === 'running' ? '<span class="qp-spin" style="display:inline-block"></span> researching…' : 'queued'}</span>
+    </div>`;
+}
+
 function renderReview() {
   const user = currentUser();
   if (!SUPA || effRole(user) !== 'Admin') { location.hash = homeHashFor(user); return; }
   const rows = queueRows().map(q => ({ q, e: eqById(q.equipment_id) })).filter(x => x.e);
-  const by = (...sts) => rows.filter(x => sts.includes(x.q.status));
-  const needsInfo = by('needs_info'), working = by('pending', 'running'),
-        ambiguous = by('ambiguous'), ready = by('ready'), failed = by('failed'),
-        finished = by('done', 'skipped');
+  const active = rows.filter(x => x.q.status !== 'done' && x.q.status !== 'skipped');
+  const finished = rows.filter(x => x.q.status === 'done' || x.q.status === 'skipped');
   const makesList = `<datalist id="makesList">${[...new Set(state.equipment.map(e => e.make).filter(Boolean))].sort().map(m => `<option value="${m.replace(/"/g, '&quot;')}"></option>`).join('')}</datalist>`;
-  const inputCls = 'border border-slate-300 rounded-md px-2 py-1.5 text-xs';
+
+  // One dropdown per plant; equipment pending review inside, worst-first.
+  const byPlant = {};
+  active.forEach(x => { (byPlant[x.e.plantId] = byPlant[x.e.plantId] || []).push(x); });
+  const plantIds = Object.keys(byPlant).sort((a, b) => plantName(a).localeCompare(plantName(b)));
+  const ORDER = { needs_info: 0, ambiguous: 1, ready: 2, failed: 3, pending: 4, running: 5 };
+  const chip = (n, label, cls) => n ? `<span class="badge ${cls}">${n} ${label}</span>` : '';
+
+  const plantSections = plantIds.map(pid => {
+    const items = byPlant[pid].sort((a, b) => (ORDER[a.q.status] ?? 9) - (ORDER[b.q.status] ?? 9));
+    const count = st => items.filter(x => x.q.status === st).length;
+    const readyCount = items.filter(x => x.q.status === 'ready' &&
+      (x.q.draft?.parts || []).some(pt => pt && String(pt.name || '').trim())).length;
+    return `
+    <details class="parts-details bg-white rounded-xl border border-slate-200 overflow-hidden mb-4" ${plantIds.length === 1 ? 'open' : ''}>
+      <summary class="px-5 py-3 cursor-pointer select-none flex items-center gap-2 flex-wrap hover:bg-slate-50/60">
+        <svg class="parts-chevron shrink-0 text-slate-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        <span class="font-semibold text-sm">${esc(plantName(pid))}</span>
+        <span class="text-xs text-slate-400">${items.length} pending</span>
+        ${chip(readyCount, 'ready', 'badge-op')}
+        ${chip(count('needs_info'), 'need info', 'badge-mt')}
+        ${chip(count('ambiguous'), 'variant', 'badge-brand')}
+        ${chip(count('failed'), 'attention', 'badge-bd')}
+        ${chip(count('pending') + count('running'), 'researching', 'badge-neutral')}
+        ${readyCount ? `<button onclick="event.preventDefault(); event.stopPropagation(); bulkApproveReady('${pid}')" class="ml-auto text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Approve every ready draft at this plant — flagged items are listed before anything saves">Quick approve (${readyCount})</button>` : ''}
+      </summary>
+      <div class="border-t border-slate-200 divide-y divide-slate-100">${items.map(reviewRowFor).join('')}</div>
+    </details>`;
+  }).join('');
 
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-4 flex-wrap gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Parts review</h1>
-        <p class="text-slate-500 text-sm">Background research on imported equipment — approve drafts, resolve variants, fill in missing make &amp; model.</p>
+        <p class="text-slate-500 text-sm">Background research on imported equipment, grouped by plant — approve drafts, resolve variants, fill in missing make &amp; model.</p>
       </div>
       ${_queueActive ? `<div class="ml-auto">${queuePillHtml()}</div>` : ''}
     </div>
@@ -4737,65 +4826,18 @@ function renderReview() {
       <div class="bg-white rounded-xl border border-slate-200 p-10 text-center">
         <div class="text-sm font-semibold text-slate-700">Nothing to review</div>
         <div class="text-xs text-slate-500 mt-1 max-w-md mx-auto">When you import a PPM schedule, every pump, blower and motor is queued here for automatic parts research. You'll get a notification when a run completes.</div>
-      </div>` : `
-      ${reviewSection('Needs make &amp; model', "research can't start without them", 'badge-mt', needsInfo, ({ q, e }) => `
-        <div class="review-row st-needs_info px-5 py-3">
-          ${reviewRowHead(e)}
-          <form onsubmit="submitQueueInfo(event, ${q.id})" class="mt-2 flex items-center gap-2 flex-wrap">
-            <input name="make" list="makesList" required placeholder="Make — e.g. Kirloskar" class="${inputCls} flex-1 min-w-[140px]" />
-            <input name="model" required placeholder="Model — e.g. WX-001" class="${inputCls} flex-1 min-w-[140px]" />
-            <button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Save &amp; research</button>
-          </form>
-          <div class="text-[10px] text-slate-400 mt-1.5">The equipment is renamed to Make + Model; its imported duty name moves to Location.</div>
-        </div>`)}
-      ${reviewSection('Choose the exact variant', 'multiple matches were found', 'badge-brand', ambiguous, ({ q, e }) => `
-        <div class="review-row st-ambiguous px-5 py-3">
-          ${reviewRowHead(e)}
-          <form onsubmit="queuePickVariant(event, ${q.id})" class="mt-2 space-y-1.5">
-            ${(q.variants || []).map((o, i) => `
-              <label class="flex items-start gap-2 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                <input type="radio" name="variant" value="${esc(o.variant)}" ${i === 0 ? 'checked' : ''} class="mt-0.5" />
-                <span class="text-xs"><span class="font-medium text-slate-800">${esc(o.variant)}</span>${o.detail ? `<span class="text-slate-500"> — ${esc(o.detail)}</span>` : ''}</span>
-              </label>`).join('')}
-            <div class="pt-1"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Continue with this variant</button></div>
-          </form>
-        </div>`)}
-      ${reviewSection('Ready to approve', 'drafted from manufacturer data', 'badge-op', ready, ({ q, e }) => `
-        <div class="review-row st-ready px-5 py-3 flex items-center gap-3 flex-wrap">
-          <div class="flex-1 min-w-0">${reviewRowHead(e)}
-            <div class="text-[11px] text-slate-500 mt-1">${(q.draft?.parts || []).length} part${(q.draft?.parts || []).length === 1 ? '' : 's'} drafted${q.draft?.power ? ' · ' + esc(q.draft.power) : ''}${parseInt(q.draft?.expected_life_years, 10) > 0 ? ' · life ~' + parseInt(q.draft.expected_life_years, 10) + ' yrs' : ''}</div>
-            ${queueDraftFlags(q).length ? `<div class="flex gap-1 flex-wrap mt-1.5">${queueDraftFlags(q).map(fl => `<span class="badge badge-mt">${fl}</span>`).join('')}</div>` : ''}
-          </div>
-          <div class="flex gap-2 flex-wrap">
-            ${(q.draft?.parts || []).length ? `<button onclick="quickApproveQueueRow(${q.id}, false)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Save every drafted part exactly as suggested">Quick approve</button>` : ''}
-            <button onclick="openQueueDraftModal(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Review</button>
-            <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Skip</button>
-          </div>
-        </div>`,
-        ready.length > 1 ? `<button onclick="bulkApproveReady()" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Approve every ready draft as suggested — flagged items are listed before anything saves">Approve all (${ready.length})</button>` : '')}
-      ${reviewSection('Needs attention', 'the search failed or found nothing', 'badge-bd', failed, ({ q, e }) => `
-        <div class="review-row st-failed px-5 py-3 flex items-center gap-3 flex-wrap">
-          <div class="flex-1 min-w-0">${reviewRowHead(e)}
-            <div class="text-[11px] text-red-600 mt-1">${esc(q.error || 'Search failed.')}</div>
-          </div>
-          <div class="flex gap-2 flex-wrap">
-            <button onclick="retryQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Retry</button>
-            <a href="#/equipment/${e.id}" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Add manually</a>
-            <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Dismiss</button>
-          </div>
-        </div>`)}
-      ${reviewSection('In the queue', 'being researched in the background', 'badge-neutral', working, ({ q, e }) => `
-        <div class="review-row st-${q.status} px-5 py-3 flex items-center gap-3">
-          <div class="flex-1 min-w-0">${reviewRowHead(e)}</div>
-          <span class="text-[11px] text-slate-500 inline-flex items-center gap-1.5 whitespace-nowrap">${q.status === 'running' ? '<span class="qp-spin" style="display:inline-block"></span> researching…' : 'queued'}</span>
-        </div>`)}
-      ${finished.length ? `<details class="bg-white rounded-xl border border-slate-200 px-5 py-3 mb-5">
-        <summary class="text-sm font-semibold cursor-pointer select-none">Completed <span class="text-xs font-normal text-slate-400">(${finished.length})</span></summary>
-        <div class="divide-y divide-slate-100 mt-2">
-          ${finished.map(({ q, e }) => `<div class="py-2 flex items-center gap-2 text-xs">${tagLink(e)}<span class="text-slate-400">${q.status === 'done' ? 'parts approved' : 'skipped'}</span></div>`).join('')}
-        </div>
-      </details>` : ''}
-    `}
+      </div>`
+    : plantSections || `
+      <div class="bg-white rounded-xl border border-slate-200 p-10 text-center">
+        <div class="text-sm font-semibold text-slate-700">All reviewed</div>
+        <div class="text-xs text-slate-500 mt-1">Nothing is waiting on you — everything is approved or dismissed.</div>
+      </div>`}
+    ${finished.length ? `<details class="bg-white rounded-xl border border-slate-200 px-5 py-3 mb-5">
+      <summary class="text-sm font-semibold cursor-pointer select-none">Completed <span class="text-xs font-normal text-slate-400">(${finished.length})</span></summary>
+      <div class="divide-y divide-slate-100 mt-2">
+        ${finished.map(({ q, e }) => `<div class="py-2 flex items-center gap-2 text-xs">${tagLink(e)}<span class="text-slate-400">${q.status === 'done' ? 'parts approved' : 'skipped'}</span></div>`).join('')}
+      </div>
+    </details>` : ''}
     ${makesList}
   `;
 }
