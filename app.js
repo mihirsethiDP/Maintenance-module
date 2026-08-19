@@ -1157,6 +1157,22 @@ function markAllNotifsRead() {
 }
 
 // ---------- Reusable controls ----------
+// Suggestive filter: a search box whose datalist offers the page's REAL values
+// (tags, makes, plants, people) as type-ahead suggestions.
+function suggestFilter({ id, listId, placeholder, options, oninput, width = 'w-44' }) {
+  const opts = [...new Set(options.filter(Boolean).map(o => String(o).trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b)).slice(0, 300)
+    .map(o => `<option value="${o.replace(/"/g, '&quot;')}"></option>`).join('');
+  return `<input id="${id}" list="${listId}" autocomplete="off" placeholder="${placeholder}"
+      class="border border-slate-300 rounded-md px-3 py-1.5 text-sm ${width}" oninput="${oninput}" /><datalist id="${listId}">${opts}</datalist>`;
+}
+// Generic live row filter for any table body.
+function filterRows(sel, q) {
+  q = (q || '').toLowerCase();
+  document.querySelectorAll(sel).forEach(tr => {
+    tr.style.display = tr.innerText.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
 function plantFilterControl() {
   const ids = accessiblePlantIds();
   const visible = state.plants.filter(p => ids.includes(p.id));
@@ -1314,7 +1330,9 @@ function renderEquipment() {
           ${[['all','All statuses'],['Operational','Operational'],['In Maintenance','In Maintenance'],['Broken Down','Broken Down']]
             .map(([v, l]) => `<option value="${v}" ${sf === v ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
-        <input id="eqSearch" placeholder="Filter…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-40" oninput="filterEq(this.value)" />
+        ${suggestFilter({ id: 'eqSearch', listId: 'eqSuggest', placeholder: 'Filter…',
+          options: eq.flatMap(x => [x.tag, x.make, x.model, x.location]),
+          oninput: 'filterEq(this.value)', width: 'w-40' })}
         ${addEquipmentBtn()}
       </div>
     </div>
@@ -1824,7 +1842,11 @@ function renderLog() {
       </div>
     </div>
     <div class="flex items-center mb-4 gap-2 flex-nowrap overflow-x-auto pb-1">
-      <input id="fSearch" placeholder="Search…" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-48 flex-shrink-0" oninput="renderLogRows()" />
+      ${suggestFilter({ id: 'fSearch', listId: 'logSuggest', placeholder: 'Search…',
+        options: (() => { const ids = accessiblePlantIds();
+          return [...new Set(state.logs.map(l => eqById(l.equipmentId)).filter(Boolean)
+            .filter(e => ids.includes(e.plantId)))].flatMap(e => [e.tag, e.make, e.model]); })(),
+        oninput: 'renderLogRows()', width: 'w-48 flex-shrink-0' })}
       ${plantFilterControl()}
       <select id="fType" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white flex-shrink-0" onchange="renderLogRows()">
         <option value="">All types</option>${EQ_TYPES.map(t=>`<option>${t}</option>`).join('')}
@@ -1977,6 +1999,9 @@ function renderPlants() {
         <p class="text-slate-500 text-sm mt-1">Per-plant notification settings and admin actions.</p>
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
+        ${suggestFilter({ id: 'plantSearch', listId: 'plantSuggest', placeholder: 'Find a plant…',
+          options: state.plants.flatMap(x => [x.name, x.location]),
+          oninput: "filterRows('#plantsTable tbody tr', this.value)", width: 'w-44' })}
         ${SUPA ? `<button onclick="openChecklistEditor()" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium">PPM Checklists</button>` : ''}
         <button onclick="openAddPlantModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1990,7 +2015,7 @@ function renderPlants() {
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
       <div class="overflow-x-auto">
-        <table class="list-table">
+        <table class="list-table" id="plantsTable">
           <thead><tr><th>Plant</th><th>Equipment</th><th class="col-center">Action</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -2126,6 +2151,9 @@ function renderTeam() {
         <p class="text-slate-500 text-sm mt-1">Manage who can access the tool and who performs maintenance.</p>
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
+        ${suggestFilter({ id: 'teamSearch', listId: 'teamSuggest', placeholder: 'Find a person…',
+          options: [...state.users.flatMap(u => [u.name, u.email]), ...technicianNames()],
+          oninput: "filterRows('#usersTable tbody tr', this.value); filterRows('#techsTable tbody tr', this.value)", width: 'w-44' })}
         ${SUPA ? '' : `<button onclick="openAddTechnicianModal()" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           Add Technician
@@ -2140,7 +2168,7 @@ function renderTeam() {
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-4">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Users <span class="text-slate-400 font-normal">(${state.users.length})</span></div>
       <div class="overflow-x-auto">
-        <table class="list-table">
+        <table class="list-table" id="usersTable">
           <thead><tr><th>User</th><th>Role</th><th>Assigned plants</th><th>Phone</th><th class="col-center">Actions</th></tr></thead>
           <tbody>${userRows}</tbody>
         </table>
@@ -2163,7 +2191,7 @@ function techniciansSection() {
         <span class="text-xs text-slate-400 hidden sm:inline">field workers named on work-orders — new names are recorded automatically</span>
         <button onclick="openAddTechModal()" class="ml-auto text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">Add technician</button>
       </div>
-      ${techs.length ? `<div class="overflow-x-auto"><table class="list-table">
+      ${techs.length ? `<div class="overflow-x-auto"><table class="list-table" id="techsTable">
         <thead><tr><th>Name</th><th>Phone</th><th>Jobs on record</th><th>Added</th><th class="col-center">Action</th></tr></thead>
         <tbody>${techs.map(t => `<tr>
           <td><div class="cell-primary">${esc(t.name)}</div></td>
@@ -3059,7 +3087,10 @@ function renderEngineer() {
   document.getElementById('view').innerHTML = `
     <div class="flex items-center mb-1 flex-wrap gap-3">
       <h1 class="text-2xl font-semibold" data-tour="engineer-h1">Engineering Corner</h1>
-      <div class="ml-auto flex gap-2 flex-wrap">${plantFilterControl()}${typeFilterControl()}</div>
+      <div class="ml-auto flex gap-2 flex-wrap">${plantFilterControl()}${typeFilterControl()}${suggestFilter({
+        id: 'ecSearch', listId: 'ecSuggest', placeholder: 'Find equipment…',
+        options: [...pending.map(x => x.e), ...overdue.map(x => x.e), ...upcoming.map(x => x.e)].flatMap(e => [e.tag, e.make, e.model]),
+        oninput: "filterRows('#view .list-table tbody tr', this.value)", width: 'w-44' })}</div>
     </div>
     <p class="text-slate-500 mb-5">For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports.</p>
     <div class="flex gap-2 mb-5 flex-wrap">
@@ -4817,7 +4848,12 @@ function renderReview() {
         <h1 class="text-2xl font-semibold">Parts review</h1>
         <p class="text-slate-500 text-sm">Background research on imported equipment, grouped by plant — approve drafts, resolve variants, fill in missing make &amp; model.</p>
       </div>
-      ${_queueActive ? `<div class="ml-auto">${queuePillHtml()}</div>` : ''}
+      <div class="ml-auto flex gap-2 items-center flex-wrap">
+        ${_queueActive ? queuePillHtml() : ''}
+        ${active.length ? suggestFilter({ id: 'reviewSearch', listId: 'reviewSuggest', placeholder: 'Find equipment…',
+          options: active.flatMap(x => [x.e.tag, x.e.make, x.e.model, plantName(x.e.plantId)]),
+          oninput: 'filterReview(this.value)', width: 'w-44' }) : ''}
+      </div>
     </div>
     ${_queueNotConfigured ? `<div class="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
       AI research isn't configured yet, so queued items are waiting. Add <b>ANTHROPIC_API_KEY</b> under Supabase → Edge Functions → Secrets (and deploy <b>enrich-equipment</b>), then reload.
@@ -4840,6 +4876,22 @@ function renderReview() {
     </details>` : ''}
     ${makesList}
   `;
+}
+// Review search: hide non-matching rows, hide empty plants, open plants with hits.
+function filterReview(q) {
+  q = (q || '').toLowerCase();
+  document.querySelectorAll('#view details.parts-details').forEach(d => {
+    let any = false;
+    d.querySelectorAll('.review-row').forEach(r => {
+      // textContent, not innerText: rows inside a COLLAPSED plant section have
+      // empty innerText and would never match.
+      const show = !q || r.textContent.toLowerCase().includes(q);
+      r.style.display = show ? '' : 'none';
+      if (show) any = true;
+    });
+    d.style.display = (!q || any) ? '' : 'none';
+    if (q && any) d.open = true;
+  });
 }
 async function submitQueueInfo(ev, qid) {
   ev.preventDefault();
