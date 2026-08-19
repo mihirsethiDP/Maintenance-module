@@ -230,7 +230,14 @@ function lockSubmit(ev, label = 'Saving…') {
   return () => { btn.disabled = false; btn.textContent = orig; };
 }
 function saveError(err) {
-  alert('Could not save. Please try again.\n\nDetails: ' + ((err && err.message) || err));
+  const msg = String((err && err.message) || err);
+  // Network-level failures (plant Wi-Fi, VPN blips) deserve a human message,
+  // not "TypeError: Failed to fetch".
+  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+    alert("Couldn't reach the server \u2014 check your internet connection and press the button again.\n\nYour entries are still in the form; nothing was lost.");
+    return;
+  }
+  alert('Could not save. Please try again.\n\nDetails: ' + msg);
 }
 // Transient success toast (bottom-center, auto-dismisses).
 function toast(msg) {
