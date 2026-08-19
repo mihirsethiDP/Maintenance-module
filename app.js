@@ -572,7 +572,7 @@ function renderNav() {
     .map(r => {
     const active = cur === r.hash || (r.hash === '#/equipment' && cur.startsWith('#/equipment/'));
     const n = r.hash === '#/review' ? reviewAttentionCount() : 0;
-    return `<a href="${r.hash}" class="px-3 py-1.5 rounded-md ${active?'bg-brand-50 text-brand font-medium':'text-slate-600 hover:bg-slate-100'}">${r.label}${n ? `<span class="nav-badge">${n > 99 ? '99+' : n}</span>` : ''}</a>`;
+    return `<a href="${r.hash}" class="px-3 py-1.5 rounded-lg ${active?'bg-white/15 text-white font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]':'text-white/65 hover:bg-white/10 hover:text-white'}">${r.label}${n ? `<span class="nav-badge">${n > 99 ? '99+' : n}</span>` : ''}</a>`;
   }).join('');
 }
 
@@ -625,7 +625,7 @@ function renderLogin() {
                         <div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div>
           </div>
         </div>
-        <div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+        <div class="login-card bg-white rounded-xl border border-slate-200/80 p-6 shadow-xl">
           <h1 class="text-lg font-semibold mb-1">Sign in</h1>
           <p class="text-xs text-slate-500 mb-4">Use your DigitalPaani account.</p>
           <form onsubmit="submitLogin(event)" class="space-y-3">
@@ -659,7 +659,7 @@ function renderSetPassword() {
         <img src="logo.png?v=1" alt="DigitalPaani" class="h-11 w-auto rounded-lg" />
         <div><div class="font-semibold text-lg leading-tight">DigitalPaani</div><div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div></div>
       </div>
-      <div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+      <div class="login-card bg-white rounded-xl border border-slate-200/80 p-6 shadow-xl">
         <h1 class="text-lg font-semibold mb-1">Set your password</h1>
         <p class="text-xs text-slate-500 mb-4">Welcome${u && u.name ? ', ' + u.name : ''}! Choose a password to activate your DigitalPaani account.</p>
         <form onsubmit="submitSetPassword(event)" class="space-y-3">
@@ -735,7 +735,7 @@ function renderHeaderChrome() {
   // engineers: due/overdue for their assigned plants).
   const unread = unreadNotifCount();
   const bell = `
-    <button onclick="toggleNotifPanel()" class="relative p-2 rounded-md hover:bg-slate-100 text-slate-600" title="Notifications" aria-label="Notifications">
+    <button onclick="toggleNotifPanel()" class="relative p-2 rounded-lg hover:bg-white/10 text-white/80 hover:text-white" title="Notifications" aria-label="Notifications">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
       ${unread ? `<span class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-semibold grid place-items-center">${unread>9?'9+':unread}</span>` : ''}
     </button>`;
@@ -744,11 +744,11 @@ function renderHeaderChrome() {
     ${bell}
     <div class="flex items-center gap-2 pl-1">
       <div class="text-right leading-tight hidden sm:block">
-        <div class="text-xs font-medium text-slate-800">${user.name}</div>
-        <div class="text-[10px] text-slate-500">${user.role}</div>
+        <div class="text-xs font-medium text-white">${esc(user.name)}</div>
+        <div class="text-[10px] text-white/60">${user.role}</div>
       </div>
-      <div class="w-8 h-8 rounded-full bg-brand-50 text-brand grid place-items-center text-xs font-semibold">${initials(user.name)}</div>
-      <button onclick="logout()" class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1" title="Sign out">Sign out</button>
+      <div class="w-8 h-8 rounded-full bg-white/15 text-white grid place-items-center text-xs font-semibold ring-1 ring-white/20">${initials(user.name)}</div>
+      <button onclick="logout()" class="text-xs text-white/60 hover:text-white px-2 py-1" title="Sign out">Sign out</button>
     </div>`;
 }
 function initials(name) { return name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
@@ -1061,12 +1061,24 @@ function renderDashboard() {
   else if (ui.dashStatusFilter === 'mt')      down = eq.filter(e => e.status === 'In Maintenance');
   else if (ui.dashStatusFilter === 'bd')      down = eq.filter(e => e.status === 'Broken Down');
 
+  const KPI_ICONS = {
+    total: ['#f1f4f9', '#193458', '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'],
+    op:    ['#f0fdf4', '#15803d', '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'],
+    mt:    ['#fffbeb', '#b45309', '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'],
+    bd:    ['#fef2f2', '#b91c1c', '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'],
+  };
   const card = (key, label, value, numCls) => {
     const active = ui.dashStatusFilter === key;
+    const [bg, color, icon] = KPI_ICONS[key] || KPI_ICONS.total;
     return `<button onclick="ui.dashStatusFilter='${active?'all':key}'; renderDashboard()"
-        class="text-left bg-white rounded-xl border ${active?'border-brand ring-2 ring-brand-50':'border-slate-200'} p-5 hover:border-brand transition">
-      <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
-      <div class="text-3xl font-semibold mt-1 ${numCls||''}">${value}</div>
+        class="text-left bg-white rounded-xl border ${active?'border-brand ring-2 ring-brand-50':'border-slate-200'} p-5 hover:border-brand transition flex items-start gap-3">
+      <div class="flex-1 min-w-0">
+        <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
+        <div class="text-3xl font-semibold mt-1 ${numCls||''}">${value}</div>
+      </div>
+      <div class="w-9 h-9 rounded-xl grid place-items-center shrink-0" style="background:${bg};color:${color}">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+      </div>
     </button>`;
   };
 
@@ -2295,7 +2307,7 @@ function renderAcceptInvite(token) {
       <img src="logo.png?v=1" alt="DigitalPaani" class="h-11 w-auto rounded-lg" />
       <div><div class="font-semibold text-lg leading-tight">DigitalPaani</div><div class="text-xs text-slate-500 leading-tight">Maintenance Operations</div></div>
     </div>${inner}</div></div>`;
-  const card = (inner) => `<div class="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">${inner}</div>`;
+  const card = (inner) => `<div class="login-card bg-white rounded-xl border border-slate-200/80 p-6 shadow-xl">${inner}</div>`;
 
   if (!data || !data.e) {
     document.getElementById('view').innerHTML = wrap(card(`<h1 class="text-lg font-semibold mb-1">Invalid invite</h1>
