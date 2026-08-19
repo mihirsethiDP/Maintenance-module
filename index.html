@@ -191,7 +191,7 @@
   </main>
 
   <!-- Modal -->
-  <div id="modal" class="hidden fixed inset-0 bg-black/40 z-20 grid place-items-center p-4">
+  <div id="modal" class="hidden fixed inset-0 bg-black/40 z-20 grid place-items-center p-4" onclick="if(event.target===this)closeModal()">
     <div class="bg-white rounded-xl shadow-xl w-full max-w-lg">
       <div class="px-5 py-4 border-b border-slate-200 flex items-center">
         <div id="modalTitle" class="font-semibold"></div>
@@ -204,6 +204,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-config.js?v=1"></script>
   <script src="seed-data.js?v=1"></script>
-  <script src="app.js?v=47"></script>
+  <script src="app.js?v=48"></script>
 </body>
 </html>

@@ -75,7 +75,7 @@ function checklistFor(eqType) {
 
 // A small set of illustrative open work-orders so the Dashboard / Pending views show live activity.
 function buildSeedOpenLogs(equipment) {
-  const NOW = new Date(today());
+  const NOW = new Date(today() + 'T00:00:00');
   const d = (off) => { const x = new Date(NOW); x.setDate(x.getDate() + off); return dstr(x); };
   const TECHS = ['Mihir Sethi'];
   const specs = [
@@ -102,7 +102,7 @@ function generatePastPPMLogs(slotsMap, equipmentList, idPrefix) {
   const SLOT_DAY = { W1: 4, W2: 11, W3: 18, W4: 25 };
   const TECHS = ['Mihir Sethi'];
   const NOW = new Date();
-  const yearStart = new Date('2026-01-01');
+  const yearStart = new Date('2026-01-01T00:00:00');
   const fmt = (d) => dstr(d);
   const out = [];
   let seq = 0;
@@ -181,13 +181,18 @@ function load() {
   }
   seedIfNeeded();
   if (!localStorage.getItem(LS_USERS)) localStorage.setItem(LS_USERS, JSON.stringify(SEED_USERS));
+  // A single corrupted key must never brick the boot — fall back to the seed.
+  const readLS = (key, fallback) => {
+    try { const v = JSON.parse(localStorage.getItem(key)); return v ?? fallback; }
+    catch { localStorage.removeItem(key); return fallback; }
+  };
   return {
-    equipment: JSON.parse(localStorage.getItem(LS_EQ)),
-    logs:      JSON.parse(localStorage.getItem(LS_LOG)),
-    plants:    JSON.parse(localStorage.getItem(LS_PLANT)),
-    users:     JSON.parse(localStorage.getItem(LS_USERS)),
-    slots:     JSON.parse(localStorage.getItem(LS_SLOTS)),
-    invites:   JSON.parse(localStorage.getItem(LS_INVITES) || '[]'),
+    equipment: readLS(LS_EQ, SEED_EQUIPMENT),
+    logs:      readLS(LS_LOG, []),
+    plants:    readLS(LS_PLANT, SEED_PLANTS),
+    users:     readLS(LS_USERS, SEED_USERS),
+    slots:     readLS(LS_SLOTS, {}),
+    invites:   readLS(LS_INVITES, []),
   };
 }
 const saveEq    = e => localStorage.setItem(LS_EQ,    JSON.stringify(e));
@@ -238,6 +243,8 @@ function toast(msg) {
   setTimeout(() => document.getElementById('appToast')?.remove(), 3500);
 }
 // Escape user-authored text before injecting into innerHTML templates.
+// Render-safe URL: only http(s) survives; javascript:/data: etc. become ''.
+const safeUrl = u => /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : '';
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 // Normalize a phone number to E.164 (e.g. +919000010000) — the format WhatsApp
@@ -257,7 +264,7 @@ const plantById = id => state.plants.find(p => p.id === id);
 const plantName = id => plantById(id)?.name || '—';
 const openLogFor = eqId => state.logs.find(l => l.equipmentId === eqId && !l.endDate);
 function daysBetween(a, b) { if (!a || !b) return null; return Math.round((new Date(b) - new Date(a)) / 86400000); }
-function isOverdue(log) { return log && !log.endDate && log.etr && new Date(log.etr) < new Date(today()); }
+function isOverdue(log) { return log && !log.endDate && log.etr && new Date(log.etr) < new Date(today() + 'T00:00:00'); }
 
 const statusBadge = s => {
   const cls = s === 'Operational' ? 'badge-op' : s === 'In Maintenance' ? 'badge-brand' : 'badge-bd';
@@ -473,7 +480,8 @@ function healthScore(e) {
       factors.push({ label: `${churn} replacement${churn === 1 ? '' : 's'} at this position in 24 months`, delta: -p });
     }
   } else {
-    const ageMult = Math.min(2.5, 1 + ageYears / life);
+    const safeAge = Number.isFinite(ageYears) ? ageYears : 0;
+    const ageMult = Math.min(2.5, 1 + safeAge / life);
     for (const l of state.logs) {
       if (l.equipmentId !== e.id || l.reason !== 'Breakdown') continue;
       const part = l.affectedPartId ? (cloudParts || []).find(p => p.id === l.affectedPartId) : null;
@@ -590,6 +598,14 @@ function route() {
   location.hash = homeHashFor(user);
 }
 window.addEventListener('hashchange', route);
+// Escape closes the topmost overlay (notification panel, then modal).
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const panel = document.getElementById('notifPanel');
+  if (panel) { panel.remove(); return; }
+  const modal = document.getElementById('modal');
+  if (modal && !modal.classList.contains('hidden')) closeModal();
+});
 
 // ---------- Login screen ----------
 function renderLogin() {
@@ -717,7 +733,7 @@ function renderHeaderChrome() {
       ${unread ? `<span class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-semibold grid place-items-center">${unread>9?'9+':unread}</span>` : ''}
     </button>`;
   host.innerHTML = `
-    <span id="queuePillHost" class="hidden md:inline-flex items-center">${queuePillHtml()}</span>
+    <span id="queuePillHost" class="hidden sm:inline-flex items-center">${queuePillHtml()}</span>
     ${bell}
     <div class="flex items-center gap-2 pl-1">
       <div class="text-right leading-tight hidden sm:block">
@@ -733,11 +749,12 @@ function initials(name) { return name.split(/\s+/).map(w=>w[0]).join('').slice(0
 // ---------- Notifications (in-app "outbox" — records what would be delivered) ----------
 function loadNotifs() { try { return JSON.parse(localStorage.getItem(LS_NOTIF) || '[]'); } catch { return []; } }
 function saveNotifs(n) { localStorage.setItem(LS_NOTIF, JSON.stringify(n)); }
+// Messages are stored/kept as PLAIN TEXT — the panel escapes at render time.
 const NOTIF_MSG = {
-  maintenance: (eq, p) => `${esc(eq.tag)} put into scheduled maintenance at ${esc(p.name)}.`,
-  breakdown:   (eq, p) => `Breakdown reported — ${esc(eq.tag)} at ${esc(p.name)}.`,
-  operational: (eq, p) => `${esc(eq.tag)} returned to service at ${esc(p.name)}.`,
-  overdue:     (eq, p, log) => `Maintenance overdue — ${esc(eq.tag)} at ${esc(p.name)} (expected ${esc(log?.etr) || '—'}).`,
+  maintenance: (eq, p) => `${eq.tag} put into scheduled maintenance at ${p.name}.`,
+  breakdown:   (eq, p) => `Breakdown reported — ${eq.tag} at ${p.name}.`,
+  operational: (eq, p) => `${eq.tag} returned to service at ${p.name}.`,
+  overdue:     (eq, p, log) => `Maintenance overdue — ${eq.tag} at ${p.name} (expected ${log?.etr || '—'}).`,
 };
 function pushEventNotification(eventKey, eq, log) {
   const plant = plantById(eq.plantId); if (!plant) return;
@@ -799,23 +816,23 @@ function buildNotifFeed() {
   // Open / overdue work-orders
   getPendingTasks().forEach(({ l, e }) => {
     if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId, href: '#/equipment/' + e.id,
-      message: `Work-order overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (expected ${l.etr}).` });
+      message: `Work-order overdue — ${e.tag} at ${plantName(e.plantId)} (expected ${l.etr}).` });
     else if (woStateOf(l) === 'open') feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
-      message: `Scheduled task ready to start — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
+      message: `Scheduled task ready to start — ${e.tag} at ${plantName(e.plantId)}.` });
   });
   // Overdue PPM (planned date passed, no completion this month)
   getOverduePPM().forEach(({ e, date }) => {
     const ds = dstr(date);
     feed.push({ key: `ppm-overdue-${e.id}-${ds}`, group: 'overdue', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
-      message: `PPM overdue — ${esc(e.tag)} at ${esc(plantName(e.plantId))} (planned ${ds}).` });
+      message: `PPM overdue — ${e.tag} at ${plantName(e.plantId)} (planned ${ds}).` });
   });
   // Due today + (admins only) upcoming within 7 days
   getUpcomingPPM(7).forEach(({ e, date }) => {
     const ds = dstr(date);
     if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
-      message: `Maintenance due today — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
+      message: `Maintenance due today — ${e.tag} at ${plantName(e.plantId)}.` });
     else if (admin) feed.push({ key: `ppm-up-${e.id}-${ds}`, group: 'upcoming', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
-      message: `Upcoming — ${esc(e.tag)} at ${esc(plantName(e.plantId))} on ${ds}.` });
+      message: `Upcoming — ${e.tag} at ${plantName(e.plantId)} on ${ds}.` });
   });
   // Health alerts: equipment in the At Risk / Critical bands (scoped like
   // everything else — admins see all, engineers their assigned plants).
@@ -826,7 +843,7 @@ function buildNotifFeed() {
       const hs = healthScore(e);
       if (hs.score >= 60) return;
       feed.push({ key: `health-${e.id}-${hs.band}`, group: 'health', date: todayStr, plantId: e.plantId, href: '#/equipment/' + e.id,
-        message: `Health ${hs.band.toLowerCase()} (${hs.score}/100) — ${esc(e.tag)} at ${esc(plantName(e.plantId))}.` });
+        message: `Health ${hs.band.toLowerCase()} (${hs.score}/100) — ${e.tag} at ${plantName(e.plantId)}.` });
     });
   }
   // Activity (admins only): breakdowns, status changes — shared table in real
@@ -857,12 +874,14 @@ function unreadNotifCount() {
 // Panel filters (plant + time window)
 function applyNotifFilters(feed) {
   let out = feed;
-  if (ui.notifPlant !== 'all') out = out.filter(n => n.plantId === ui.notifPlant);
+  if (ui.notifPlant !== 'all') out = out.filter(n => n.plantId === ui.notifPlant || !n.plantId);   // batch-level items (no plant) always show
   if (ui.notifTime !== 'all') {
     const days = { today: 0, '7d': 7, '30d': 30 }[ui.notifTime];
     const t = new Date(today() + 'T00:00:00');
     out = out.filter(n => {
-      const d = new Date(String(n.date).slice(0, 10) + 'T00:00:00');
+      // Activity carries full ISO timestamps — compare LOCAL dates (IST-safe).
+      const ds = n.group === 'activity' ? dstr(new Date(n.date)) : String(n.date).slice(0, 10);
+      const d = new Date(ds + 'T00:00:00');
       const diff = Math.abs(Math.round((d - t) / 86400000));
       return ui.notifTime === 'today' ? diff === 0 : diff <= days;
     });
@@ -918,15 +937,15 @@ function notifPanelBody() {
     const rows = items.map(n => {
       const isSeen = seen.has(n.key);
       const meta = [notifWhen(n)];
-      if (n.group === 'activity' && n.channels?.length) meta.push('via ' + n.channels.map(chLabel).join(', '));
-      if (n.group === 'activity' && n.recipients?.length) meta.push('→ ' + n.recipients.map(userName).join(', '));
+      if (n.group === 'activity' && n.channels?.length) meta.push('via ' + esc(n.channels.map(chLabel).join(', ')));
+      if (n.group === 'activity' && n.recipients?.length) meta.push('→ ' + esc(n.recipients.map(userName).join(', ')));
       return `
       <div class="notif-item ${isSeen ? '' : 'unseen'} ${n.href ? 'clickable' : ''}" ${n.href ? `onclick="notifGo('${n.href}', '${n.key}')"` : ''}>
         <div class="n-icon" style="background:${bg};color:${color}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
         </div>
         <div class="flex-1 min-w-0">
-          <div class="n-msg">${n.message}</div>
+          <div class="n-msg">${esc(n.message)}</div>
           <div class="n-meta">${meta.filter(Boolean).join(' · ')}</div>
         </div>
         ${n.href ? '<svg class="n-go" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>' : ''}
@@ -981,8 +1000,9 @@ function toggleNotifPanel() {
     </div>`);
 }
 function markAllNotifsRead() {
-  const keys = buildNotifFeed().map(n => n.key);
-  localStorage.setItem(notifSeenKey(), JSON.stringify(keys.slice(0, 1000)));
+  const seen = loadSeenNotifs();
+  buildNotifFeed().forEach(n => seen.add(n.key));
+  localStorage.setItem(notifSeenKey(), JSON.stringify([...seen].slice(-1000)));
   renderHeaderChrome();
   const panel = document.getElementById('notifPanel');
   if (panel) { panel.remove(); toggleNotifPanel(); }
@@ -1048,9 +1068,9 @@ function renderDashboard() {
     const et = ecStatus(log?.etr, log?.endDate);
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
-      <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
-      <td><div class="cell-primary">${log ? log.reason : '—'}</div><div class="cell-muted">${log ? 'Tech: ' + log.technician : ''}</div></td>
+      <td><div class="cell-primary">${log ? log.reason : '—'}</div><div class="cell-muted">${log ? 'Tech: ' + esc(log.technician) : ''}</div></td>
       <td><div class="cell-primary">${fmt(log?.startDate)}</div><div class="cell-muted">Expected: ${fmt(log?.etr)}</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
       <td>${statusBadge(e.status)}</td>
@@ -1115,7 +1135,7 @@ function renderEquipment() {
     const hs = SUPA ? healthScore(e) : null;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
-      <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div>${SUPA && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<div class="text-[10px] font-medium text-amber-600 mt-0.5">No parts recorded</div>' : ''}</td>
       <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
       ${hs ? `<td class="col-center">${healthBadge(hs.score)}</td>` : ''}
@@ -1262,7 +1282,7 @@ function renderEquipmentDetail(id) {
       <div class="flex items-start flex-wrap gap-3">
         <div>
           <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? healthBadge(hs.score) : ''}</div>
-          <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${plantName(e.plantId)}</div>
+          <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${esc(plantName(e.plantId))}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
           ${!retired && isAdmin() ? `<button onclick="openEditEquipmentModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium inline-flex items-center gap-1" title="Edit equipment">
@@ -1275,8 +1295,8 @@ function renderEquipmentDetail(id) {
         </div>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 text-sm">
-        <div><div class="text-xs uppercase text-slate-500">Plant</div><div>${plantName(e.plantId)}</div></div>
-        <div><div class="text-xs uppercase text-slate-500">Installed</div><div>${e.installed}</div></div>
+        <div><div class="text-xs uppercase text-slate-500">Plant</div><div>${esc(plantName(e.plantId))}</div></div>
+        <div><div class="text-xs uppercase text-slate-500">Installed</div><div>${fmt(e.installed)}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Expected life</div><div>${expectedLifeFor(e)} yrs${e.expectedLifeYears ? '' : ' <span class="text-[10px] text-slate-400">(type default)</span>'}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Expected Completion</div><div>${open?.etr || '—'}</div></div>
       </div>
@@ -1349,7 +1369,7 @@ function partsCard(e) {
   const parts = partsFor(e.id);
   const critBadge = c => c >= 8 ? 'badge-bd' : c >= 5 ? 'badge-mt' : 'badge-neutral';
   const rows = parts.map(p => `<tr>
-      <td><div class="cell-primary">${esc(p.name)}</div>${p.source === 'ai' && p.source_url ? `<div class="cell-muted"><a href="${esc(p.source_url)}" target="_blank" rel="noopener" class="text-brand hover:underline">source</a></div>` : ''}</td>
+      <td><div class="cell-primary">${esc(p.name)}</div>${p.source === 'ai' && safeUrl(p.source_url) ? `<div class="cell-muted"><a href="${esc(safeUrl(p.source_url))}" target="_blank" rel="noopener" class="text-brand hover:underline">source</a></div>` : ''}</td>
       <td><div class="cell-muted">${esc(p.spec) || '—'}</div></td>
       <td><div class="cell-primary">${p.qty}</div></td>
       ${isAdmin() ? `<td><span class="badge ${critBadge(p.criticality)}">${p.criticality}/10</span></td>` : ''}
@@ -1542,7 +1562,7 @@ function enrichShowReview(eqId) {
       <div class="p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
         Draft for <b>${esc(e.make)} ${esc(e.model)}${window._enrich.variant ? ' ' + esc(window._enrich.variant) : ''}</b>
         ${d.power ? ` · Power: <b>${esc(d.power)}</b>` : ''}
-        ${d.expected_life_years ? ` · Expected life: <b>${d.expected_life_years} yrs</b>` : ''}
+        ${parseInt(d.expected_life_years, 10) > 0 ? ` · Expected life: <b>${parseInt(d.expected_life_years, 10)} yrs</b>` : ''}
         — review before saving. Untick anything you don't want; adjust criticality freely.
       </div>
       ${parts.length ? `<div class="border border-slate-200 rounded-md divide-y divide-slate-100">
@@ -1551,14 +1571,14 @@ function enrichShowReview(eqId) {
             <input type="checkbox" name="inc-${i}" checked />
             <div class="flex-1 min-w-0">
               <div class="text-xs font-medium text-slate-800">${esc(p.name)}</div>
-              <div class="text-[11px] text-slate-500">${esc(p.spec) || 'no spec found'} · qty ${p.qty || 1}</div>
+              <div class="text-[11px] text-slate-500">${esc(p.spec) || 'no spec found'} · qty ${parseInt(p.qty, 10) || 1}</div>
             </div>
             <label class="text-[10px] text-slate-500">Crit
               <input type="number" name="crit-${i}" min="1" max="10" value="${Math.min(10, Math.max(1, p.criticality || 5))}" class="w-12 border border-slate-300 rounded px-1 py-0.5 text-xs ml-1" />
             </label>
           </div>`).join('')}
       </div>` : '<div class="p-3 text-center text-xs text-slate-500 border border-slate-200 rounded-md">The datasheet was found but no parts list could be extracted — add parts manually.</div>'}
-      ${sources.length ? `<div class="text-[11px] text-slate-500">Sources: ${sources.slice(0,3).map(s => `<a href="${esc(s)}" target="_blank" rel="noopener" class="text-brand hover:underline break-all">${esc(s.replace(/^https?:\/\//,'').slice(0,50))}</a>`).join(' · ')}</div>` : ''}
+      ${sources.filter(safeUrl).length ? `<div class="text-[11px] text-slate-500">Sources: ${sources.filter(safeUrl).slice(0,3).map(s => `<a href="${esc(s)}" target="_blank" rel="noopener" class="text-brand hover:underline break-all">${esc(s.replace(/^https?:\/\//,'').slice(0,50))}</a>`).join(' · ')}</div>` : ''}
       <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Discard</button>
         ${parts.length ? '<button type="submit" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Approve &amp; save</button>' : ''}
@@ -1570,7 +1590,7 @@ async function submitEnrichApprove(ev, eqId) {
   if (!isAdmin() || !SUPA || !window._enrich?.draft) return;
   const f = new FormData(ev.target);
   const d = window._enrich.draft;
-  const src = (Array.isArray(d.sources) && d.sources[0]) || '';
+  const src = safeUrl(Array.isArray(d.sources) && d.sources[0]) || '';
   const rows = (d.parts || [])
     .map((p, i) => ({ p, i }))
     .filter(({ i }) => f.get('inc-' + i))
@@ -1628,7 +1648,7 @@ function renderLog() {
         <option value="">All statuses</option><option value="open">Ongoing</option><option value="closed">Completed</option>
       </select>
       <select id="fTech" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white flex-shrink-0" onchange="renderLogRows()">
-        <option value="">All technicians</option>${[...new Set(state.logs.map(l => l.technician).filter(Boolean))].sort().map(t=>`<option>${t}</option>`).join('')}
+        <option value="">All technicians</option>${[...new Set(state.logs.map(l => l.technician).filter(Boolean))].sort().map(t=>`<option>${esc(t)}</option>`).join('')}
       </select>
       <div class="inline-flex items-center gap-1 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-600 flex-shrink-0">
         <span>From</span>
@@ -1678,7 +1698,7 @@ function getFilteredLogs() {
       if (fTo   && l.startDate > fTo)   return false;
       if (fTech && l.technician !== fTech) return false;
       if (fSearch) {
-        const blob = `${e.tag} ${esc(e.make)} ${esc(e.model)} ${e.location} ${plantName(e.plantId)} ${l.notes} ${l.completionNotes||''} ${l.technician}`.toLowerCase();
+        const blob = `${e.tag} ${e.make} ${e.model} ${e.location} ${plantName(e.plantId)} ${l.notes} ${l.completionNotes||''} ${l.technician}`.toLowerCase();
         if (!blob.includes(fSearch)) return false;
       }
       return true;
@@ -1708,7 +1728,7 @@ function renderLogRows() {
       : `<span class="font-medium ${overdue?'text-red-600':'text-brand'}">${durDays} day${durDays===1?'':'s'} (ongoing)</span>`;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.make)} ${esc(e.model)}</div></td>
-      <td><div class="cell-primary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">${e.type} · ${esc(e.location)}</div></td>
       <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">${l.endDate ? 'End: ' + l.endDate : 'Expected: ' + (l.etr || '—')}</div></td>
       <td>${durHtml}</td>
@@ -1753,7 +1773,7 @@ function renderPlants() {
   const rows = state.plants.map(p => {
     const eqCount = state.equipment.filter(e => e.plantId === p.id).length;
     return `<tr>
-      <td><div class="cell-primary">${p.name}</div><div class="cell-secondary">${p.location}</div></td>
+      <td><div class="cell-primary">${esc(p.name)}</div><div class="cell-secondary">${esc(p.location)}</div></td>
       <td><div class="cell-primary">${eqCount}</div><div class="cell-muted">equipment</div></td>
       <td class="col-center">
         <div class="inline-flex gap-1.5 flex-wrap justify-center">
@@ -1885,7 +1905,7 @@ function renderTeam() {
   const pending = SUPA ? [] : (state.invites || []).filter(i => i.status === 'pending');
   const inviteRows = pending.map(i => `<tr>
       <td>
-        <div class="cell-primary">${i.name}</div>
+        <div class="cell-primary">${esc(i.name)}</div>
         <div class="cell-muted">${i.email}</div>
       </td>
       <td><span class="badge ${i.role === 'Admin' ? 'badge-brand' : 'badge-neutral'}">${i.role}</span></td>
@@ -1996,7 +2016,11 @@ async function submitAddTech(ev) {
   const unlock = lockSubmit(ev);
   const { data, error } = await SUPA.from('technicians')
     .insert({ name, phone: (f.get('phone') || '').trim(), created_by: authUser?.id || null }).select().single();
-  if (error) { unlock(); saveError(error); return; }
+  if (error) {
+    unlock();
+    if (error.code === '23505') { alert('A technician with this name is already on the list.'); return; }
+    saveError(error); return;
+  }
   if (cloudTechnicians) { cloudTechnicians.push(data); cloudTechnicians.sort((a, b) => a.name.localeCompare(b.name)); }
   closeModal(); route();
   toast(`${esc(name)} added to the technician list.`);
@@ -2173,7 +2197,7 @@ function showInviteLinkModal(inviteId) {
   document.getElementById('modalTitle').textContent = 'Invite created';
   document.getElementById('modalBody').innerHTML = `
     <div class="space-y-3 text-sm">
-      <div class="text-slate-700">Invite for <b>${invite.name}</b> (${invite.email}) as <b>${invite.role}</b>.</div>
+      <div class="text-slate-700">Invite for <b>${esc(invite.name)}</b> (${esc(invite.email)}) as <b>${esc(invite.role)}</b>.</div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Invite link</label>
         <div class="flex gap-2">
@@ -2545,7 +2569,7 @@ function renderRecipPicker(eventKey) {
   const ids = window._recipState[eventKey] || [];
   const chips = ids.map(uid => {
     const u = state.users.find(x => x.id === uid); if (!u) return '';
-    return `<span class="recip-chip">${esc(u.name)}<button type="button" onclick="removeRecipient('${eventKey}','${uid}')" aria-label="Remove ${u.name}">&times;</button></span>`;
+    return `<span class="recip-chip">${esc(u.name)}<button type="button" onclick="removeRecipient('${eventKey}','${uid}')" aria-label="Remove ${esc(u.name)}">&times;</button></span>`;
   }).join('');
   return `
     <div class="recip-picker">
@@ -2862,7 +2886,7 @@ function renderPendingTab(pending, overdue) {
   const openRows = fOpen.map(({l, e}) => {
     const et = ecStatus(l.etr, null);
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">${esc(l.notes).slice(0,60)}</div></td>
       <td><div class="cell-primary">${l.etr || l.startDate}</div><div class="cell-muted">Scheduled</div></td>
@@ -2886,7 +2910,7 @@ function renderPendingTab(pending, overdue) {
   const ongoingRows = fOngoing.map(({l, e}) => {
     const et = ecStatus(l.etr, null);
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">Tech: ${esc(l.technician)}</div></td>
       <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">Expected: ${l.etr||'—'}</div></td>
@@ -2900,7 +2924,7 @@ function renderPendingTab(pending, overdue) {
     const ds = dstr(date);
     const overdueBy = Math.round((todayD - date) / 86400000);
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">Scheduled PPM</div><div class="cell-muted">${slot}</div></td>
       <td><div class="cell-primary">${ds}</div><div class="cell-muted">Planned date</div></td>
@@ -2935,7 +2959,13 @@ function renderPendingTab(pending, overdue) {
 
 // Start an auto-generated (open) work-order: flags the equipment and stamps
 // the acting engineer as technician if none was set.
+window._busyWO = window._busyWO || new Set();
 async function startWorkOrder(logId) {
+  if (window._busyWO.has(logId)) return;   // double-click guard
+  window._busyWO.add(logId);
+  try { await _startWorkOrderInner(logId); } finally { window._busyWO.delete(logId); }
+}
+async function _startWorkOrderInner(logId) {
   const log = state.logs.find(l => l.id === logId);
   if (!log || woStateOf(log) !== 'open') { alert('This work-order has already been started.'); return; }
   const eq = eqById(log.equipmentId);
@@ -2971,7 +3001,7 @@ function renderUpcomingTab(upcoming) {
     const daysAway = Math.round((date - new Date(todayStr + 'T00:00:00')) / 86400000);
     const dueLabel = isToday ? `<span class="badge badge-mt">Due today</span>` : `<span class="badge badge-brand">In ${daysAway}d</span>`;
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${plantName(e.plantId)}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${ds}</div><div class="cell-muted">${slot}</div></td>
       <td>${dueLabel}</td>
@@ -3064,7 +3094,7 @@ function renderVisitsTabInner(visits, pills, customPanel) {
   const rows = filtered.map(v => {
     const plantNames = v.plants.map(p => p.name).join(', ');
     return `<tr>
-      <td><div class="cell-primary">${v.date}</div><div class="cell-muted">${v.technicians.join(', ')}</div></td>
+      <td><div class="cell-primary">${v.date}</div><div class="cell-muted">${esc(v.technicians.join(', '))}</div></td>
       <td><div class="cell-primary">${v.equipment.length} equipment</div><div class="cell-muted">${v.logs.length} task${v.logs.length===1?'':'s'} completed</div></td>
       <td><div class="cell-primary">${plantNames}</div></td>
       <td><div class="text-xs text-slate-600 max-w-md truncate" title="${v.equipment.map(e=>e.tag).join(', ').replace(/"/g,'&quot;')}">${v.equipment.map(e=>e.tag).join(', ')}</div></td>
@@ -3117,7 +3147,14 @@ function submitVisitReport(ev, date) {
   else openPdfPreview(result.doc, result.filename, 'Visit Report');
 }
 function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
-  const logs = state.logs.filter(l => l.endDate === date);
+  // Scope like the on-screen list: engineers only see their assigned plants,
+  // and logs whose equipment was deleted can't be reported on.
+  const ids = accessiblePlantIds();
+  const logs = state.logs.filter(l => {
+    if (l.endDate !== date) return false;
+    const e = eqById(l.equipmentId);
+    return !!e && ids.includes(e.plantId);
+  });
   if (!logs.length) { alert('No completed tasks on this date.'); return null; }
   const equipment = [...new Set(logs.map(l => l.equipmentId))].map(eqById).filter(Boolean);
   const plants = [...new Set(equipment.map(e => e.plantId))].map(plantById).filter(Boolean);
@@ -3260,7 +3297,8 @@ function buildServiceReportDoc(args) {
     const filtered = getFilteredLogs();
     ids = [...new Set(filtered.map(({l}) => l.equipmentId))];
   } else {
-    ids = state.equipment.map(e => e.id);
+    const plantIds = accessiblePlantIds();
+    ids = activeEquipment().filter(e => plantIds.includes(e.plantId)).map(e => e.id);
   }
   if (!ids.length) return null;
 
@@ -3953,10 +3991,17 @@ async function submitEquipmentForm(ev, mode, eqId) {
   if (mode === 'edit') {
     const cur = eqById(eqId); if (!cur) return;
     const patch = { tag, type: f.get('type'), make, model, plantId: f.get('plantId'), installed: f.get('installed') || cur.installed };
+    // Equipment imported before make/model were known carries a duty name
+    // ("Raw Sewage Pump"). First edit renames it to Make + Model — keep the
+    // duty name as its Location so nothing is lost.
+    if ((!cur.make || !cur.model) && cur.tag && cur.tag !== tag && !cur.location) patch.location = cur.tag;
     if (SUPA) {
       const unlock = lockSubmit(ev);
       const { error } = await SUPA.from('equipment').update(eqToDb({ ...cur, ...patch })).eq('id', eqId);
       if (error) { unlock(); saveError(error); return; }
+      // Make & model just became known — release any waiting research row.
+      const qRow = (cloudQueue || []).find(x => x.equipment_id === eqId && x.status === 'needs_info');
+      if (qRow && make && model) await setQueueRow(qRow.id, { status: 'pending', error: null });
       await hydrateCloud(); closeModal(); route(); return;
     }
     Object.assign(cur, patch);
@@ -4087,6 +4132,8 @@ function onPPMFileChosen(input) {
 // Non-equipment / procedural rows we don't track as maintainable equipment
 const PPM_EXCLUDE_RE = /test\b|\bcheck\b|monitoring|\blog\b|hardness|turbidity|chlorine|reading|sensor|detector|analys|flow ?meter|flowmeter|\bmeter\b|camera|cctv|tank cleaning|\bcleaning\b|settler|\bdiffuser\b|thickener|\bpanel\b|\bmcc\b|earthing|\bcable|wiring|transformer/i;
 const PPM_TYPE_RE = [
+  ['NRV',   /\bnrvs?\b|non.?return/i],
+  ['Valve', /\bvalves?\b/i],
   ['Motor', /\bmotor\b/i],
   ['Pump', /pump/i],
   ['Blower', /blower|air ?lift/i],
@@ -4167,10 +4214,27 @@ async function submitImportPPM(ev) {
   if (!plantId || !rows || !rows.length) return;
 
   const base = Date.now();
+  // Name = Make + Model wherever the sheet provides them (duty name moves to
+  // Location); rows without make/model keep the duty name until Review fills
+  // them in. Collisions get #2, #3... — checked against the plant AND this batch.
+  const takenTags = new Set(state.equipment.filter(x => x.plantId === plantId).map(x => x.tag));
+  const importTagFor = (r) => {
+    const nm = (!r.make || !r.model) ? r.tag : `${r.make} ${r.model}`.replace(/\s+/g, ' ').trim();
+    let tag = nm, n = 2;
+    while (takenTags.has(tag)) tag = `${nm} #${n++}`;
+    takenTags.add(tag);
+    return tag;
+  };
+  // Same file imported twice? Every base name already exists at this plant.
+  const existingBase = new Set(state.equipment.filter(x => x.plantId === plantId).map(x => x.tag));
+  const dupCount = rows.filter(r => existingBase.has((!r.make || !r.model) ? r.tag : `${r.make} ${r.model}`.replace(/\s+/g, ' ').trim())).length;
+  if (dupCount === rows.length && rows.length > 0 &&
+      !confirm(`All ${rows.length} equipment in this file already exist at this plant — this looks like a re-import and would create duplicates.\n\nImport anyway?`)) return;
   const newEquipment = rows.map((r, idx) => ({
     id: `EQ-IMP-${base}-${idx}`,
-    tag: r.tag, type: r.type, make: r.make, model: r.model,
-    plantId, location: '', installed: today(), status: 'Operational',
+    tag: importTagFor(r), type: r.type, make: r.make, model: r.model,
+    plantId, location: (r.make && r.model) ? r.tag : '',
+    installed: today(), status: 'Operational',
     slot: r.slot || null,
   }));
 
@@ -4207,7 +4271,8 @@ async function submitImportPPM(ev) {
   state.equipment = state.equipment.concat(newEquipment);
   state.slots = Object.assign({}, state.slots || {}, newSlots);
   state.logs = state.logs.concat(newLogs);
-  saveEq(state.equipment); saveSlots(state.slots); saveLog(state.logs);
+  try { saveEq(state.equipment); saveSlots(state.slots); saveLog(state.logs); }
+  catch (e) { alert('Import too large for browser storage — it was applied for this session only.'); }
   closeModal();
   alert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
   location.hash = '#/equipment'; ui.plantFilter = plantId; route();
@@ -4223,7 +4288,8 @@ let _queueNotConfigured = false;
 
 function queueRows() { return cloudQueue || []; }
 function reviewAttentionCount() {
-  return queueRows().filter(q => ['needs_info', 'ambiguous', 'ready', 'failed'].includes(q.status)).length;
+  return queueRows().filter(q =>
+    ['needs_info', 'ambiguous', 'ready', 'failed'].includes(q.status) && eqById(q.equipment_id)).length;
 }
 function queuePillHtml() {
   if (!_queueActive) return '';
@@ -4246,18 +4312,52 @@ async function setQueueRow(id, patch) {
 }
 async function runEnrichmentQueue() {
   if (!SUPA || !authUser || !isAdmin() || _queueActive) return;
-  if (!queueRows().some(q => q.status === 'pending')) return;
+  if (!queueRows().some(q => q.status === 'pending' || q.status === 'running')) return;
+  // If the equipment fetch failed (or came back empty while the queue has
+  // rows), every eqById() lookup would miss and the whole queue would be
+  // mass-skipped as "equipment no longer exists". Refuse to run instead.
+  if (hydrateErrors.includes('equipment') || (!state.equipment.length && queueRows().length)) return;
   _queueActive = true; _queueNotConfigured = false;
+  // A tab closed (or crashed) mid-research leaves rows stuck on 'running'.
+  // Reclaim only STALE ones (>10 min old) — a fresh 'running' row belongs to
+  // another live admin tab and must not be stolen.
+  const staleCut = Date.now() - 10 * 60 * 1000;
+  for (const stale of queueRows().filter(x => x.status === 'running' &&
+      (!x.updated_at || new Date(x.updated_at).getTime() < staleCut))) {
+    await setQueueRow(stale.id, { status: 'pending' });
+  }
   renderQueuePill();
   let found = 0, attention = 0, processed = 0;
-  while (true) {
+  // Hard cap: if a status write ever fails to persist, a row could stay
+  // 'pending' forever — the guard (and the break-on-write-failure checks
+  // below) make an infinite loop impossible.
+  let guard = queueRows().length * 3 + 10;
+  // Refresh the Review page as results land — but never wipe a form the
+  // admin is typing into, or re-render under an open modal.
+  const refreshReview = () => {
+    if (location.hash !== '#/review') return;
+    if (document.activeElement && document.activeElement.closest('#view form')) return;
+    // Half-typed (but unfocused) make/model input also blocks the re-render.
+    if ([...document.querySelectorAll('#view form input[type="text"], #view form input:not([type])')].some(i => i.value.trim())) return;
+    const modal = document.getElementById('modal');
+    if (modal && !modal.classList.contains('hidden')) return;
+    route();
+  };
+  while (guard-- > 0) {
     const q = queueRows().find(x => x.status === 'pending');
     if (!q) break;
     const e = eqById(q.equipment_id);
-    if (!e) { await setQueueRow(q.id, { status: 'skipped', error: 'Equipment no longer exists.' }); continue; }
-    if (!e.make || !e.model) { await setQueueRow(q.id, { status: 'needs_info' }); continue; }
-    await setQueueRow(q.id, { status: 'running' });
-    if (location.hash === '#/review') route();
+    if (!e) { if (!await setQueueRow(q.id, { status: 'skipped', error: 'Equipment no longer exists.' })) break; continue; }
+    if (!e.make || !e.model) { if (!await setQueueRow(q.id, { status: 'needs_info' })) break; continue; }
+    // Atomic claim: only one tab wins the pending→running transition; the
+    // loser sees 0 updated rows and moves on (no double API spend).
+    const { data: claimed, error: claimErr } = await SUPA.from('enrichment_queue')
+      .update({ status: 'running', updated_at: new Date().toISOString() })
+      .eq('id', q.id).eq('status', 'pending').select();
+    if (claimErr) break;
+    if (!claimed || !claimed.length) { q.status = 'running'; continue; }   // another tab has it
+    q.status = 'running';
+    refreshReview();
     let data, error;
     try {
       ({ data, error } = await SUPA.functions.invoke('enrich-equipment', {
@@ -4273,22 +4373,23 @@ async function runEnrichmentQueue() {
         await setQueueRow(q.id, { status: 'pending' });
         break;
       }
-      await setQueueRow(q.id, { status: 'failed', error: String(msg).slice(0, 300) }); attention++;
+      if (!await setQueueRow(q.id, { status: 'failed', error: String(msg).slice(0, 300) })) break; attention++;
     } else if (data && data.status === 'ambiguous' && Array.isArray(data.options) && data.options.length) {
-      await setQueueRow(q.id, { status: 'ambiguous', variants: data.options }); attention++;
+      if (!await setQueueRow(q.id, { status: 'ambiguous', variants: data.options })) break; attention++;
     } else if (data && data.status === 'match' && data.data) {
-      await setQueueRow(q.id, { status: 'ready', draft: data.data }); found++;
+      if (!await setQueueRow(q.id, { status: 'ready', draft: data.data })) break; found++;
     } else {
-      await setQueueRow(q.id, { status: 'failed', error: 'No reliable manufacturer data found.' }); attention++;
+      if (!await setQueueRow(q.id, { status: 'failed', error: 'No reliable manufacturer data found.' })) break; attention++;
     }
     processed++;
     renderQueuePill();
-    if (location.hash === '#/review') route();
+    refreshReview();
   }
   _queueActive = false;
   renderQueuePill();
-  if (location.hash === '#/review') route();
-  if (processed) queueCompleteNotification(found, attention);
+  refreshReview();
+  if (processed && !queueRows().some(x => x.status === 'pending'))
+    queueCompleteNotification(found, attention);
 }
 function queueCompleteNotification(found, attention) {
   const msg = `Parts research complete — ${found} draft${found === 1 ? '' : 's'} ready to approve` +
@@ -4375,7 +4476,7 @@ function renderReview() {
       ${reviewSection('Ready to approve', 'drafted from manufacturer data', 'badge-op', ready, ({ q, e }) => `
         <div class="review-row st-ready px-5 py-3 flex items-center gap-3 flex-wrap">
           <div class="flex-1 min-w-0">${reviewRowHead(e)}
-            <div class="text-[11px] text-slate-500 mt-1">${(q.draft?.parts || []).length} part${(q.draft?.parts || []).length === 1 ? '' : 's'} drafted${q.draft?.power ? ' · ' + esc(q.draft.power) : ''}${q.draft?.expected_life_years ? ' · life ~' + q.draft.expected_life_years + ' yrs' : ''}</div>
+            <div class="text-[11px] text-slate-500 mt-1">${(q.draft?.parts || []).length} part${(q.draft?.parts || []).length === 1 ? '' : 's'} drafted${q.draft?.power ? ' · ' + esc(q.draft.power) : ''}${parseInt(q.draft?.expected_life_years, 10) > 0 ? ' · life ~' + parseInt(q.draft.expected_life_years, 10) + ' yrs' : ''}</div>
           </div>
           <div class="flex gap-2">
             <button onclick="openQueueDraftModal(${q.id})" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Review &amp; approve</button>
@@ -4461,7 +4562,7 @@ function openQueueDraftModal(qid) {
       <div class="p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
         Draft for <b>${esc(e.make)} ${esc(e.model)}${q.variant ? ' ' + esc(q.variant) : ''}</b>
         ${d.power ? ` · Power: <b>${esc(d.power)}</b>` : ''}
-        ${d.expected_life_years ? ` · Expected life: <b>${d.expected_life_years} yrs</b>` : ''}
+        ${parseInt(d.expected_life_years, 10) > 0 ? ` · Expected life: <b>${parseInt(d.expected_life_years, 10)} yrs</b>` : ''}
         — untick anything you don't want; adjust criticality freely.
       </div>
       ${parts.length ? `<div class="border border-slate-200 rounded-md divide-y divide-slate-100">
@@ -4470,14 +4571,14 @@ function openQueueDraftModal(qid) {
             <input type="checkbox" name="inc-${i}" checked />
             <div class="flex-1 min-w-0">
               <div class="text-xs font-medium text-slate-800">${esc(pt.name)}</div>
-              <div class="text-[11px] text-slate-500">${esc(pt.spec) || 'no spec found'} · qty ${pt.qty || 1}</div>
+              <div class="text-[11px] text-slate-500">${esc(pt.spec) || 'no spec found'} · qty ${parseInt(pt.qty, 10) || 1}</div>
             </div>
             <label class="text-[10px] text-slate-500">Crit
               <input type="number" name="crit-${i}" min="1" max="10" value="${Math.min(10, Math.max(1, pt.criticality || 5))}" class="w-12 border border-slate-300 rounded px-1 py-0.5 text-xs ml-1" />
             </label>
           </div>`).join('')}
       </div>` : '<div class="p-3 text-center text-xs text-slate-500 border border-slate-200 rounded-md">The datasheet was found but no parts list could be extracted — add parts manually.</div>'}
-      ${sources.length ? `<div class="text-[11px] text-slate-500">Sources: ${sources.slice(0, 3).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener" class="text-brand hover:underline break-all">${esc(u.replace(/^https?:\/\//, '').slice(0, 50))}</a>`).join(' · ')}</div>` : ''}
+      ${sources.filter(safeUrl).length ? `<div class="text-[11px] text-slate-500">Sources: ${sources.filter(safeUrl).slice(0, 3).map(u => `<a href="${esc(u)}" target="_blank" rel="noopener" class="text-brand hover:underline break-all">${esc(u.replace(/^https?:\/\//, '').slice(0, 50))}</a>`).join(' · ')}</div>` : ''}
       <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
         ${parts.length ? '<button type="submit" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Approve &amp; save</button>' : ''}
@@ -4493,7 +4594,7 @@ async function submitQueueApprove(ev, qid) {
   if (!q || !e || !q.draft) return;
   const f = new FormData(ev.target);
   const d = q.draft;
-  const src = (Array.isArray(d.sources) && d.sources[0]) || '';
+  const src = safeUrl(Array.isArray(d.sources) && d.sources[0]) || '';
   const partRows = (d.parts || [])
     .map((pt, i) => ({ pt, i }))
     .filter(({ i }) => f.get('inc-' + i))
@@ -4505,14 +4606,20 @@ async function submitQueueApprove(ev, qid) {
     }));
   if (!partRows.length) { alert('Nothing selected to save.'); return; }
   const unlock = lockSubmit(ev);
+  // Mark done FIRST so a re-submit can never double-insert the parts; revert
+  // to 'ready' if the parts write then fails.
+  if (!await setQueueRow(qid, { status: 'done' })) { unlock(); alert('Could not update the queue — try again.'); return; }
   const { error } = await SUPA.from('equipment_parts').insert(partRows);
-  if (error) { unlock(); saveError(error); return; }
+  if (error) { await setQueueRow(qid, { status: 'ready' }); unlock(); saveError(error); return; }
   const eqPatch = {};
-  if (q.variant && !e.model.includes(q.variant)) eqPatch.model = `${e.model} ${q.variant}`;
+  if (q.variant && !e.model.includes(q.variant)) {
+    eqPatch.model = `${e.model} ${q.variant}`;
+    // The name follows Make + Model — keep it in sync with the refined model.
+    eqPatch.tag = deriveTag(e.make, eqPatch.model, e.plantId, e.id);
+  }
   const lifeYears = parseInt(d.expected_life_years, 10);
   if (lifeYears > 0 && lifeYears < 60) eqPatch.expected_life_years = lifeYears;
   if (Object.keys(eqPatch).length) await SUPA.from('equipment').update(eqPatch).eq('id', e.id);
-  await setQueueRow(qid, { status: 'done' });
   await hydrateCloud();
   closeModal(); route();
   toast(`${partRows.length} part${partRows.length === 1 ? '' : 's'} saved for ${esc(e.tag)}.`);
