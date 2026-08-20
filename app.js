@@ -1512,7 +1512,7 @@ function renderEquipmentDetail(id) {
     <div class="bg-white rounded-xl border border-slate-200 p-6 ${retired ? '' : 'mt-3'} mb-6">
       <div class="flex items-start flex-wrap gap-3">
         <div>
-          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? `${healthBadge(hs.score)}<button onclick="openHealthModal('${e.id}')" class="health-q w-[18px] h-[18px] rounded-full border border-slate-300 text-slate-500 hover:border-brand hover:text-brand text-[11px] font-semibold leading-none grid place-items-center" title="Why this score?" aria-label="Why this score?">?</button>` : ''}</div>
+          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? `${healthBadge(hs.score)}<button onclick="openHealthModal('${e.id}')" class="health-q w-[18px] h-[18px] rounded-full border border-slate-300 text-slate-500 hover:border-brand hover:text-brand text-[11px] font-semibold leading-none grid place-items-center" title="Why this score?" aria-label="Why this score?">?</button>` : ''}${SUPA && !retired && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<span class="badge badge-mt" title="Health scoring stays coarse until parts are recorded">No parts recorded</span>' : ''}</div>
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${esc(plantName(e.plantId))}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
@@ -1529,7 +1529,12 @@ function renderEquipmentDetail(id) {
         <div><div class="text-xs uppercase text-slate-500">Plant</div><div>${esc(plantName(e.plantId))}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Installed</div><div>${fmt(e.installed)}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Expected life</div><div>${expectedLifeFor(e)} yrs${e.expectedLifeYears ? '' : ' <span class="text-[10px] text-slate-400">(type default)</span>'}</div></div>
-        <div><div class="text-xs uppercase text-slate-500">Expected Completion</div><div>${open?.etr || '—'}</div></div>
+        ${open ? `<div><div class="text-xs uppercase text-slate-500">Expected Completion</div><div>${open.etr || '—'}</div></div>`
+          : (() => {
+              // No open job — the useful date is the next planned PPM, if any.
+              const up = e.slot ? getUpcomingPPM(60).find(x => x.e.id === e.id) : null;
+              return up ? `<div><div class="text-xs uppercase text-slate-500">Next PPM Due</div><div>${dstr(up.date)}</div></div>` : '';
+            })()}
       </div>
     </div>
 
@@ -4374,9 +4379,16 @@ async function submitEquipmentForm(ev, mode, eqId) {
       const { error } = await SUPA.from('equipment').insert(eqToDb(newEq));
       if (error) { unlock(); saveError(error); return; }
       await hydrateCloud(); closeModal();
-      // Land on the new equipment's page so its parts can be recorded right away.
+      // Land on the new equipment's page and go straight into parts research —
+      // the search runs, variants are offered if the model has several, and
+      // nothing saves without approval. (Budget-gated; Cancel keeps manual entry.)
       location.hash = '#/equipment/' + newEq.id;
-      toast(partsNudge ? `${esc(newEq.tag)} added — now record its parts.` : `${esc(newEq.tag)} added.`);
+      if (partsNudge) {
+        toast(`${esc(newEq.tag)} added — looking up its parts…`);
+        setTimeout(() => { try { openEnrichModal(newEq.id); } catch (err) {} }, 400);
+      } else {
+        toast(`${esc(newEq.tag)} added.`);
+      }
       return;
     }
     state.equipment.push(newEq);
