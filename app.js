@@ -162,6 +162,7 @@ let cloudUsers = null;      // real users hydrated from Supabase profiles (real 
 let cloudAssignments = {};  // userId -> [plantId] (real mode)
 let cloudQueue = null;      // background parts-research queue (admins, real mode)
 let cloudTechnicians = null; // technician registry (real mode)
+let cloudResearchUsage = null; // { day, calls } — AI research spent today
 let cloudPlants = null, cloudEquipment = null, cloudLogs = null, cloudSlots = null, cloudParts = null, cloudLogParts = null;
 let hydrateErrors = [];     // table names that failed to hydrate (drives the error banner)
 
@@ -1745,12 +1746,28 @@ function enrichSetBody(html) { document.getElementById('modalBody').innerHTML = 
 
 async function runEnrichment(eqId, variant) {
   const e = eqById(eqId); if (!e) return;
+  const budget = await getResearchBudget();
+  if (budget.left <= 0) {
+    enrichSetBody(`
+      <div class="space-y-3 text-sm">
+        <div class="p-3 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          Today's AI research budget (${budget.limit} calls) is used up — it resets tomorrow.
+          Add this equipment's parts manually, or raise RESEARCH_DAILY_LIMIT if the spend is intended.
+        </div>
+        <div class="flex justify-end gap-2">
+          <button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
+          <button onclick="closeModal(); openAddPartModal('${eqId}')" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Add manually</button>
+        </div>
+      </div>`);
+    return;
+  }
   let data, error;
   try {
     ({ data, error } = await SUPA.functions.invoke('enrich-equipment', {
       body: { make: e.make, model: e.model, eqType: e.type, variant: variant || undefined },
     }));
   } catch (err) { error = err; }
+  if (!error || error.context) bumpResearchUsage();   // answered = spent
   if (error) {
     let msg = error.message || String(error);
     try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
@@ -4354,8 +4371,10 @@ const FREQ_LEGEND = [
   ['Y',  'Yearly',       'once a year'],
 ];
 
-function openImportPPMModal() {
+async function openImportPPMModal() {
   window._importedRows = null;
+  const budget = SUPA ? await getResearchBudget() : null;
+  window._importBudget = budget;
   const plantOpts = state.plants.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
   const legend = FREQ_LEGEND.map(([code, name, desc]) =>
     `<div class="flex items-baseline gap-2 text-xs"><span class="inline-block min-w-[28px] text-center font-semibold text-brand bg-brand-50 border border-brand-100 rounded px-1.5 py-0.5">${code}</span><span class="font-medium text-slate-700">${name}</span><span class="text-slate-500">— ${desc}</span></div>`
@@ -4384,6 +4403,16 @@ function openImportPPMModal() {
         <div class="text-xs text-slate-500 mt-1">Expected layout: rows of equipment with columns <code>S.No · Name · Make · Capacity · Qty</code> followed by 52 weekly slot cells marked with frequency codes.</div>
       </div>
 
+      ${SUPA ? `<label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 bg-slate-50/60 cursor-pointer">
+        <input type="checkbox" name="research" ${budget.left > 0 ? 'checked' : 'disabled'} class="mt-0.5" />
+        <span class="text-xs text-slate-600"><b>Queue AI parts research after import.</b>
+          Roughly ₹7 per pump/blower/motor, capped at ${budget.limit} calls per day.
+          <span id="researchBudgetNote" class="text-slate-500">${budget.left > 0
+            ? `${budget.left} of ${budget.limit} research calls left today.`
+            : `Today's research budget (${budget.limit}) is used up — research resumes tomorrow.`}</span>
+        </span>
+      </label>` : ''}
+
       <div id="ppmPreview" class="hidden"></div>
 
       <div class="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
@@ -4408,6 +4437,14 @@ function onPPMFileChosen(input) {
       const rows = parsePPMWorkbook(ev.target.result);
       window._importedRows = rows;
       btn.disabled = rows.length === 0;
+      const note = document.getElementById('researchBudgetNote');
+      const b = window._importBudget;
+      if (note && b) {
+        const n = rows.filter(r => !isValveType(r.type)).length;
+        note.textContent = n > b.left
+          ? `${n} to research (~₹${n * 7} total) — ${b.left} will run today, the rest continue automatically on the following days.`
+          : `${n} to research this import (~₹${n * 7}) · ${b.left} of ${b.limit} calls left today.`;
+      }
       const byType = rows.reduce((m, r) => { m[r.type] = (m[r.type]||0)+1; return m; }, {});
       const summary = Object.entries(byType).map(([t,c]) => `<span class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-brand-50 text-brand border border-brand-100 font-medium">${t}<span class="text-brand-600">${c}</span></span>`).join('');
       const sample = rows.slice(0, 8).map(r => `<tr>
@@ -4555,7 +4592,10 @@ async function submitImportPPM(ev) {
     if (error) { unlock(); saveError(error); return; }
     // Queue every non-valve for background parts research — the admin doesn't
     // review anything now; a notification arrives when the run completes.
-    const qRows = newEquipment.filter(e => !isValveType(e.type)).map(e => ({
+    // Unticking the research box imports with no research (and no queue rows);
+    // the amber "No parts recorded" hints remain as the manual to-do list.
+    const wantResearch = !!f.get('research');
+    const qRows = (wantResearch ? newEquipment.filter(e => !isValveType(e.type)) : []).map(e => ({
       equipment_id: e.id,
       status: (e.make && e.model) ? 'pending' : 'needs_info',
       batch_id: 'B-' + base,
@@ -4593,6 +4633,32 @@ async function submitImportPPM(ev) {
   location.hash = '#/equipment'; route();
 }
 
+// ---------- AI research budget (daily) ----------
+// Hard daily cap on AI calls (background queue + manual Auto-fill), so one
+// oversized import can never burn the API key — a 1,000-equipment sheet
+// spreads across days instead. Rough cost: ₹5–10 per call. Change the limit
+// here; usage persists in the research_usage table (SQL 19).
+const RESEARCH_DAILY_LIMIT = 50;
+async function getResearchBudget() {
+  const day = today();
+  if (!cloudResearchUsage || cloudResearchUsage.day !== day) {
+    cloudResearchUsage = { day, calls: 0 };
+    try {
+      const { data } = await SUPA.from('research_usage').select('day,calls').eq('day', day).maybeSingle();
+      if (data) cloudResearchUsage = data;
+    } catch (e) { /* table missing (run SQL 19) — limit still enforced per session */ }
+  }
+  return { day, used: cloudResearchUsage.calls, limit: RESEARCH_DAILY_LIMIT,
+           left: Math.max(0, RESEARCH_DAILY_LIMIT - cloudResearchUsage.calls) };
+}
+function bumpResearchUsage() {
+  if (!cloudResearchUsage) return;
+  cloudResearchUsage.calls++;
+  SUPA.from('research_usage')
+    .upsert({ day: cloudResearchUsage.day, calls: cloudResearchUsage.calls })
+    .then(() => {}, (e) => console.warn('usage write failed', e));
+}
+
 // ---------- Background parts-research queue (admins, real mode) ----------
 // PPM imports enqueue every non-valve equipment. This runner works through
 // the queue while the admin does other things: make/model → web search →
@@ -4600,6 +4666,7 @@ async function submitImportPPM(ev) {
 // fires when the run completes. Single-flight per browser tab.
 let _queueActive = false;
 let _queueNotConfigured = false;
+let _queueBudgetHit = false;
 
 function queueRows() { return cloudQueue || []; }
 function reviewAttentionCount() {
@@ -4633,6 +4700,8 @@ async function runEnrichmentQueue() {
   // mass-skipped as "equipment no longer exists". Refuse to run instead.
   if (hydrateErrors.includes('equipment') || (!state.equipment.length && queueRows().length)) return;
   _queueActive = true; _queueNotConfigured = false;
+  const budget = await getResearchBudget();
+  _queueBudgetHit = budget.left <= 0;
   // A tab closed (or crashed) mid-research leaves rows stuck on 'running'.
   // Reclaim only STALE ones (>10 min old) — a fresh 'running' row belongs to
   // another live admin tab and must not be stolen.
@@ -4666,6 +4735,8 @@ async function runEnrichmentQueue() {
     const e = eqById(q.equipment_id);
     if (!e) { if (!await setQueueRow(q.id, { status: 'skipped', error: 'Equipment no longer exists.' })) break; continue; }
     if (!e.make || !e.model) { if (!await setQueueRow(q.id, { status: 'needs_info' })) break; continue; }
+    // Today's budget spent? Leave everything pending — it resumes tomorrow.
+    if (budget.left <= 0) { _queueBudgetHit = true; break; }
     // Atomic claim: only one tab wins the pending→running transition; the
     // loser sees 0 updated rows and moves on (no double API spend).
     const { data: claimed, error: claimErr } = await SUPA.from('enrichment_queue')
@@ -4681,6 +4752,8 @@ async function runEnrichmentQueue() {
         body: { make: e.make, model: e.model, eqType: e.type, variant: q.variant || undefined },
       }));
     } catch (err) { error = err; }
+    // Any answered request cost money — count it (pure network failures did not).
+    if (!error || error.context) { budget.left--; bumpResearchUsage(); }
     if (error) {
       let msg = error.message || String(error);
       try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
@@ -4930,6 +5003,11 @@ function renderReview() {
     </div>
     ${_queueNotConfigured ? `<div class="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
       AI research isn't configured yet, so queued items are waiting. Add <b>ANTHROPIC_API_KEY</b> under Supabase → Edge Functions → Secrets (and deploy <b>enrich-equipment</b>), then reload.
+    </div>` : ''}
+    ${_queueBudgetHit ? `<div class="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+      Today's AI research budget (<b>${RESEARCH_DAILY_LIMIT}</b> calls) is used up. Queued equipment stays right
+      here and research resumes automatically tomorrow — nothing is lost. Approving, skipping and manual
+      entry all keep working.
     </div>` : ''}
     ${rows.length === 0 ? `
       <div class="bg-white rounded-xl border border-slate-200 p-10 text-center">
