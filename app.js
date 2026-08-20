@@ -230,6 +230,13 @@ function renderHydrateBanner() {
     </div>`);
 }
 async function retryHydrate() {
+  // Reconnecting from offline mode: refresh identity from the DB before data.
+  if (SUPA && window._offlineSince) {
+    try {
+      const { data } = await SUPA.auth.getSession();
+      if (data.session) await loadAuthProfile(data.session.user);
+    } catch (e) {}
+  }
   await hydrateCloud();
   // Still unreachable? Stay on the snapshot rather than an empty screen.
   if ((hydrateErrors.includes('equipment') || !cloudEquipment) && window._offlineSince == null) restoreSnapshot();
@@ -294,7 +301,10 @@ function lockSubmit(ev, label = 'Saving…') {
 // app feel, blocks JS, and can't be styled. These render inside the app.
 function showAppDialog({ title, msg, buttons }) {
   return new Promise((resolve) => {
-    document.getElementById('appDialog')?.remove();
+    // If a dialog is already up, cancel it properly — removing it without
+    // resolving would leave its awaiting caller hung forever.
+    const prev = document.getElementById('appDialog');
+    if (prev) { prev._cancel?.(); prev.remove(); }
     const wrap = document.createElement('div');
     wrap.id = 'appDialog';
     wrap.className = 'fixed inset-0 z-[95] grid place-items-center p-4';
@@ -314,6 +324,7 @@ function showAppDialog({ title, msg, buttons }) {
       b.onclick = () => { wrap.remove(); resolve(value); };
       host.appendChild(b);
     });
+    wrap._cancel = () => resolve(false);
     wrap.querySelector('[data-dismiss]').addEventListener('click', () => { wrap.remove(); resolve(false); });
     setTimeout(() => host.lastElementChild?.focus(), 30);
   });
@@ -398,7 +409,7 @@ function tagLink(e) {
 
 // ---------- State / routing / filters ----------
 let state = load();
-const ui = { plantFilter: 'all', typeFilter: 'all', eqStatusFilter: 'all', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '', notifPlant: 'all', notifTime: 'all' };
+const ui = { plantFilter: 'all', typeFilter: 'all', eqStatusFilter: 'all', reviewOpen: null, reviewQuery: '', engineerTab: 'pending', visitFilter: 'all', visitFrom: '', visitTo: '', logPage: 1, _logSig: '', notifPlant: 'all', notifTime: 'all' };
 const LOG_PAGE_SIZE = 50;
 const EQ_TYPES = ['Pump','Blower','Motor','Mixer','Screen','Filter','Centrifuge','UV System','Screw Press','Decanter','Fan','Valve','NRV','Other'];
 const isValveType = t => t === 'Valve' || t === 'NRV';
@@ -481,6 +492,7 @@ function saveSnapshot() {
       parts: cloudParts, slots: cloudSlots, techs: cloudTechnicians,
       checklists: cloudChecklists, typeLife: cloudTypeLife,
       users: cloudUsers, assignments: cloudAssignments, queue: cloudQueue,
+      logParts: cloudLogParts,
       notifs: (cloudNotifs || []).slice(0, 30),
     }));
   } catch (e) { /* quota — the snapshot is best-effort */ }
@@ -490,14 +502,20 @@ function restoreSnapshot() {
     const snap = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null');
     if (!snap || !Array.isArray(snap.equipment)) return false;
     // A snapshot only ever restores for the SAME signed-in user — role and
-    // plant scoping travel inside the stored authUser.
-    if (!authUser || !snap.user || snap.user.id !== authUser.id) return false;
+    // plant scoping travel inside the stored authUser. A different user's
+    // stale snapshot is wiped on sight, not left readable on the device.
+    if (!authUser || !snap.user) return false;
+    if (snap.user.id !== authUser.id) {
+      try { localStorage.removeItem(SNAP_KEY); } catch (e) {}
+      return false;
+    }
     authUser = snap.user;
     cloudPlants = snap.plants || []; cloudEquipment = snap.equipment || []; cloudLogs = snap.logs || [];
     cloudParts = snap.parts || []; cloudSlots = snap.slots || {}; cloudTechnicians = snap.techs || [];
     cloudChecklists = snap.checklists || null; cloudTypeLife = snap.typeLife || null;
     cloudUsers = snap.users || []; cloudAssignments = snap.assignments || {};
     cloudQueue = snap.queue || []; cloudNotifs = snap.notifs || [];
+    cloudLogParts = snap.logParts || [];
     window._offlineSince = snap.ts;
     return true;
   } catch { return false; }
@@ -580,12 +598,11 @@ async function hydrateCloud() {
         cloudTechnicians = data || [];
       }, () => {}),
   ]);
-  // A sync that brought the core data back is the moment to (re)persist the
-  // offline snapshot and leave offline mode.
-  if (!hydrateErrors.includes('equipment') && cloudEquipment) {
-    window._offlineSince = null;
-    saveSnapshot();
-  }
+  // Leave offline mode as soon as the core data is back — but only persist
+  // the snapshot on a FULLY clean sync: a partial hydrate (logs failed, say)
+  // would overwrite a complete snapshot with nulls.
+  if (!hydrateErrors.includes('equipment') && cloudEquipment) window._offlineSince = null;
+  if (!hydrateErrors.length && cloudEquipment) saveSnapshot();
   // Resume / kick the background parts-research runner (single-flight, admin-only).
   setTimeout(() => { try { runEnrichmentQueue(); } catch (e) { console.warn(e); } }, 1200);
 }
@@ -1203,11 +1220,11 @@ function markAllNotifsRead() {
 // ---------- Reusable controls ----------
 // Suggestive filter: a search box whose datalist offers the page's REAL values
 // (tags, makes, plants, people) as type-ahead suggestions.
-function suggestFilter({ id, listId, placeholder, options, oninput, width = 'w-44' }) {
+function suggestFilter({ id, listId, placeholder, options, oninput, width = 'w-44', value = '' }) {
   const opts = [...new Set(options.filter(Boolean).map(o => String(o).trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b)).slice(0, 300)
     .map(o => `<option value="${o.replace(/"/g, '&quot;')}"></option>`).join('');
-  return `<input id="${id}" list="${listId}" autocomplete="off" placeholder="${placeholder}"
+  return `<input id="${id}" list="${listId}" autocomplete="off" placeholder="${placeholder}" value="${String(value).replace(/"/g, '&quot;')}"
       class="border border-slate-300 rounded-md px-3 py-1.5 text-sm ${width}" oninput="${oninput}" /><datalist id="${listId}">${opts}</datalist>`;
 }
 // Generic live row filter for any table body.
@@ -4567,10 +4584,11 @@ async function submitImportPPM(ev) {
   state.equipment = state.equipment.concat(newEquipment);
   state.slots = Object.assign({}, state.slots || {}, newSlots);
   state.logs = state.logs.concat(newLogs);
+  let quotaNote = '';
   try { saveEq(state.equipment); saveSlots(state.slots); saveLog(state.logs); }
-  catch (e) { appAlert('Import too large for browser storage — it was applied for this session only.'); }
+  catch (e) { quotaNote = String.fromCharCode(10) + String.fromCharCode(10) + 'Note: too large for browser storage — applied for this session only.'; }
   closeModal();
-  appAlert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.`);
+  appAlert(`Imported ${newEquipment.length} equipment with ${newLogs.length} historic PPM log entries.` + quotaNote);
   ui.plantFilter = plantId; ui.typeFilter = 'all'; ui.eqStatusFilter = 'all';
   location.hash = '#/equipment'; route();
 }
@@ -4636,6 +4654,8 @@ async function runEnrichmentQueue() {
     if (document.activeElement && document.activeElement.closest('#view form')) return;
     // Half-typed (but unfocused) make/model input also blocks the re-render.
     if ([...document.querySelectorAll('#view form input[type="text"], #view form input:not([type])')].some(i => i.value.trim())) return;
+    // Open sections and the search query persist in `ui` and are restored by
+    // renderReview, so a mid-run refresh no longer destroys the workspace.
     const modal = document.getElementById('modal');
     if (modal && !modal.classList.contains('hidden')) return;
     route();
@@ -4720,7 +4740,7 @@ function queueDraftFlags(q) {
   if (parts.some(pt => !pt || !String(pt.name || '').trim())) flags.push('unnamed part');
   if (parts.some(pt => (parseInt(pt.criticality, 10) || 5) >= 8)) flags.push('high criticality suggested');
   if (!Array.isArray(d.sources) || !d.sources.filter(safeUrl).length) flags.push('no source');
-  if (q.variant && Array.isArray(q.variants) && q.variants.length > 1) flags.push(`variant auto-selected: ${q.variant}`);
+  if (q.variant && Array.isArray(q.variants) && q.variants.length >= 1) flags.push(`variant auto-selected: ${q.variant}`);
   return flags;
 }
 // One-click approval of a ready draft exactly as suggested (all parts,
@@ -4879,7 +4899,7 @@ function renderReview() {
     const readyCount = items.filter(x => x.q.status === 'ready' &&
       (x.q.draft?.parts || []).some(pt => pt && String(pt.name || '').trim())).length;
     return `
-    <details class="parts-details bg-white rounded-xl border border-slate-200 overflow-hidden mb-4" ${plantIds.length === 1 ? 'open' : ''}>
+    <details class="parts-details bg-white rounded-xl border border-slate-200 overflow-hidden mb-4" ${(ui.reviewOpen ? !!ui.reviewOpen[pid] : plantIds.length === 1) ? 'open' : ''} ontoggle="reviewToggled('${pid}', this.open)">
       <summary class="px-5 py-3 cursor-pointer select-none flex items-center gap-2 flex-wrap hover:bg-slate-50/60">
         <svg class="parts-chevron shrink-0 text-slate-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
         <span class="font-semibold text-sm">${esc(plantName(pid))}</span>
@@ -4905,7 +4925,7 @@ function renderReview() {
         ${_queueActive ? queuePillHtml() : ''}
         ${active.length ? suggestFilter({ id: 'reviewSearch', listId: 'reviewSuggest', placeholder: 'Find equipment…',
           options: active.flatMap(x => [x.e.tag, x.e.make, x.e.model, plantName(x.e.plantId)]),
-          oninput: 'filterReview(this.value)', width: 'w-44' }) : ''}
+          oninput: 'ui.reviewQuery = this.value; filterReview(this.value)', width: 'w-44', value: ui.reviewQuery }) : ''}
       </div>
     </div>
     ${_queueNotConfigured ? `<div class="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
@@ -4929,16 +4949,25 @@ function renderReview() {
     </details>` : ''}
     ${makesList}
   `;
+  if (ui.reviewQuery) filterReview(ui.reviewQuery);
 }
-// Review search: hide non-matching rows, hide empty plants, open plants with hits.
+// Remember which plant sections the admin opened/closed — re-renders (runner
+// refreshes, per-row actions) restore the exact workspace state.
+function reviewToggled(pid, open) {
+  ui.reviewOpen = ui.reviewOpen || {};
+  ui.reviewOpen[pid] = open;
+}
+// Review search: hide non-matching rows, hide empty plants, open plants with
+// hits. A query matching the PLANT (summary text) keeps its whole section.
 function filterReview(q) {
   q = (q || '').toLowerCase();
   document.querySelectorAll('#view details.parts-details').forEach(d => {
+    // textContent, not innerText: content inside a COLLAPSED section has
+    // empty innerText and would never match.
+    const plantMatch = q && d.querySelector('summary').textContent.toLowerCase().includes(q);
     let any = false;
     d.querySelectorAll('.review-row').forEach(r => {
-      // textContent, not innerText: rows inside a COLLAPSED plant section have
-      // empty innerText and would never match.
-      const show = !q || r.textContent.toLowerCase().includes(q);
+      const show = !q || plantMatch || r.textContent.toLowerCase().includes(q);
       r.style.display = show ? '' : 'none';
       if (show) any = true;
     });
@@ -5347,8 +5376,14 @@ async function boot() {
       }
     } catch (e) { console.warn('session restore failed', e); }
     // The moment the connection returns, resync and leave offline mode.
+    // Re-load the profile from the DB first: the snapshot's role/plants are
+    // client-side state and must never survive into an online session.
     window.addEventListener('online', async () => {
       if (!authUser || !window._offlineSince) return;
+      try {
+        const { data } = await SUPA.auth.getSession();
+        if (data.session) await loadAuthProfile(data.session.user);
+      } catch (e) {}
       await hydrateCloud();
       route();
       if (!window._offlineSince) toast('Back online — data refreshed.');

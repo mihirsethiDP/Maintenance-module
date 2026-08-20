@@ -8,8 +8,19 @@
 //     offline without them.
 //   - Supabase API + all non-GET requests: network only, never cached. Data
 //     freshness and writes are the app's job (it keeps its own snapshot).
-const CACHE = 'mm-shell-v1';
-const CORE = ['./', 'index.html', 'manifest.json', 'logo.png', 'icon-180.png', 'icon-512.png'];
+const CACHE = 'mm-shell-v2';
+// Bare same-origin paths (retrieval uses ignoreSearch, so app.js matches
+// app.js?v=N) plus the CDN libraries — offline must work after ONE visit.
+const CORE = [
+  './', 'index.html', 'manifest.json', 'logo.png', 'icon-180.png', 'icon-512.png',
+  'app.js', 'supabase-config.js', 'seed-data.js',
+  'https://cdn.tailwindcss.com/',
+  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js',
+  'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js',
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+];
 const CDN_HOSTS = [
   'cdn.tailwindcss.com', 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com',
   'fonts.googleapis.com', 'fonts.gstatic.com', 'esm.sh', 'unpkg.com',
@@ -38,12 +49,20 @@ self.addEventListener('fetch', (e) => {
   if (url.hostname.endsWith('.supabase.co')) return;      // API: never cached
 
   if (CDN_HOSTS.includes(url.hostname)) {
+    // Stale-while-revalidate: serve the cache instantly, refresh in the
+    // background. A bad copy (captive-portal HTML cached as an opaque
+    // response) heals itself on the next real network instead of freezing.
     e.respondWith((async () => {
-      const hit = await caches.match(req);
-      if (hit) return hit;
-      const resp = await fetch(req);
-      if (resp.ok || resp.type === 'opaque') (await caches.open(CACHE)).put(req, resp.clone());
-      return resp;
+      const cache = await caches.open(CACHE);
+      const hit = await cache.match(req);
+      const refresh = fetch(req).then((resp) => {
+        if (resp.ok || resp.type === 'opaque') cache.put(req, resp.clone());
+        return resp;
+      }).catch(() => null);
+      if (hit) { e.waitUntil(refresh.then(() => {})); return hit; }
+      const resp = await refresh;
+      if (resp) return resp;
+      throw new Error('offline');
     })());
     return;
   }
