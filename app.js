@@ -464,6 +464,14 @@ async function loadAuthProfile(u) {
     const { data: pa } = await SUPA.from('plant_assignments').select('plant_id').eq('user_id', u.id);
     if (pa) plants = pa.map(x => x.plant_id);
   } catch (e) { console.warn('assignment load failed', e); }
+  if (status !== 'active') {
+    // Deactivated: end the session right here. (The DB already refuses their
+    // requests — this is the polite front door.)
+    try { await SUPA.auth.signOut(); } catch (e) {}
+    authUser = null;
+    window._deactivated = true;
+    return;
+  }
   authUser = { id: u.id, email: u.email, name, role, phone, status, plants };
 }
 
@@ -826,7 +834,7 @@ function renderLogin() {
               <label class="block text-xs text-slate-600 mb-1">Password</label>
               <input name="password" type="password" required autocomplete="current-password" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="••••••••" />
             </div>
-            <div id="loginError" class="hidden text-xs text-red-600"></div>
+            <div id="loginError" class="${window._deactivated ? '' : 'hidden'} text-xs text-red-600">${window._deactivated ? 'This account has been deactivated. Contact your administrator.' : ''}</div>
             <button class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Sign in</button>
             ${SUPA ? `<button type="button" onclick="sendPasswordReset()" class="w-full text-center text-xs text-slate-500 hover:text-brand pt-1">Forgot password?</button>` : ''}
           </form>
@@ -2176,8 +2184,14 @@ function renderTeam() {
         <option value="Engineer" ${u.role==='Engineer'?'selected':''}>Engineer</option>
         <option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option>
       </select>`);
-    // Real mode: user deletion happens in Supabase Auth (an in-app button that
-    // dead-ends in "go to the console" is worse than no button).
+    // Deactivate / reactivate (real mode): reversible, keeps all history, and
+    // is enforced in the DB — a deactivated account loses data access, not
+    // just its UI. Admins manage engineers; only the Superadmin manages Admins.
+    // (Permanent deletion stays in Supabase Auth — it is rarely the right tool.)
+    if (SUPA && !isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer'))
+      actions.push(u.status === 'active'
+        ? `<button onclick="setUserStatus('${u.id}', 'disabled')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Deactivate</button>`
+        : `<button onclick="setUserStatus('${u.id}', 'active')" class="text-xs px-2.5 py-1 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100">Reactivate</button>`);
     if (!SUPA && !isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer'))
       actions.push(`<button onclick="removeUser('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>`);
     return `<tr>
@@ -2185,7 +2199,7 @@ function renderTeam() {
         <div class="cell-primary">${esc(u.name)}${isSelf?' <span class="text-[10px] text-slate-400">(you)</span>':''}</div>
         <div class="cell-muted">${esc(u.email) || '—'}</div>
       </td>
-      <td><span class="badge ${roleBadge}">${u.role}</span></td>
+      <td><span class="badge ${roleBadge}">${u.role}</span>${u.status !== 'active' ? ' <span class="badge badge-bd">Deactivated</span>' : ''}</td>
       <td>${plantsCell}</td>
       <td><div class="cell-muted">${esc(u.phone) || '—'}</div></td>
       <td class="col-center">${actions.length ? `<div class="inline-flex gap-1.5 flex-wrap justify-center">${actions.join('')}</div>` : '<span class="text-xs text-slate-400">—</span>'}</td>
@@ -2328,6 +2342,21 @@ async function deleteTechnician(id) {
   if (error) { saveError(error); return; }
   if (cloudTechnicians) cloudTechnicians = cloudTechnicians.filter(x => x.id !== id);
   route();
+}
+
+// Deactivate / reactivate a user (real mode). The DB guard (SQL 20) enforces
+// the hierarchy server-side; this is the friendly path to it.
+async function setUserStatus(userId, status) {
+  if (!isAdmin() || !SUPA) return;
+  const u = state.users.find(x => x.id === userId); if (!u) return;
+  const deactivating = status === 'disabled';
+  if (deactivating && !await appConfirm(
+    `Deactivate ${u.name}? They will lose access until reactivated — signed out on their next visit, and the database refuses their requests immediately. Everything they ever recorded stays untouched.`,
+    'Deactivate user')) return;
+  const { error } = await SUPA.from('profiles').update({ status }).eq('id', userId);
+  if (error) { saveError(error); return; }
+  await hydrateCloud(); route();
+  toast(deactivating ? `${esc(u.name)} deactivated.` : `${esc(u.name)} reactivated — they can sign in again.`);
 }
 
 // ---------- Edit user contact details (admin) ----------
