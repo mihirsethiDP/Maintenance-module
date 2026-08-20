@@ -172,12 +172,13 @@ F.append(Spacer(1, 8 * mm))
 F.append(table(['In this guide', 'What you will find'],
                [['Getting started', 'Signing in, what your role can see, notifications, using it on a phone.'],
                 ['For engineers', 'Your daily flow: pick up a task, do the work, close it out, report a breakdown.'],
-                ['For administrators', 'Equipment and parts, health scores, plants, team, reports.'],
+                ['For administrators', 'Equipment and parts, the Review queue, health scores, plants, team, reports.'],
                 ['Quick reference', 'A one-page cheat sheet and answers to common questions.']],
                [42 * mm, None]))
 F.append(Spacer(1, 12 * mm))
 F.append(Paragraph('Open the tool at <b>mihirsethidp.github.io/Maintenance-module</b> in any browser on a '
-                   'computer or phone. Nothing to install.', st_small))
+                   'computer or phone - and install it on your phone from the browser menu so it opens '
+                   'like an app, even without signal.', st_small))
 F.append(NextPageTemplate('main'))
 F.append(PageBreak())
 
@@ -192,8 +193,9 @@ F.append(steps([
 ]))
 F.append(Spacer(1, 3))
 F.append(callout('Forgot your password?',
-                 'Ask your administrator to send you a fresh invitation. For your own security, nobody can see '
-                 'or tell you your existing password.'))
+                 'Type your email on the sign-in screen, then press <b>Forgot password?</b> just below the '
+                 'Sign in button. A reset link arrives by email and brings you straight back to choose a '
+                 'new password.'))
 
 F.append(Paragraph('What you can see depends on your role', st_h2))
 F.append(table(['Role', 'What you can do'],
@@ -202,8 +204,8 @@ F.append(table(['Role', 'What you can do'],
                  'assigned to you. Start and complete maintenance, report breakdowns, generate visit reports.'],
                 ['Admin',
                  'Everything an engineer can do, across <b>all</b> plants, plus the <b>Dashboard</b>, '
-                 '<b>Plants</b> and <b>Team</b> tabs: add equipment and plants, invite engineers, assign '
-                 'plants, configure notifications.'],
+                 '<b>Review</b>, <b>Plants</b> and <b>Team</b> tabs: add equipment and plants, approve '
+                 'researched parts, invite engineers, assign plants.'],
                 ['Superadmin',
                  'Everything an admin can do, and is the only role that can make someone an Admin or remove one.']],
                [26 * mm, None]))
@@ -218,18 +220,29 @@ F.append(bullets([
     '<b>Overdue</b> - work that should already have been done.',
     '<b>Due today</b> - scheduled jobs ready to start today.',
     '<b>Health alerts</b> - equipment whose condition has dropped into "At Risk" or "Critical".',
-    '<b>Recent activity</b> - breakdowns and completed jobs (administrators only).',
-    '<b>Upcoming</b> - the next seven days of planned maintenance (administrators only).',
+    '<b>Recent activity</b> - breakdowns, completed jobs and finished parts research (administrators only).',
 ]))
 F.append(Spacer(1, 3))
-F.append(Paragraph('Use the two dropdowns at the top of the panel to narrow the list to one plant or a time '
-                   'period, and <b>Mark all read</b> to clear the red badge.', st_body))
+F.append(Paragraph('Every notification is a link: tap it and you land on that exact equipment (or the Review '
+                   'queue). Use the plant dropdown and the time buttons at the top to narrow the list, and '
+                   '<b>Mark all read</b> to clear the red badge.', st_body))
+
+F.append(Paragraph('Finding things', st_h2))
+F.append(Paragraph('Every list page has a search box that <b>suggests real names as you type</b> - equipment, '
+                   'makes, models, plants, people - so you never have to guess a spelling. Pick a suggestion '
+                   'or keep typing; the list filters as you go.', st_body))
 
 F.append(Paragraph('Using it on your phone', st_h2))
-F.append(Paragraph('The tool is built to work on a phone, which is how most engineers will use it in the plant. '
-                   'Tables slide sideways with your finger when there are more columns than fit. For quick '
-                   'access, open the site in your phone browser and use "Add to Home screen" so it behaves '
-                   'like an app.', st_body))
+F.append(Paragraph('The tool is built for phones, which is how most engineers will use it in the plant. Open '
+                   'the site in your phone browser and choose <b>Add to Home screen</b> (or "Install app"): '
+                   'you get a proper app icon and it opens full screen. Tables slide sideways with your '
+                   'finger; the action buttons stay visible on the right while you slide.', st_body))
+F.append(Spacer(1, 3))
+F.append(callout('No signal at the plant?',
+                 'The app still opens and shows everything from your last sync - equipment, tasks, full '
+                 'history - with an amber banner telling you how old the data is. Browsing works offline; '
+                 'saving needs a connection. If a save fails mid-blip, your entries stay in the form: '
+                 'reconnect and press the button again.'))
 
 # ---------------- 2. ENGINEERS ----------------
 F += section('2. For engineers', 'Your day-to-day: what needs doing, and how to record what you did.')
@@ -247,12 +260,16 @@ F.append(table(['Tab', 'What it shows'],
 F.append(Paragraph('Doing a scheduled job', st_h2))
 F.append(steps([
     'Go to <b>Engineering Corner</b> and stay on the <b>Pending</b> tab.',
-    'Find the equipment under "Scheduled tasks ready to start" and press <b>Start Work</b>. The equipment is '
-    'now marked as in maintenance, so everyone knows it is being worked on.',
+    'Find the equipment under "Scheduled tasks ready to start". If the work will take a while, press '
+    '<b>Start Work</b> so everyone can see the machine is being worked on. If you did the job on the spot, '
+    'press <b>Complete now</b> instead - it records the start and the finish in one go.',
     'Do the physical work on the machine.',
-    'Press <b>Mark Complete</b> (or open the equipment and press <b>Mark Operational</b>).',
-    'Fill in the closing form - this is the important part, described below.',
+    'Close it out: press <b>Mark Complete</b> (or open the equipment and press <b>Mark Operational</b>).',
 ]))
+F.append(Spacer(1, 3))
+F.append(Paragraph('The form does the boring parts for you: your name is already filled in as the technician '
+                   '(change it if someone else did the work - new names are remembered and suggested next '
+                   'time), and the expected completion date starts at today.', st_small))
 
 F.append(Paragraph('Closing out a job properly', st_h3))
 F.append(Paragraph('Maintaining a machine means maintaining its parts, so the closing form asks you exactly '
@@ -260,9 +277,10 @@ F.append(Paragraph('Maintaining a machine means maintaining its parts, so the cl
 F.append(bullets([
     '<b>Parts maintained</b> - for each part choose <b>Serviced</b>, <b>Replaced</b>, or leave it blank if you '
     'did not touch it. If a part had failed, it is highlighted in red and already set to Replaced.',
-    '<b>Service checklist</b> - tick off the safety and service steps. Items marked with a star are '
-    'compulsory: the tool will not let you close the job until those are ticked.',
-    '<b>Completion date</b> and <b>completion notes</b> - a short summary of what you found and did.',
+    '<b>Service guide</b> - a collapsed reference list of the usual service steps for that equipment type. '
+    'Open it if you want a reminder; there is nothing to tick.',
+    '<b>Completion notes</b> - optional for scheduled work: tap one of the ready-made phrases ("No '
+    'abnormalities", "Tested OK") or write your own. For breakdowns, notes are required.',
 ]))
 F.append(Spacer(1, 3))
 F.append(Paragraph('Then press <b>Confirm</b>, or <b>Confirm &amp; Generate Service Report</b> if you want a '
@@ -280,7 +298,7 @@ F.append(steps([
     'Press <b>Put in Maintenance</b>.',
     'Set <b>Reason</b> to <b>Breakdown</b>. Two extra fields appear: choose the <b>affected part</b> if you '
     'know which one failed, and the <b>severity</b>.',
-    'Set the <b>priority</b>, the <b>expected completion</b> date, your name, and describe what happened.',
+    'Describe what happened - for breakdowns this is required, because it is the story the next person needs.',
     'Press <b>Confirm</b>. The equipment is now flagged as broken down and your administrator is notified.',
 ]))
 
@@ -293,9 +311,9 @@ F.append(Paragraph('Producing a visit report', st_h2))
 F.append(steps([
     'Go to <b>Engineering Corner</b> then the <b>Visit Reports</b> tab.',
     'Pick a date range using the quick filters (Today, Last 7 days, and so on).',
-    'Find your visit day and press <b>Generate Report</b>.',
-    'Enter who prepared and who approved the work, then press <b>Preview</b> to check it, or <b>Download</b> '
-    'to save the PDF for signing.',
+    'Find your visit day and press <b>Generate Report</b> - the report window opens already set to that day.',
+    'Enter who prepared and who approved the work, then press <b>Preview</b> or <b>Download</b>. On a phone '
+    'the PDF opens in your phone\'s own viewer or share sheet.',
 ]))
 
 # ---------------- 3. ADMINS ----------------
@@ -303,41 +321,58 @@ F += section('3. For administrators', 'Setting up the tool and keeping an eye on
 
 F.append(Paragraph('The Dashboard', st_h2))
 F.append(Paragraph('Your daily overview. The four cards at the top count all equipment, and how much is '
-                   'operational, in maintenance, or broken down. <b>Click any card</b> to filter the table '
-                   'underneath it. The table lists everything currently out of service, with the reason, who '
-                   'is on it, and whether it is running late.', st_body))
+                   'operational, in maintenance, or broken down. <b>Click any card</b> to open the full '
+                   'Equipment list already filtered to that status. The table underneath lists everything '
+                   'currently out of service, with the reason, who is on it, and whether it is running late.',
+                   st_body))
 
 F.append(Paragraph('Adding equipment and its parts', st_h2))
 F.append(steps([
-    'Go to <b>Equipment</b> and press <b>Add Equipment</b>. Enter the name, type, make, model, plant and '
-    'installation date.',
-    'Open the equipment you just created.',
-    'In the <b>Parts &amp; specifications</b> section press <b>Add part</b> for each part: its name, '
-    'specification (for example "6309-2Z, 45mm bore"), quantity, and <b>criticality</b> from 1 to 10.',
-    'Alternatively press <b>Auto-fill from web (AI)</b> to have the tool look up the manufacturer\'s datasheet '
-    'for you - see below.',
+    'Go to <b>Equipment</b> and press <b>Add Equipment</b>. Enter the make, model, type and plant - the '
+    'equipment\'s <b>name is written for you</b> from Make + Model (a #2 is added if the same model already '
+    'exists at that plant).',
+    'After saving you land on the new equipment\'s page, ready to record its parts.',
+    'In <b>Parts &amp; specifications</b> press <b>Add part</b> for each part - name, specification, quantity '
+    'and <b>criticality</b> from 1 to 10. <b>Save &amp; add another</b> keeps the form open so a whole parts '
+    'list is one continuous flow.',
+    'Or press <b>Auto-fill from web (AI)</b> to have the tool look up the manufacturer\'s datasheet - see the '
+    'Review queue below for how this works at import scale.',
 ]))
 F.append(Spacer(1, 3))
 F.append(callout('What is criticality?',
                  'It is how badly a failure of that part hurts the machine. A motor might be 10 (the machine '
-                 'stops), an air filter 2 (a minor job). This is what makes the health score meaningful, so it '
-                 'is worth thinking about for a moment.'))
+                 'stops), an air filter 2 (a minor job). It drives the health score. Engineers never see these '
+                 'numbers - they are an admin\'s planning tool.'))
 
-F.append(Paragraph('Filling in parts automatically', st_h3))
-F.append(Paragraph('If the make and model are filled in, <b>Auto-fill from web (AI)</b> searches the '
-                   'manufacturer\'s technical datasheets and drafts the parts list for you.', st_body))
+F.append(Paragraph('The Review queue: parts research at import scale', st_h2))
+F.append(Paragraph('When you import a PPM schedule, every pump, blower and motor is queued for automatic '
+                   'parts research in the background - the tool searches manufacturer datasheets while you do '
+                   'other things, and one notification tells you when the run is done. The <b>Review</b> tab '
+                   'is where you approve the results:', st_body))
 F.append(bullets([
-    'If several versions of that model exist (for example a 4.2 kW and a 5.5 kW), you are asked to pick the '
-    'right one.',
-    'If only one version exists, it goes straight to a draft.',
-    '<b>Nothing is saved until you approve it.</b> You see every suggested part with its source link, can '
-    'untick anything wrong, and can adjust the criticality before saving.',
+    'One dropdown per plant, with counts of what is ready, what needs information, and what needs attention. '
+    'Press <b>Quick approve</b> on the plant row to accept every ready draft at that plant in one go - '
+    'anything flagged (only one part found, unusually high criticality, no source, auto-selected variant) is '
+    'listed for you before anything saves.',
+    'Each equipment row also has its own <b>Quick approve</b>, a <b>Review</b> button to check the draft '
+    'part-by-part, and <b>Skip</b>.',
+    '<b>Needs make &amp; model</b> - the import had no make or model for these. Type them and press Save '
+    '&amp; research: the machine is renamed to Make + Model, its imported duty name moves to Location, and '
+    'research starts.',
+    'If a model exists in several versions (4.2 kW, 5.5 kW...), the most likely one is <b>selected '
+    'automatically</b> and clearly flagged - check the flag before approving if precision matters.',
+    '<b>Needs attention</b> - nothing reliable was found. Fix a spelling and <b>Retry</b>, add the parts '
+    'manually, or <b>Dismiss</b>.',
 ]))
+F.append(Spacer(1, 3))
+F.append(Paragraph('Equipment without recorded parts carries an amber "No parts recorded" hint on the '
+                   'Equipment list, so nothing falls through. Research runs while you have the tool open and '
+                   'resumes automatically next time.', st_small))
 
 F.append(Paragraph('Reading the health score', st_h2))
-F.append(Paragraph('Every machine gets a score out of 100, shown on the equipment list and on its own page. '
-                   'Press <b>Why this score?</b> to see exactly what pushed it up or down - there is no hidden '
-                   'calculation.', st_body))
+F.append(Paragraph('Every machine gets a score out of 100, shown on the equipment list and beside its name on '
+                   'its own page. Press the small <b>?</b> next to the score to see exactly what pushed it up '
+                   'or down - there is no hidden calculation.', st_body))
 F.append(Spacer(1, 2))
 F.append(table(['Band', 'Score', 'What it means'],
                [['Good', '80 to 100', 'Healthy. Keep to the maintenance plan.'],
@@ -356,12 +391,12 @@ F.append(Paragraph('The <b>Plants</b> tab is where you set each site up:', st_bo
 F.append(bullets([
     '<b>Add Plant</b> - create a new site, then add its equipment.',
     '<b>Import PPM</b> - upload a planned maintenance spreadsheet to load a whole site\'s equipment and '
-    'schedule at once. You see a preview before anything is saved.',
+    'schedule at once. You see a preview first, imported machines are named from their make and model, and '
+    'the tool warns you if the same file looks like it was imported before.',
     '<b>QR Codes</b> - produce a printable sheet of QR stickers for every machine at that plant. Print, cut, '
     'and stick them on the equipment.',
-    '<b>Configure Notifications</b> - choose who gets told about which event, and on which channel.',
-    '<b>PPM Checklists</b> - edit the service checklist for each equipment type. Start a line with a star to '
-    'make that step compulsory.',
+    '<b>PPM Checklists</b> - edit the service guide steps shown to engineers when they close a job on each '
+    'equipment type.',
 ]))
 
 F.append(Paragraph('Managing your team', st_h2))
@@ -376,18 +411,24 @@ F.append(bullets([
     '<b>Generate Schedule</b> - produce a PDF of an engineer\'s upcoming and outstanding work for a day, week, '
     'month or custom range, to send them at the start of the period.',
 ]))
+F.append(Spacer(1, 3))
+F.append(Paragraph('Below the users sits the <b>Technicians</b> list: every field technician ever named on a '
+                   'work-order, with how many jobs they have on record. New names typed on a job are added '
+                   'automatically and suggested next time; removing one never changes past records.', st_body))
 
 F.append(Paragraph('Records and reports', st_h2))
 F.append(Paragraph('The <b>Maintenance Log</b> holds every job ever recorded. Filter by plant, equipment type, '
-                   'reason, status, technician, date range, or free text search. From there:', st_body))
+                   'reason, status, technician, date range, or the suggesting search box. One <b>Report</b> '
+                   'button covers every sign-off document, with three scopes:', st_body))
 F.append(bullets([
-    '<b>Service Report</b> - a consolidated sign-off PDF covering either what is currently filtered, or '
-    'everything.',
-    '<b>Export</b> - download the log as an Excel file or a PDF.',
+    '<b>Current filters</b> - a report over exactly what the log is showing right now.',
+    '<b>All equipment</b> - everything you have access to.',
+    '<b>Single visit</b> - one day\'s completed work grouped by plant; the same report engineers reach from '
+    'Visit Reports.',
 ]))
 F.append(Spacer(1, 3))
-F.append(Paragraph('Individual equipment pages also have their own <b>Export</b> for just that machine\'s '
-                   'history.', st_body))
+F.append(Paragraph('<b>Export</b> downloads the log as Excel or PDF, and individual equipment pages have their '
+                   'own Export for just that machine\'s history.', st_body))
 
 # ---------------- 4. QUICK REFERENCE ----------------
 F.append(PageBreak())
@@ -396,38 +437,58 @@ F += section('4. Quick reference', 'The short version - worth printing and pinni
 F.append(Paragraph('I want to...', st_h2))
 F.append(table(['Task', 'Where to go'],
                [['Start a scheduled job', 'Engineering Corner, Pending tab, then <b>Start Work</b>'],
-                ['Finish a job', 'Equipment page, then <b>Mark Operational</b> (or Mark Complete in Pending)'],
+                ['Record a job done on the spot', 'Press <b>Complete now</b> next to the task - one step'],
+                ['Finish a started job', 'Equipment page, then <b>Mark Operational</b>'],
                 ['Report a breakdown', 'Scan the QR sticker, or find the equipment, then <b>Put in Maintenance</b>'],
                 ['Replace a valve', 'Open the valve, then <b>Replace Valve</b>'],
+                ['Approve researched parts', '<b>Review</b> tab, then <b>Quick approve</b> (administrators)'],
                 ['See what is coming up', 'Engineering Corner, <b>Upcoming PPM</b> tab'],
-                ['Produce a visit report', 'Engineering Corner, <b>Visit Reports</b> tab'],
-                ['Check a machine\'s condition', 'Equipment list <b>Health</b> column, then <b>Why this score?</b>'],
+                ['Produce a visit report', 'Engineering Corner, <b>Visit Reports</b>, then <b>Generate Report</b>'],
+                ['Check a machine\'s condition', 'Equipment list <b>Health</b> column, then the <b>?</b> beside the score'],
                 ['Add a machine', 'Equipment, then <b>Add Equipment</b> (administrators)'],
                 ['Record a machine\'s parts', 'Equipment page, <b>Parts &amp; specifications</b> (administrators)'],
                 ['Give an engineer access', 'Team, then <b>Assign plants</b> (administrators)'],
                 ['Print QR stickers', 'Plants, then <b>QR Codes</b> (administrators)'],
-                ['Export records', 'Maintenance Log, then <b>Export</b>']],
+                ['Export records or reports', 'Maintenance Log, then <b>Export</b> or <b>Report</b>']],
                [52 * mm, None]))
 
 F.append(Paragraph('Common questions', st_h2))
 QA = [
     ('Why can I not see a plant or machine?',
      'Engineers only see the plants assigned to them. Ask an administrator to assign it to you.'),
-    ('The tool will not let me close a job.',
-     'One or more compulsory checklist items are unticked. They are marked with a star. Tick them and try again.'),
     ('It says the equipment already has an open work-order.',
      'Somebody has already started a job on that machine. Finish that one before starting another.'),
+    ('The breakdown form will not submit.',
+     'For breakdowns, describing what happened is required - it is the story the next person needs. For '
+     'scheduled work, notes are optional.'),
     ('I picked the wrong part when closing a job.',
      'Ask an administrator: the record can be corrected. Recording it accurately matters, because it feeds the '
      'health score and the parts history.'),
+    ('What does "variant auto-selected" mean in the Review queue?',
+     'The model exists in several versions and the most likely one was chosen automatically. Press Review on '
+     'that row to check it before approving if the exact version matters.'),
+    ('Can I use it without internet?',
+     'Yes, for looking things up: the app opens and shows everything from your last sync, with a banner '
+     'showing how old the data is. Saving a job needs a connection - your entries stay in the form while '
+     'you retry.'),
     ('Does anything get sent to the customer automatically?',
      'No. Reports are generated as PDFs for you to check and share yourself.'),
-    ('Can I use it without internet?',
-     'No. The tool needs a connection so that everyone sees the same, up-to-date information.'),
 ]
 for q, a in QA:
     F.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
 
+F.append(Spacer(1, 10))
+F.append(Paragraph('New since the last version of this guide', st_h2))
+F.append(bullets([
+    '<b>Works offline</b> - install it on your phone and it opens without signal, showing your last sync.',
+    '<b>Complete now</b> - one step to record a job done on the spot.',
+    '<b>Lighter forms</b> - your name and dates are pre-filled; notes are optional for scheduled work; the '
+    'checklist is a reference, not a gate.',
+    '<b>The Review queue</b> - imported equipment gets its parts researched automatically; admins approve '
+    'a whole plant in one click.',
+    '<b>Search that suggests</b> - every list offers real names as you type.',
+    '<b>One Report button</b> - service and visit reports are the same flow now, with three scopes.',
+]))
 F.append(Spacer(1, 8))
 F.append(callout('Need help?',
                  'Contact your administrator, or Amit Gosain for anything to do with access, plants and '
