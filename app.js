@@ -456,8 +456,8 @@ const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY
 async function loadAuthProfile(u) {
   let name = (u.email || '').split('@')[0], role = 'Engineer', phone = '', status = 'active';
   try {
-    const { data } = await SUPA.from('profiles').select('name,role,phone,status').eq('id', u.id).single();
-    if (data) { name = data.name || name; role = data.role || role; phone = data.phone || ''; status = data.status || 'active'; }
+    const { data } = await SUPA.from('profiles').select('name,role,phone,status,ui_mode').eq('id', u.id).single();
+    if (data) { name = data.name || name; role = data.role || role; phone = data.phone || ''; status = data.status || 'active'; var uiMode = data.ui_mode || 'simple'; }
   } catch (e) { console.warn('profile load failed', e); }
   let plants = [];
   try {
@@ -472,7 +472,7 @@ async function loadAuthProfile(u) {
     window._deactivated = true;
     return;
   }
-  authUser = { id: u.id, email: u.email, name, role, phone, status, plants };
+  authUser = { id: u.id, email: u.email, name, role, phone, status, plants, uiMode: typeof uiMode !== 'undefined' ? uiMode : 'simple' };
 }
 
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
@@ -535,10 +535,10 @@ async function hydrateCloud() {
   hydrateErrors = [];
   const fail = (name, err) => { hydrateErrors.push(name); console.warn(name + ' hydrate failed', err); };
   await Promise.all([
-    SUPA.from('profiles').select('id,name,role,phone,status,email')
+    SUPA.from('profiles').select('id,name,role,phone,status,email,ui_mode')
       .then(({ data, error }) => {
         if (error) return fail('users', error);
-        cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active' }));
+        cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active', uiMode: p.ui_mode || 'simple' }));
       }, e => fail('users', e)),
     SUPA.from('plant_assignments').select('user_id,plant_id')
       .then(({ data, error }) => {
@@ -719,6 +719,11 @@ function currentUser() {
   return id ? (state.users || []).find(u => u.id === id) : null;
 }
 function isAdmin() { const u = currentUser(); return !!u && (u.role === 'Admin' || u.role === 'Superadmin'); }
+// Per-user interface mode. 'simple' = record-keeping only: no health scores,
+// parts, Review queue, or AI research — every visual/friction improvement
+// stays. Stored on profiles.ui_mode (SQL 21); Superadmin-managed on Team.
+// Prototype mode is always full (it's the development sandbox).
+function isSimple() { return SUPA ? (authUser?.uiMode !== 'full') : false; }
 function isSuperadmin() { const u = currentUser(); return !!u && u.role === 'Superadmin'; }
 function loginWith(email, password) {   // prototype mode only
   const u = (state.users || []).find(x => x.email.toLowerCase() === String(email).toLowerCase().trim() && x.status === 'active');
@@ -745,7 +750,7 @@ function renderNav() {
   if (!user) { document.getElementById('nav').innerHTML = ''; return; }
   const cur = location.hash || homeHashFor(user);
   document.getElementById('nav').innerHTML = routes.filter(r => r.roles.includes(effRole(user)))
-    .filter(r => r.hash !== '#/review' || SUPA)   // the review queue is a real-mode feature
+    .filter(r => r.hash !== '#/review' || (SUPA && !isSimple()))   // review queue: full mode only
     .map(r => {
     const active = cur === r.hash || (r.hash === '#/equipment' && cur.startsWith('#/equipment/'));
     const n = r.hash === '#/review' ? reviewAttentionCount() : 0;
@@ -1055,7 +1060,7 @@ function buildNotifFeed() {
   });
   // Health alerts: equipment in the At Risk / Critical bands (scoped like
   // everything else — admins see all, engineers their assigned plants).
-  if (SUPA) {
+  if (SUPA && !isSimple()) {
     const ids = accessiblePlantIds();
     activeEquipment().forEach(e => {
       if (!admin && !ids.includes(e.plantId)) return;
@@ -1372,17 +1377,17 @@ function renderEquipment() {
       : e.status === 'Operational'
         ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
-    const hs = SUPA ? healthScore(e) : null;
+    const hs = SUPA && !isSimple() ? healthScore(e) : null;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
       <td><div class="cell-primary">${esc(plantName(e.plantId))}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div>${SUPA && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<div class="text-[10px] font-medium text-amber-600 mt-0.5">No parts recorded</div>' : ''}</td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div>${SUPA && !isSimple() && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<div class="text-[10px] font-medium text-amber-600 mt-0.5">No parts recorded</div>' : ''}</td>
       <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
       ${hs ? `<td class="col-center">${healthBadge(hs.score)}</td>` : ''}
       <td class="col-center">${statusBadge(e.status)}</td>
       <td class="col-center">${action}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="${SUPA ? 7 : 6}" class="py-6 text-center text-slate-500">${
+  }).join('') || `<tr><td colspan="${SUPA && !isSimple() ? 7 : 6}" class="py-6 text-center text-slate-500">${
     (sf !== 'all' || ui.typeFilter !== 'all')
       ? 'No equipment matches these filters — try clearing the status or type filter above.'
       : 'No equipment for this plant.'}</td></tr>`;
@@ -1411,7 +1416,7 @@ function renderEquipment() {
         <table class="list-table" id="eqTable">
           <thead><tr>
             <th>Equipment</th><th>Plant</th><th>Type / Model</th>
-            <th>Expected Completion</th>${SUPA ? '<th class="col-center">Health</th>' : ''}<th class="col-center">Status</th><th class="col-center">Action</th>
+            <th>Expected Completion</th>${SUPA && !isSimple() ? '<th class="col-center">Health</th>' : ''}<th class="col-center">Status</th><th class="col-center">Action</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -1480,7 +1485,7 @@ function renderEquipmentDetail(id) {
   const replaceBtn = (!retired && isValveType(e.type))
     ? `<button onclick="openReplaceValveModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium">Replace ${e.type}</button>` : '';
 
-  const hs = SUPA && !retired ? healthScore(e) : null;
+  const hs = SUPA && !retired && !isSimple() ? healthScore(e) : null;
 
   const retiredBanner = retired ? `
     <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-3 mb-4 text-sm text-amber-800">
@@ -1512,7 +1517,7 @@ function renderEquipmentDetail(id) {
     <div class="bg-white rounded-xl border border-slate-200 p-6 ${retired ? '' : 'mt-3'} mb-6">
       <div class="flex items-start flex-wrap gap-3">
         <div>
-          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? `${healthBadge(hs.score)}<button onclick="openHealthModal('${e.id}')" class="health-q w-[18px] h-[18px] rounded-full border border-slate-300 text-slate-500 hover:border-brand hover:text-brand text-[11px] font-semibold leading-none grid place-items-center" title="Why this score?" aria-label="Why this score?">?</button>` : ''}${SUPA && !retired && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<span class="badge badge-mt" title="Health scoring stays coarse until parts are recorded">No parts recorded</span>' : ''}</div>
+          <div class="flex items-center gap-3"><h1 class="text-2xl font-semibold">${esc(e.tag)}</h1>${statusBadge(e.status)}${hs ? `${healthBadge(hs.score)}<button onclick="openHealthModal('${e.id}')" class="health-q w-[18px] h-[18px] rounded-full border border-slate-300 text-slate-500 hover:border-brand hover:text-brand text-[11px] font-semibold leading-none grid place-items-center" title="Why this score?" aria-label="Why this score?">?</button>` : ''}${SUPA && !retired && !isSimple() && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<span class="badge badge-mt" title="Health scoring stays coarse until parts are recorded">No parts recorded</span>' : ''}</div>
           <div class="text-slate-500 text-sm mt-1">${e.type} · ${esc(e.make)} ${esc(e.model)} · ${esc(plantName(e.plantId))}</div>
         </div>
         <div data-tour="detail-actions" class="ml-auto flex gap-2 flex-wrap">
@@ -1528,7 +1533,7 @@ function renderEquipmentDetail(id) {
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 text-sm">
         <div><div class="text-xs uppercase text-slate-500">Plant</div><div>${esc(plantName(e.plantId))}</div></div>
         <div><div class="text-xs uppercase text-slate-500">Installed</div><div>${fmt(e.installed)}</div></div>
-        <div><div class="text-xs uppercase text-slate-500">Expected life</div><div>${expectedLifeFor(e)} yrs${e.expectedLifeYears ? '' : ' <span class="text-[10px] text-slate-400">(type default)</span>'}</div></div>
+        ${isSimple() ? '' : `<div><div class="text-xs uppercase text-slate-500">Expected life</div><div>${expectedLifeFor(e)} yrs${e.expectedLifeYears ? '' : ' <span class="text-[10px] text-slate-400">(type default)</span>'}</div></div>`}
         ${open ? `<div><div class="text-xs uppercase text-slate-500">Expected Completion</div><div>${open.etr || '—'}</div></div>`
           : (() => {
               // No open job — the useful date is the next planned PPM, if any.
@@ -1542,7 +1547,7 @@ function renderEquipmentDetail(id) {
     <div class="bg-white rounded-xl border border-slate-200 p-6 mb-6">${timeline}</div>
 
     ${lineagePanel}
-    ${isValveType(e.type) ? '' : partsCard(e)}
+    ${isValveType(e.type) || isSimple() ? '' : partsCard(e)}
   `;
 }
 
@@ -2392,6 +2397,14 @@ function openEditUserModal(userId) {
         <input name="phone" value="${esc(u.phone||'')}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="+919000010000" />
         <div class="text-[11px] text-slate-400 mt-1">Include the country code. Used for WhatsApp notifications once that's enabled.</div>
       </div>
+      ${SUPA && isSuperadmin() ? `<div>
+        <label class="block text-xs text-slate-600 mb-1">Interface</label>
+        <select name="uiMode" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
+          <option value="simple" ${u.uiMode !== 'full' ? 'selected' : ''}>Simple — record keeping only</option>
+          <option value="full" ${u.uiMode === 'full' ? 'selected' : ''}>Full — health scores, parts, AI research</option>
+        </select>
+        <div class="text-[11px] text-slate-400 mt-1">Simple hides the smart layer; everything they record still feeds it if you switch them later.</div>
+      </div>` : ''}
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
         <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Save</button>
@@ -2412,7 +2425,9 @@ async function submitEditUser(ev, userId) {
 
   if (SUPA) {
     const unlock = lockSubmit(ev);
-    const { error } = await SUPA.from('profiles').update({ name, phone }).eq('id', userId);
+    const patch = { name, phone };
+    if (isSuperadmin() && f.get('uiMode')) patch.ui_mode = f.get('uiMode') === 'full' ? 'full' : 'simple';
+    const { error } = await SUPA.from('profiles').update(patch).eq('id', userId);
     if (error) { unlock(); saveError(error); return; }
     if (authUser && authUser.id === userId) { authUser.name = name; authUser.phone = phone; }
     await hydrateCloud();
@@ -3909,7 +3924,7 @@ function openMaintModal(eqId) {
           </select>
         </div>
       </div>
-      <div id="bdDetails" class="hidden grid grid-cols-2 gap-3">
+      ${isSimple() ? '' : `<div id="bdDetails" class="hidden grid grid-cols-2 gap-3">
         ${SUPA && partsFor(eqId).length ? `<div>
           <label class="block text-xs text-slate-600 mb-1">Affected part <span class="text-slate-400">(if known)</span></label>
           <select name="affectedPart" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
@@ -3924,7 +3939,7 @@ function openMaintModal(eqId) {
           </select>
           <div class="text-[10px] text-slate-400 mt-0.5">Used for the health score${SUPA && partsFor(eqId).length ? ' when no part is selected' : ''}.</div>
         </div>
-      </div>
+      </div>`}
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-slate-600 mb-1">Start date <span class="text-red-500">*</span></label>
@@ -4035,7 +4050,7 @@ async function submitMaint(ev, eqId) {
 function openCompleteModal(eqId) {
   const e = eqById(eqId);
   const log = openLogFor(eqId);
-  const parts = SUPA ? partsFor(eqId) : [];
+  const parts = SUPA && !isSimple() ? partsFor(eqId) : [];
   const failedPartId = log ? log.affectedPartId : null;
   const partsSection = parts.length ? `
       <div>
@@ -4383,7 +4398,7 @@ async function submitEquipmentForm(ev, mode, eqId) {
       // the search runs, variants are offered if the model has several, and
       // nothing saves without approval. (Budget-gated; Cancel keeps manual entry.)
       location.hash = '#/equipment/' + newEq.id;
-      if (partsNudge) {
+      if (partsNudge && !isSimple()) {
         toast(`${esc(newEq.tag)} added — looking up its parts…`);
         setTimeout(() => { try { openEnrichModal(newEq.id); } catch (err) {} }, 400);
       } else {
@@ -4414,7 +4429,7 @@ const FREQ_LEGEND = [
 
 async function openImportPPMModal() {
   window._importedRows = null;
-  const budget = SUPA ? await getResearchBudget() : null;
+  const budget = SUPA && !isSimple() ? await getResearchBudget() : null;
   window._importBudget = budget;
   const plantOpts = state.plants.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
   const legend = FREQ_LEGEND.map(([code, name, desc]) =>
@@ -4444,7 +4459,7 @@ async function openImportPPMModal() {
         <div class="text-xs text-slate-500 mt-1">Expected layout: rows of equipment with columns <code>S.No · Name · Make · Capacity · Qty</code> followed by 52 weekly slot cells marked with frequency codes.</div>
       </div>
 
-      ${SUPA ? `<label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 bg-slate-50/60 cursor-pointer">
+      ${SUPA && !isSimple() ? `<label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 bg-slate-50/60 cursor-pointer">
         <input type="checkbox" name="research" ${budget.left > 0 ? 'checked' : 'disabled'} class="mt-0.5" />
         <span class="text-xs text-slate-600"><b>Queue AI parts research after import.</b>
           Roughly ₹7 per pump/blower/motor, capped at ${budget.limit} calls per day.
@@ -4635,7 +4650,7 @@ async function submitImportPPM(ev) {
     // review anything now; a notification arrives when the run completes.
     // Unticking the research box imports with no research (and no queue rows);
     // the amber "No parts recorded" hints remain as the manual to-do list.
-    const wantResearch = !!f.get('research');
+    const wantResearch = !isSimple() && !!f.get('research');
     const qRows = (wantResearch ? newEquipment.filter(e => !isValveType(e.type)) : []).map(e => ({
       equipment_id: e.id,
       status: (e.make && e.model) ? 'pending' : 'needs_info',
@@ -4715,7 +4730,7 @@ function reviewAttentionCount() {
     ['needs_info', 'ambiguous', 'ready', 'failed'].includes(q.status) && eqById(q.equipment_id)).length;
 }
 function queuePillHtml() {
-  if (!_queueActive) return '';
+  if (!_queueActive || isSimple()) return '';
   const left = queueRows().filter(q => q.status === 'pending' || q.status === 'running').length;
   return `<button class="queue-pill" onclick="location.hash='#/review'" title="Background parts research — open the review queue">
     <span class="qp-spin"></span>Researching parts · ${left} left</button>`;
@@ -4734,7 +4749,7 @@ async function setQueueRow(id, patch) {
   return true;
 }
 async function runEnrichmentQueue() {
-  if (!SUPA || !authUser || !isAdmin() || _queueActive) return;
+  if (!SUPA || !authUser || !isAdmin() || isSimple() || _queueActive) return;
   if (!queueRows().some(q => q.status === 'pending' || q.status === 'running')) return;
   // If the equipment fetch failed (or came back empty while the queue has
   // rows), every eqById() lookup would miss and the whole queue would be
@@ -4994,7 +5009,7 @@ function reviewRowFor({ q, e }) {
 
 function renderReview() {
   const user = currentUser();
-  if (!SUPA || effRole(user) !== 'Admin') { location.hash = homeHashFor(user); return; }
+  if (!SUPA || isSimple() || effRole(user) !== 'Admin') { location.hash = homeHashFor(user); return; }
   const rows = queueRows().map(q => ({ q, e: eqById(q.equipment_id) })).filter(x => x.e);
   const active = rows.filter(x => x.q.status !== 'done' && x.q.status !== 'skipped');
   const finished = rows.filter(x => x.q.status === 'done' || x.q.status === 'skipped');
