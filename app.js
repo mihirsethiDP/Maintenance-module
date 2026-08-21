@@ -2864,7 +2864,11 @@ function buildScheduleDoc(userId, from, to) {
   doc.text(`Engineer:  ${u.name}`, 14, y); y += 6;
   doc.text(`Period:  ${from}  to  ${to}`, 14, y); y += 6;
   const plants = state.plants.filter(p => plantIds.includes(p.id));
-  doc.text(`Plants:  ${plants.length ? plants.map(p=>p.name).join(', ') : '(none assigned)'}`, 14, y); y += 8;
+  const plantLine = `Plants (${plants.length}):  ${plants.length ? plants.map(p=>p.name).join(', ') : '(none assigned)'}`;
+  // Engineers can hold a dozen plants — wrap instead of running off the page.
+  const plantLines = doc.splitTextToSize(plantLine, W - 28);
+  doc.text(plantLines, 14, y);
+  y += 5 * plantLines.length + 4;
 
   if (!plantIds.length) {
     doc.setFontSize(10); doc.setTextColor(120,120,120);
@@ -2874,33 +2878,48 @@ function buildScheduleDoc(userId, from, to) {
 
   // Open / overdue work-orders — shown regardless of the selected period,
   // since this work is already active and the engineer needs to know about it.
-  const openRows = getPendingTasks(plantIds).map(({ l, e }) => [
-    e.tag, l.reason, l.startDate, l.etr || '—', isOverdue(l) ? 'Overdue' : 'Open', l.notes || '—',
-  ]);
+  // Every row names its plant — an engineer covering several sites cannot act
+  // on a task list that does not say where the machine is. Sorted by plant so
+  // the work batches per site (the engineer's real constraint is travel).
+  const byPlantThenDate = (a, b) =>
+    plantName(a.e.plantId).localeCompare(plantName(b.e.plantId)) || String(a.sortKey).localeCompare(String(b.sortKey));
+  const openRows = getPendingTasks(plantIds)
+    .map(({ l, e }) => ({ e, l, sortKey: l.startDate }))
+    .sort(byPlantThenDate)
+    .map(({ l, e }) => [
+      e.tag, plantName(e.plantId), l.reason, l.startDate, l.etr || '—',
+      isOverdue(l) ? 'Overdue' : 'Open', l.notes || '—',
+    ]);
   if (openRows.length) {
     doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Open & overdue work-orders', 14, y); y += 2;
     doc.autoTable({
       startY: y + 2,
-      head: [['Equipment', 'Reason', 'Start', 'Expected', 'Status', 'Notes']],
+      head: [['Equipment', 'Plant', 'Reason', 'Start', 'Expected', 'Status', 'Notes']],
       body: openRows,
-      styles: { fontSize: 8, cellPadding: 2 },
+      styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
       headStyles: { fillColor: [185,28,28], textColor: 255 },
+      columnStyles: { 0: { cellWidth: 40 }, 1: { cellWidth: 32 }, 2: { cellWidth: 17 },
+                      3: { cellWidth: 18 }, 4: { cellWidth: 18 }, 5: { cellWidth: 15 } },
       margin: { left: 14, right: 14 },
     });
     y = doc.lastAutoTable.finalY + 8;
   }
 
   // Overdue PPM (independent of the chosen period — it's already due)
-  const overdueRows = getOverduePPM(plantIds).map(({ e, date, slot }) => [e.tag, slot, dstr(date), 'Overdue']);
+  const overdueRows = getOverduePPM(plantIds)
+    .map(({ e, date, slot }) => ({ e, slot, ds: dstr(date), sortKey: dstr(date) }))
+    .sort(byPlantThenDate)
+    .map(x => [x.e.tag, plantName(x.e.plantId), x.slot, x.ds, 'Overdue']);
   if (overdueRows.length) {
     if (y > 250) { doc.addPage(); y = 20; }
     doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Overdue PPM', 14, y); y += 2;
     doc.autoTable({
       startY: y + 2,
-      head: [['Equipment', 'Schedule', 'Planned date', 'Status']],
+      head: [['Equipment', 'Plant', 'Schedule', 'Planned date', 'Status']],
       body: overdueRows,
-      styles: { fontSize: 8, cellPadding: 2 },
+      styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
       headStyles: { fillColor: [185,28,28], textColor: 255 },
+      columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 40 } },
       margin: { left: 14, right: 14 },
     });
     y = doc.lastAutoTable.finalY + 8;
@@ -2909,17 +2928,19 @@ function buildScheduleDoc(userId, from, to) {
   // Upcoming PPM within the selected period
   const spanDays = Math.max(1, daysBetween(today(), to) + 1);
   const upcoming = getUpcomingPPM(spanDays, plantIds)
-    .map(({ e, date, slot }) => ({ e, ds: dstr(date), slot }))
-    .filter(x => x.ds >= from && x.ds <= to);
+    .map(({ e, date, slot }) => ({ e, ds: dstr(date), slot, sortKey: dstr(date) }))
+    .filter(x => x.ds >= from && x.ds <= to)
+    .sort(byPlantThenDate);
   if (y > 240) { doc.addPage(); y = 20; }
   doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text(`Scheduled PPM (${from} to ${to})`, 14, y); y += 2;
   if (upcoming.length) {
     doc.autoTable({
       startY: y + 2,
-      head: [['Equipment', 'Type', 'Schedule', 'Date']],
-      body: upcoming.map(x => [x.e.tag, x.e.type, x.slot, x.ds]),
-      styles: { fontSize: 8, cellPadding: 2 },
+      head: [['Equipment', 'Plant', 'Type', 'Schedule', 'Date']],
+      body: upcoming.map(x => [x.e.tag, plantName(x.e.plantId), x.e.type, x.slot, x.ds]),
+      styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
       headStyles: { fillColor: [25,52,88], textColor: 255 },
+      columnStyles: { 0: { cellWidth: 48 }, 1: { cellWidth: 38 } },
       margin: { left: 14, right: 14 },
     });
     y = doc.lastAutoTable.finalY + 6;
