@@ -62,8 +62,18 @@ Deno.serve(async (req) => {
     });
     const { data: { user } } = await caller.auth.getUser();
     if (!user) return json({ error: "unauthorized" }, 401);
-    const { data: prof } = await caller.from("profiles").select("role").eq("id", user.id).single();
+    const { data: prof } = await caller.from("profiles").select("role,status").eq("id", user.id).single();
     if (prof?.role !== "Admin" && prof?.role !== "Superadmin") return json({ error: "forbidden — admins only" }, 403);
+    // Deactivation must hold here too — a saved JWT outlives the status flip.
+    if ((prof?.status ?? "active") !== "active") return json({ error: "forbidden — account deactivated" }, 403);
+
+    // Server-side daily budget: the ONLY authoritative counter (the client's
+    // gate is UX). consume_research_call (SQL 22) increments atomically and
+    // refuses once today's cap is reached — a console loop can't outspend it.
+    const svc = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const { data: allowed, error: budgetErr } = await svc.rpc("consume_research_call", { p_limit: 50 });
+    if (budgetErr) return json({ error: "budget_error", message: "Budget check failed — is supabase/22 applied? " + budgetErr.message }, 500);
+    if (!allowed) return json({ error: "budget_exhausted", message: "Today's AI research budget is used up — it resets at midnight IST." }, 429);
 
     const { make, model, eqType, variant, imageBase64, imageMediaType } = await req.json();
     if (!make || !model) return json({ error: "make and model are required" }, 400);

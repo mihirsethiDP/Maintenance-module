@@ -8,6 +8,10 @@
 -- at the database level (not just the UI) — every permission helper
 -- now requires status = 'active'.
 --
+-- NOTE: run supabase/21 (and 22) immediately after this file -- this
+-- version of guard_profiles blocks the SQL editor itself (no service-
+-- context bypass yet); 21/22 carry the corrected final form.
+--
 -- Rules: admins may deactivate engineers; only the Superadmin may
 -- deactivate an Admin; nobody can deactivate themselves or the
 -- Superadmin.

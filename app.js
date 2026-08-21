@@ -918,6 +918,7 @@ function loginError(msg) {
 }
 async function submitLogin(ev) {
   ev.preventDefault();
+  window._deactivated = false;   // stale banner must not greet the next person
   const f = new FormData(ev.target);
   const email = String(f.get('email')).trim(), password = f.get('password');
   if (SUPA) {
@@ -926,6 +927,7 @@ async function submitLogin(ev) {
     const { data, error } = await SUPA.auth.signInWithPassword({ email, password });
     if (error) { loginError(error.message); if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; } return; }
     await loadAuthProfile(data.user);
+    if (!authUser) { route(); return; }   // deactivated — bounced inside loadAuthProfile
     await hydrateCloud();
     location.hash = homeHashFor(authUser);
     route();
@@ -1076,9 +1078,14 @@ function buildNotifFeed() {
     const activity = SUPA
       ? (cloudNotifs || []).map(n => ({ id: n.id, ts: n.ts, event: n.event, message: n.message, channels: n.channels || [], recipients: n.recipients || [], plantId: n.plant_id, eqId: n.equipment_id }))
       : loadNotifs();
-    activity.forEach(n => feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event, plantId: n.plantId,
-      href: n.event === 'import_review' ? '#/review' : (n.eqId ? '#/equipment/' + n.eqId : null),
-      message: n.message, channels: n.channels, recipients: n.recipients }));
+    activity.forEach(n => {
+      // Parts-research notifications belong to the full tool — a simple-mode
+      // admin can't open Review, so the item would be a confusing dead link.
+      if (n.event === 'import_review' && isSimple()) return;
+      feed.push({ key: n.id, group: 'activity', date: n.ts, event: n.event, plantId: n.plantId,
+        href: n.event === 'import_review' ? '#/review' : (n.eqId ? '#/equipment/' + n.eqId : null),
+        message: n.message, channels: n.channels, recipients: n.recipients });
+    });
   }
   // Fresh activity belongs right under "Due today" (newest first).
   const order = { overdue: 0, due: 1, health: 2, activity: 3 };
@@ -1455,7 +1462,7 @@ function renderEquipmentDetail(id) {
       <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${esc(l.notes) || '—'}</div>
       ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${esc(l.completionNotes)}</div>` : ''}
       ${(() => {
-        const acts = partActionsFor(l);
+        const acts = isSimple() ? [] : partActionsFor(l);
         if (!acts.length) return '';
         const replaced = acts.filter(a => a.action === 'replaced').map(a => esc(a.part_name));
         const serviced = acts.filter(a => a.action === 'serviced').map(a => esc(a.part_name));
@@ -1785,17 +1792,20 @@ async function runEnrichment(eqId, variant) {
       body: { make: e.make, model: e.model, eqType: e.type, variant: variant || undefined },
     }));
   } catch (err) { error = err; }
-  if (!error || error.context) bumpResearchUsage();   // answered = spent
+  if (!error || error.name === 'FunctionsHttpError' || error.name === 'FunctionsRelayError') bumpResearchUsage();   // answered = spent
   if (error) {
     let msg = error.message || String(error);
     try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
+    const budgetHit = /budget_exhausted/i.test(msg);
     const notConfigured = /not_configured|ANTHROPIC_API_KEY/i.test(msg);
     enrichSetBody(`
       <div class="space-y-3 text-sm">
-        <div class="p-3 rounded-md ${notConfigured ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-red-50 border border-red-200 text-red-700'}">
-          ${notConfigured
-            ? 'AI enrichment isn\'t configured yet. Add your Anthropic API key in Supabase → Edge Functions → Secrets as <b>ANTHROPIC_API_KEY</b>, then try again.'
-            : 'Search failed: ' + esc(msg)}
+        <div class="p-3 rounded-md ${notConfigured || budgetHit ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-red-50 border border-red-200 text-red-700'}">
+          ${budgetHit
+            ? 'Today\'s AI research budget is used up — it resets at midnight. Add the parts manually, or try again tomorrow.'
+            : notConfigured
+              ? 'AI enrichment isn\'t configured yet. Add your Anthropic API key in Supabase → Edge Functions → Secrets as <b>ANTHROPIC_API_KEY</b>, then try again.'
+              : 'Search failed: ' + esc(msg)}
         </div>
         <div class="flex justify-end"><button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button></div>
       </div>`);
@@ -4409,7 +4419,11 @@ async function submitEquipmentForm(ev, mode, eqId) {
       location.hash = '#/equipment/' + newEq.id;
       if (partsNudge && !isSimple()) {
         toast(`${esc(newEq.tag)} added — looking up its parts…`);
-        setTimeout(() => { try { openEnrichModal(newEq.id); } catch (err) {} }, 400);
+        setTimeout(() => {
+          // Admin already navigated elsewhere? Don't ambush them with a modal.
+          if (location.hash !== '#/equipment/' + newEq.id) return;
+          try { openEnrichModal(newEq.id); } catch (err) {}
+        }, 400);
       } else {
         toast(`${esc(newEq.tag)} added.`);
       }
@@ -4469,12 +4483,12 @@ async function openImportPPMModal() {
       </div>
 
       ${SUPA && !isSimple() ? `<label class="flex items-start gap-2 p-3 rounded-md border border-slate-200 bg-slate-50/60 cursor-pointer">
-        <input type="checkbox" name="research" ${budget.left > 0 ? 'checked' : 'disabled'} class="mt-0.5" />
+        <input type="checkbox" name="research" checked class="mt-0.5" />
         <span class="text-xs text-slate-600"><b>Queue AI parts research after import.</b>
           Roughly ₹7 per pump/blower/motor, capped at ${budget.limit} calls per day.
           <span id="researchBudgetNote" class="text-slate-500">${budget.left > 0
             ? `${budget.left} of ${budget.limit} research calls left today.`
-            : `Today's research budget (${budget.limit}) is used up — research resumes tomorrow.`}</span>
+            : `Today's research budget (${budget.limit}) is used up — these will queue now and research starts automatically tomorrow.`}</span>
         </span>
       </label>` : ''}
 
@@ -4705,23 +4719,24 @@ async function submitImportPPM(ev) {
 // here; usage persists in the research_usage table (SQL 19).
 const RESEARCH_DAILY_LIMIT = 50;
 async function getResearchBudget() {
+  // Always refetch: other tabs (and the server-side counter) move this number.
+  // The hard cap lives server-side (consume_research_call); this soft gate and
+  // the on-screen numbers should still be as fresh as a query can make them.
   const day = today();
-  if (!cloudResearchUsage || cloudResearchUsage.day !== day) {
-    cloudResearchUsage = { day, calls: 0 };
-    try {
-      const { data } = await SUPA.from('research_usage').select('day,calls').eq('day', day).maybeSingle();
-      if (data) cloudResearchUsage = data;
-    } catch (e) { /* table missing (run SQL 19) — limit still enforced per session */ }
+  try {
+    const { data } = await SUPA.from('research_usage').select('day,calls').eq('day', day).maybeSingle();
+    cloudResearchUsage = data || { day, calls: 0 };
+  } catch (e) {
+    if (!cloudResearchUsage || cloudResearchUsage.day !== day) cloudResearchUsage = { day, calls: 0 };
   }
   return { day, used: cloudResearchUsage.calls, limit: RESEARCH_DAILY_LIMIT,
            left: Math.max(0, RESEARCH_DAILY_LIMIT - cloudResearchUsage.calls) };
 }
 function bumpResearchUsage() {
-  if (!cloudResearchUsage) return;
-  cloudResearchUsage.calls++;
-  SUPA.from('research_usage')
-    .upsert({ day: cloudResearchUsage.day, calls: cloudResearchUsage.calls })
-    .then(() => {}, (e) => console.warn('usage write failed', e));
+  // Display-cache bump only. The AUTHORITATIVE increment happens inside the
+  // enrich-equipment function (consume_research_call, SQL 22) — writing here
+  // too would double-count or clobber the server's atomic counter.
+  if (cloudResearchUsage) cloudResearchUsage.calls++;
 }
 
 // ---------- Background parts-research queue (admins, real mode) ----------
@@ -4817,11 +4832,18 @@ async function runEnrichmentQueue() {
         body: { make: e.make, model: e.model, eqType: e.type, variant: q.variant || undefined },
       }));
     } catch (err) { error = err; }
-    // Any answered request cost money — count it (pure network failures did not).
-    if (!error || error.context) { budget.left--; bumpResearchUsage(); }
+    // Only a real HTTP answer cost money — supabase-js sets .context on every
+    // error shape, so match the answered error CLASSES, not the property.
+    if (!error || error.name === 'FunctionsHttpError' || error.name === 'FunctionsRelayError') { budget.left--; bumpResearchUsage(); }
     if (error) {
       let msg = error.message || String(error);
       try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
+      if (/budget_exhausted/i.test(msg)) {
+        // The server-side daily cap refused — stop cleanly, resume tomorrow.
+        _queueBudgetHit = true;
+        await setQueueRow(q.id, { status: 'pending' });
+        break;
+      }
       if (/not_configured|ANTHROPIC_API_KEY|Failed to send a request/i.test(msg)) {
         // Infrastructure missing (key / function) — nothing else will succeed. Pause the run.
         _queueNotConfigured = true;

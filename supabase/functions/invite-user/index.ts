@@ -32,9 +32,12 @@ Deno.serve(async (req) => {
     const { data: { user }, error: uerr } = await caller.auth.getUser();
     if (uerr || !user) return json({ error: "unauthorized" }, 401);
 
-    const { data: prof } = await caller.from("profiles").select("role").eq("id", user.id).single();
+    const { data: prof } = await caller.from("profiles").select("role,status").eq("id", user.id).single();
     const callerRole = prof?.role;
     if (callerRole !== "Admin" && callerRole !== "Superadmin") return json({ error: "forbidden — admins only" }, 403);
+    // A deactivated admin's JWT stays technically valid until it expires —
+    // deactivation must close this door too, not just the database's.
+    if ((prof?.status ?? "active") !== "active") return json({ error: "forbidden — account deactivated" }, 403);
 
     const { email, name, role, redirectTo } = await req.json();
     if (!email) return json({ error: "email required" }, 400);
