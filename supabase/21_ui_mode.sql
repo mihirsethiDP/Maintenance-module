@@ -17,13 +17,15 @@
 alter table public.profiles add column if not exists ui_mode text not null default 'simple'
   check (ui_mode in ('simple', 'full'));
 
--- The Superadmin keeps the full tool.
-update public.profiles set ui_mode = 'full' where role = 'Superadmin';
-
 -- Guard: only the Superadmin may change interface modes.
 create or replace function public.guard_profiles()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  -- Service context (SQL editor, service role): auth.uid() is NULL and RLS
+  -- is already bypassed there by design -- the guard is for client requests.
+  if auth.uid() is null then
+    return coalesce(new, old);
+  end if;
   if tg_op = 'DELETE' then
     if old.role = 'Superadmin' then
       raise exception 'The Superadmin profile cannot be deleted.';
@@ -57,6 +59,10 @@ begin
   return new;
 end;
 $$;
+
+-- The Superadmin keeps the full tool (runs AFTER the guard above learned to
+-- stand aside for the SQL editor's service context).
+update public.profiles set ui_mode = 'full' where role = 'Superadmin';
 
 -- ---- Verify ----
 select name, role, ui_mode, coalesce(status, 'active') as status
