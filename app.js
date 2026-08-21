@@ -745,9 +745,14 @@ function routeAllowed(hash, user) {
 }
 function homeHashFor(user) { return effRole(user) === 'Admin' ? '#/dashboard' : '#/equipment'; }
 
+// The sign-in / set-password / accept-invite screens are full-screen and
+// have no navigation. route() returns early into them, so it never reaches
+// renderNav() -- each one clears the nav itself or the previous session's
+// tabs (and its highlighted tab) linger behind the login form.
+function clearNav() { const n = document.getElementById('nav'); if (n) n.innerHTML = ''; }
 function renderNav() {
   const user = currentUser();
-  if (!user) { document.getElementById('nav').innerHTML = ''; return; }
+  if (!user) { clearNav(); return; }
   const cur = location.hash || homeHashFor(user);
   document.getElementById('nav').innerHTML = routes.filter(r => r.roles.includes(effRole(user)))
     .filter(r => r.hash !== '#/review' || (SUPA && !isSimple()))   // review queue: full mode only
@@ -818,6 +823,7 @@ window.addEventListener('popstate', () => {
 
 // ---------- Login screen ----------
 function renderLogin() {
+  clearNav();
   document.getElementById('view').innerHTML = `
     <div class="min-h-[70vh] flex items-center justify-center px-4">
       <div class="w-full max-w-sm">
@@ -855,6 +861,7 @@ function renderLogin() {
 }
 // Invite / recovery landing — the user sets their password to activate their account.
 function renderSetPassword() {
+  clearNav();
   const u = currentUser();
   document.getElementById('view').innerHTML = `
     <div class="min-h-[70vh] flex items-center justify-center px-4"><div class="w-full max-w-sm">
@@ -2624,6 +2631,7 @@ function submitAddTechnician(ev) {
 
 // ---------- Accept invite (no session required) ----------
 function renderAcceptInvite(token) {
+  clearNav();
   const data = b64urlDecode(token);
   const wrap = (inner) => `<div class="min-h-[70vh] flex items-center justify-center px-4"><div class="w-full max-w-sm">
     <div class="flex items-center gap-2 justify-center mb-6">
