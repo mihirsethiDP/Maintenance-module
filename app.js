@@ -476,7 +476,7 @@ async function loadAuthProfile(u) {
 }
 
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
-const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null, expectedLifeYears: r.expected_life_years || null, lineageId: r.lineage_id || r.id, retiredAt: r.retired_at || null, replacedBy: r.replaced_by || null });
+const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null, expectedLifeYears: r.expected_life_years || null, lineageId: r.lineage_id || r.id, retiredAt: r.retired_at || null, replacedBy: r.replaced_by || null, addedOn: String(r.created_at || '').slice(0, 10) });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
 const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
@@ -3155,7 +3155,14 @@ function getUpcomingPPM(days = 30, plantIds) {
 
 // PPM slots before this date are never reported overdue — the schedule went
 // live at launch; flagging months of pre-launch slots would flood day one.
+// Nothing before this date can be "overdue" — the tool wasn't keeping records
+// yet. Per-equipment, the floor is the LATER of this and the day the machine
+// was added (equipment.created_at), so importing a plant never manufactures a
+// backlog of maintenance nobody was asked to do — including future imports.
 const PPM_BASELINE = '2026-07-19';
+function ppmOverdueFloor(e) {
+  return (e && e.addedOn && e.addedOn > PPM_BASELINE) ? e.addedOn : PPM_BASELINE;
+}
 
 function getOverduePPM(plantIds) {
   // PPM slots whose date is in the past but no completion log exists at-or-after that date in this month.
@@ -3173,7 +3180,7 @@ function getOverduePPM(plantIds) {
     const slotDate = new Date(y, m, day);
     if (slotDate >= now) continue; // not yet due
     const slotStr = dstr(slotDate);
-    if (slotStr < PPM_BASELINE) continue; // pre-launch slot — not our backlog
+    if (slotStr < ppmOverdueFloor(e)) continue; // before this machine existed here — not a backlog
     const monthPrefix = slotStr.slice(0,7);
     const done = state.logs.some(l => l.equipmentId === eqId && l.endDate && l.endDate.startsWith(monthPrefix));
     if (!done) out.push({ e, date: slotDate, slot: `Monthly · ${slot}` });
