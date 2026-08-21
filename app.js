@@ -3943,11 +3943,12 @@ function openMaintModal(eqId) {
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-slate-600 mb-1">Start date <span class="text-red-500">*</span></label>
-          <input type="date" name="startDate" value="${today()}" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+          <input type="date" name="startDate" value="${today()}" required class="w-full border border-slate-300 rounded-md px-2 py-1.5"
+            onchange="const et = this.form.querySelector('[name=etr]'); if (et) { et.min = this.value; if (et.value && et.value < this.value) et.value = this.value; }" />
         </div>
         <div>
           <label class="block text-xs text-slate-600 mb-1">Expected completion <span class="text-red-500">*</span></label>
-          <input type="date" name="etr" required value="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+          <input type="date" name="etr" required value="${today()}" min="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
         </div>
       </div>
       <div>
@@ -3999,6 +4000,10 @@ async function submitMaint(ev, eqId) {
   const isBd = f.get('reason') === 'Breakdown';
   if (isBd && !(f.get('notes') || '').trim()) {
     appAlert('Describe the breakdown — what failed and what you observed. Required for breakdowns.');
+    return;
+  }
+  if (f.get('etr') && f.get('startDate') && f.get('etr') < f.get('startDate')) {
+    appAlert('Expected completion cannot be before the start date — the job would be born overdue.');
     return;
   }
   const log = {
@@ -4096,7 +4101,7 @@ function openCompleteModal(eqId) {
       ${checklistSection}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion date <span class="text-red-500">*</span></label>
-        <input type="date" name="endDate" value="${today()}" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+        <input type="date" name="endDate" value="${today()}" required ${log && woStateOf(log) !== 'open' && log.startDate ? `min="${log.startDate}"` : ''} class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
       </div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion notes ${log?.reason === 'Breakdown' ? '<span class="text-red-500">*</span>' : '<span class="text-slate-400">(optional)</span>'}</label>
@@ -4125,6 +4130,10 @@ async function submitComplete(ev, eqId) {
   const completionNotes = f.get('completionNotes') || '';
   const wantReport = submitterOf(ev)?.value === 'confirm-report';
   const log = openLogFor(eqId);
+  if (log && woStateOf(log) !== 'open' && log.startDate && endDate < log.startDate) {
+    appAlert(`This job started on ${log.startDate} — it cannot be completed before that date.`);
+    return;
+  }
 
   // The checklist is a reference guide, not a gate — no per-item ticking required.
   const checklist = null;
