@@ -3,7 +3,8 @@
 -- Run in Supabase → SQL Editor (after 25). Then:
 --     supabase functions deploy send-notifications
 --     supabase secrets set SENDGRID_API_KEY=SG....
---     supabase secrets set MAIL_FROM="DigitalPaani Maintenance <maintenance@digitalpaani.com>"
+--     supabase secrets set MAIL_FROM="DigitalPaani Maintenance (do not reply) <support@ecoinnovision.com>"
+--        ^ must be a SendGrid VERIFIED SENDER; anything else gets a 403.
 --     supabase secrets set CRON_SECRET=<long random string>   (if not already set)
 -- ...then run 27_email_cron.sql to schedule the daily digest.
 --

@@ -50,7 +50,12 @@ function parseFrom(raw: string) {
 async function sendMail(to: string, subject: string, html: string) {
   const key = Deno.env.get("SENDGRID_API_KEY");
   if (!key) throw new Error("not_configured: SENDGRID_API_KEY is not set");
-  const from = parseFrom(Deno.env.get("MAIL_FROM") || "maintenance@digitalpaani.com");
+  // No default sender: SendGrid rejects any FROM that is not a verified
+  // identity, so guessing one buys a 403 that reads like a code fault. Say
+  // plainly that the secret is missing instead.
+  const fromRaw = Deno.env.get("MAIL_FROM");
+  if (!fromRaw) throw new Error("not_configured: MAIL_FROM is not set (must be a SendGrid verified sender)");
+  const from = parseFrom(fromRaw);
   // The verified sender may belong to another mailbox entirely (SendGrid only
   // checks the FROM identity). MAIL_REPLY_TO points replies somewhere useful.
   const replyToRaw = Deno.env.get("MAIL_REPLY_TO");
