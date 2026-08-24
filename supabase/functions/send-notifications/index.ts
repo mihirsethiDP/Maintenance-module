@@ -13,9 +13,11 @@
 //
 // Deploy:   supabase functions deploy send-notifications
 // Secrets:  SENDGRID_API_KEY  (required — nothing sends without it)
-//           MAIL_FROM         e.g. "DigitalPaani Maintenance <maintenance@digitalpaani.com>"
+//           MAIL_FROM         e.g. "DigitalPaani Maintenance <support@ecoinnovision.com>"
 //                             The address must be a verified sender (or sit on
 //                             an authenticated domain) in the SendGrid account.
+//           MAIL_REPLY_TO     optional — where replies should go, when the
+//                             verified sender is not a monitored mailbox.
 //           APP_URL           e.g. "https://mihirsethidp.github.io/Maintenance-module/"
 //           CRON_SECRET       shared with 27_email_cron.sql
 //
@@ -48,12 +50,16 @@ async function sendMail(to: string, subject: string, html: string) {
   const key = Deno.env.get("SENDGRID_API_KEY");
   if (!key) throw new Error("not_configured: SENDGRID_API_KEY is not set");
   const from = parseFrom(Deno.env.get("MAIL_FROM") || "maintenance@digitalpaani.com");
+  // The verified sender may belong to another mailbox entirely (SendGrid only
+  // checks the FROM identity). MAIL_REPLY_TO points replies somewhere useful.
+  const replyToRaw = Deno.env.get("MAIL_REPLY_TO");
   const resp = await fetch("https://api.sendgrid.com/v3/mail/send", {
     method: "POST",
     headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       personalizations: [{ to: [{ email: to }] }],
       from,
+      ...(replyToRaw ? { reply_to: parseFrom(replyToRaw) } : {}),
       subject,
       content: [{ type: "text/html", value: html }],
       // Tags these in the company's existing SendGrid stats, so this tool's
