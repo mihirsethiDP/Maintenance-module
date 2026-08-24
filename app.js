@@ -2403,9 +2403,17 @@ async function sendTestDigest(userId) {
   // The function reports exactly why it passed someone over — show that,
   // rather than making the admin guess.
   const NL = String.fromCharCode(10);
+  const d = data && data.debug;
   const reason = (data && data.why && data.why.length)
     ? data.why.map(w => `${w.email}: ${w.reason}`).join(NL)
-    : 'The function returned no recipients and no reason — check the Edge Function logs in Supabase.';
+    : d
+      // No per-person reason means nobody was even considered — the counts
+      // say which lookup came back empty.
+      ? `Nobody was matched. The function saw ${d.profilesRead} profile(s), `
+        + `${d.withUsableEmail} with a usable email, and matched ${d.matchedTarget} recipient(s)`
+        + `${d.requestedUserId ? ' for id ' + d.requestedUserId : ''}.`
+        + `${d.profilesRead === 0 ? NL + NL + 'Reading profiles returned nothing — the function is very likely running an older deployment, or its service-role access is not working.' : ''}`
+      : 'The function returned no recipients, no reason and no diagnostics — it is running an older deployment. Redeploy send-notifications.';
   appAlert('Nothing was sent.' + NL + NL + reason, 'Not sent');
 }
 

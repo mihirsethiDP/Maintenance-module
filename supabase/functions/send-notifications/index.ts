@@ -135,22 +135,35 @@ Deno.serve(async (req) => {
   const day = istToday();
 
   // ---- Who can see what -------------------------------------------------
-  const { data: people } = await db.from("profiles")
+  const { data: people, error: peopleErr } = await db.from("profiles")
     .select("id,name,email,role,status,email_digest,email_urgent");
+  if (peopleErr) {
+    return json({ error: "db_error", message: "reading profiles: " + peopleErr.message }, 500);
+  }
   const active = (people || []).filter((p) =>
     (p.status ?? "active") === "active" && p.email && p.email.includes("@"));
 
-  const { data: assigns } = await db.from("plant_assignments").select("user_id,plant_id");
+  const { data: assigns, error: assignErr } = await db.from("plant_assignments").select("user_id,plant_id");
+  if (assignErr) {
+    return json({ error: "db_error", message: "reading plant_assignments: " + assignErr.message }, 500);
+  }
   const plantsOf = (userId: string, role: string, allPlantIds: string[]) =>
     (role === "Admin" || role === "Superadmin")
       ? allPlantIds
       : (assigns || []).filter((a) => a.user_id === userId).map((a) => a.plant_id);
 
-  const { data: plants } = await db.from("plants").select("id,name");
+  const { data: plants, error: plantErr } = await db.from("plants").select("id,name");
+  if (plantErr) {
+    return json({ error: "db_error", message: "reading plants: " + plantErr.message }, 500);
+  }
   const allPlantIds = (plants || []).map((p) => p.id);
   const plantName = (id: string) => (plants || []).find((p) => p.id === id)?.name || id;
 
-  const { data: equipment } = await db.from("equipment").select("id,tag,plant_id,status");
+  const { data: equipment, error: eqErr } = await db.from("equipment")
+    .select("id,tag,plant_id,status").limit(5000);
+  if (eqErr) {
+    return json({ error: "db_error", message: "reading equipment: " + eqErr.message }, 500);
+  }
   const eqById = (id: string) => (equipment || []).find((e) => e.id === id);
 
   const sent: string[] = [];
@@ -226,9 +239,12 @@ Deno.serve(async (req) => {
   }
 
   // ================= DIGEST: one summary per person per day ===============
-  const { data: openLogs } = await db.from("maintenance_logs")
+  const { data: openLogs, error: logErr } = await db.from("maintenance_logs")
     .select("id,equipment_id,reason,start_date,etr,technician,wo_state,notes")
     .is("end_date", null);
+  if (logErr) {
+    return json({ error: "db_error", message: "reading maintenance_logs: " + logErr.message }, 500);
+  }
 
   const targets = mode === "test" && body.userId
     ? active.filter((p) => p.id === body.userId)
@@ -302,6 +318,18 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ mode, day, sent: sent.length, skipped: skipped.length, failed: failed.length,
-                recipients: sent, why });
+  return json({
+    mode, day, sent: sent.length, skipped: skipped.length, failed: failed.length,
+    recipients: sent, why,
+    // Counts make an empty result self-explaining instead of mysterious.
+    debug: {
+      profilesRead: (people || []).length,
+      withUsableEmail: active.length,
+      requestedUserId: body.userId || null,
+      matchedTarget: targets.length,
+      plants: allPlantIds.length,
+      equipment: (equipment || []).length,
+      openWorkOrders: (openLogs || []).length,
+    },
+  });
 });
