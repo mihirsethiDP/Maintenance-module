@@ -535,10 +535,11 @@ async function hydrateCloud() {
   hydrateErrors = [];
   const fail = (name, err) => { hydrateErrors.push(name); console.warn(name + ' hydrate failed', err); };
   await Promise.all([
-    SUPA.from('profiles').select('id,name,role,phone,status,email,ui_mode')
+    SUPA.from('profiles').select('id,name,role,phone,status,email,ui_mode,email_digest,email_urgent')
       .then(({ data, error }) => {
         if (error) return fail('users', error);
-        cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active', uiMode: p.ui_mode || 'simple' }));
+        cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active', uiMode: p.ui_mode || 'simple',
+          emailDigest: p.email_digest !== false, emailUrgent: p.email_urgent !== false }));
       }, e => fail('users', e)),
     SUPA.from('plant_assignments').select('user_id,plant_id')
       .then(({ data, error }) => {
@@ -991,6 +992,13 @@ const NOTIF_MSG = {
 };
 function pushEventNotification(eventKey, eq, log) {
   const plant = plantById(eq.plantId); if (!plant) return;
+  // A stopped machine cannot wait for tomorrow's digest — mail the admins and
+  // the engineers assigned to this plant now. Fire-and-forget: a mail problem
+  // must never fail the work-order that was just saved.
+  if (SUPA && eventKey === 'breakdown' && log && log.id) {
+    SUPA.functions.invoke('send-notifications', { body: { mode: 'urgent', logId: log.id } })
+      .catch(() => {});
+  }
   // The in-app activity feed ALWAYS records events. The per-plant config only
   // controls delivery channels/recipients (Phase 3b) — not whether it's logged.
   const cfg = (plant.notifications && plant.notifications[eventKey]) || { channels: [], recipients: [] };
@@ -2371,6 +2379,27 @@ async function deleteTechnician(id) {
   route();
 }
 
+// Send one person a sample daily summary, so email delivery can be proven
+// without waiting for 07:00. Superadmin only.
+async function sendTestDigest(userId) {
+  if (!SUPA || !isSuperadmin()) return;
+  const u = state.users.find(x => x.id === userId);
+  toast(`Sending a test summary to ${esc(u?.email || 'that address')}…`);
+  let data, error;
+  try { ({ data, error } = await SUPA.functions.invoke('send-notifications', { body: { mode: 'test', userId } })); }
+  catch (err) { error = err; }
+  if (error) {
+    let msg = error.message || String(error);
+    try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
+    appAlert(/not_configured|RESEND_API_KEY/i.test(msg)
+      ? 'Email isn\'t configured yet. Add RESEND_API_KEY (and MAIL_FROM) under Supabase → Edge Functions → Secrets, then deploy send-notifications.'
+      : 'Could not send: ' + msg, 'Email test');
+    return;
+  }
+  if (data && data.sent) appAlert(`Sent to ${data.recipients.join(', ')}. If it does not arrive, check the spam folder and the sender domain.`, 'Test sent');
+  else appAlert('Nothing to send — that person has no overdue, due-today or scheduled work right now, so a real digest would stay silent too.', 'Nothing to report');
+}
+
 // Deactivate / reactivate a user (real mode). The DB guard (SQL 20) enforces
 // the hierarchy server-side; this is the friendly path to it.
 async function setUserStatus(userId, status) {
@@ -2414,6 +2443,20 @@ function openEditUserModal(userId) {
         <input name="phone" value="${esc(u.phone||'')}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="+919000010000" />
         <div class="text-[11px] text-slate-400 mt-1">Include the country code. Used for WhatsApp notifications once that's enabled.</div>
       </div>
+      ${SUPA ? `<div>
+        <label class="block text-xs text-slate-600 mb-1">Email notifications</label>
+        <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+          <input type="checkbox" name="emailDigest" ${u.emailDigest !== false ? 'checked' : ''} class="mt-0.5" />
+          <span class="text-xs text-slate-700"><b>Daily summary</b> — one email each morning listing what is overdue,
+            due today and scheduled. Nothing is sent on days with nothing outstanding.</span>
+        </label>
+        <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer mt-1.5">
+          <input type="checkbox" name="emailUrgent" ${u.emailUrgent !== false ? 'checked' : ''} class="mt-0.5" />
+          <span class="text-xs text-slate-700"><b>Breakdown alerts</b> — emailed the moment a machine at their plants
+            is reported broken down.</span>
+        </label>
+        ${isSuperadmin() ? `<button type="button" onclick="sendTestDigest('${userId}')" class="mt-2 text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Send a test summary now</button>` : ''}
+      </div>` : ''}
       ${SUPA && isSuperadmin() ? `<div>
         <label class="block text-xs text-slate-600 mb-1">Interface</label>
         <select name="uiMode" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
@@ -2444,6 +2487,8 @@ async function submitEditUser(ev, userId) {
     const unlock = lockSubmit(ev);
     const patch = { name, phone };
     if (isSuperadmin() && f.get('uiMode')) patch.ui_mode = f.get('uiMode') === 'full' ? 'full' : 'simple';
+    patch.email_digest = !!f.get('emailDigest');
+    patch.email_urgent = !!f.get('emailUrgent');
     const { error } = await SUPA.from('profiles').update(patch).eq('id', userId);
     if (error) { unlock(); saveError(error); return; }
     if (authUser && authUser.id === userId) { authUser.name = name; authUser.phone = phone; }
