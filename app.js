@@ -2396,8 +2396,17 @@ async function sendTestDigest(userId) {
       : 'Could not send: ' + msg, 'Email test');
     return;
   }
-  if (data && data.sent) appAlert(`Sent to ${data.recipients.join(', ')}. If it does not arrive, check the spam folder and the sender domain.`, 'Test sent');
-  else appAlert('Nothing was sent. A test now goes out even when there is no outstanding work, so the cause is one of: no email address on their profile, the account is deactivated, or (for an engineer) no plants are assigned to them yet.', 'Not sent');
+  if (data && data.sent) {
+    appAlert(`Sent to ${data.recipients.join(', ')}. If it does not arrive, check the spam folder and the sender domain.`, 'Test sent');
+    return;
+  }
+  // The function reports exactly why it passed someone over — show that,
+  // rather than making the admin guess.
+  const NL = String.fromCharCode(10);
+  const reason = (data && data.why && data.why.length)
+    ? data.why.map(w => `${w.email}: ${w.reason}`).join(NL)
+    : 'The function returned no recipients and no reason — check the Edge Function logs in Supabase.';
+  appAlert('Nothing was sent.' + NL + NL + reason, 'Not sent');
 }
 
 // Deactivate / reactivate a user (real mode). The DB guard (SQL 20) enforces

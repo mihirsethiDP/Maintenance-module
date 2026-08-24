@@ -156,6 +156,10 @@ Deno.serve(async (req) => {
   const sent: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
+  // A silent skip is useless when email won't send -- record the reason for
+  // every recipient we pass over, and hand it back to the caller.
+  const why: Array<{ email: string; reason: string }> = [];
+  const skip = (email: string, reason: string) => { skipped.push(email); why.push({ email, reason }); };
 
   const record = async (kind: string, userId: string, email: string, subject: string,
                         status: string, detail?: string) => {
@@ -163,10 +167,17 @@ Deno.serve(async (req) => {
   };
   // Claim first: the unique (day, kind, user) index makes a duplicate insert
   // fail, which is exactly how we guarantee one email per person per day.
+  // Returns null when claimed, otherwise the reason it could not be.
   const claim = async (kind: string, userId: string, email: string, subject: string) => {
     const { error } = await db.from("email_log")
       .insert({ sent_on: day, kind, user_id: userId, email, subject, status: "sending" });
-    return !error;
+    if (!error) return null;
+    const msg = String(error.message || error);
+    if (/duplicate key|unique/i.test(msg)) return "already_sent_today";
+    if (/does not exist|relation .* does not exist|schema cache/i.test(msg)) {
+      return "email_log table missing -- run supabase/26_email_notifications.sql";
+    }
+    return "could not write email_log: " + msg.slice(0, 160);
   };
   const finish = async (kind: string, userId: string, status: string, detail?: string) => {
     await db.from("email_log").update({ status, detail }).eq("sent_on", day).eq("kind", kind).eq("user_id", userId);
@@ -198,15 +209,20 @@ Deno.serve(async (req) => {
     );
 
     for (const p of active) {
-      if (!p.email_urgent) { skipped.push(p.email); continue; }
+      if (!p.email_urgent) { skip(p.email, "breakdown alerts switched off"); continue; }
       const scope = plantsOf(p.id, p.role, allPlantIds);
-      if (!scope.includes(e.plant_id)) { skipped.push(p.email); continue; }
+      if (!scope.includes(e.plant_id)) { skip(p.email, "not assigned to this plant"); continue; }
       const kind = `urgent:${logId}`;
-      if (!await claim(kind, p.id, p.email, subject)) { skipped.push(p.email); continue; }
+      const blocked = await claim(kind, p.id, p.email, subject);
+      if (blocked) { skip(p.email, blocked); continue; }
       try { await sendMail(p.email, subject, html); await finish(kind, p.id, "sent"); sent.push(p.email); }
-      catch (err) { await finish(kind, p.id, "failed", String(err).slice(0, 300)); failed.push(p.email); }
+      catch (err) {
+        await finish(kind, p.id, "failed", String(err).slice(0, 300));
+        failed.push(p.email); why.push({ email: p.email, reason: String(err).slice(0, 200) });
+      }
     }
-    return json({ mode, day, sent: sent.length, skipped: skipped.length, failed: failed.length, recipients: sent });
+    return json({ mode, day, sent: sent.length, skipped: skipped.length, failed: failed.length,
+                  recipients: sent, why });
   }
 
   // ================= DIGEST: one summary per person per day ===============
@@ -218,9 +234,21 @@ Deno.serve(async (req) => {
     ? active.filter((p) => p.id === body.userId)
     : active.filter((p) => p.email_digest);
 
+  // A test aimed at somebody who never reaches the loop needs explaining.
+  if (mode === "test" && body.userId && !targets.length) {
+    const raw = (people || []).find((x) => x.id === body.userId);
+    why.push({
+      email: raw?.email || "(unknown)",
+      reason: !raw ? "no profile row for that id"
+        : !raw.email ? "no email address on their profile"
+        : (raw.status ?? "active") !== "active" ? "account is deactivated"
+        : "profile did not qualify",
+    });
+  }
+
   for (const p of targets) {
     const scope = plantsOf(p.id, p.role, allPlantIds);
-    if (!scope.length) { skipped.push(p.email); continue; }
+    if (!scope.length) { skip(p.email, "no plants assigned"); continue; }
 
     const mine = (openLogs || []).filter((l) => {
       const e = eqById(l.equipment_id);
@@ -237,7 +265,7 @@ Deno.serve(async (req) => {
     const nothingOutstanding = !overdue.length && !dueToday.length && !ready.length;
     // The real digest stays silent on quiet days. A TEST must still arrive --
     // its job is to prove delivery, not to report work.
-    if (nothingOutstanding && mode !== "test") { skipped.push(p.email); continue; }
+    if (nothingOutstanding && mode !== "test") { skip(p.email, "nothing outstanding today"); continue; }
 
     const isTest = mode === "test";
     const subject = isTest
@@ -265,10 +293,15 @@ Deno.serve(async (req) => {
     );
 
     const kind = mode === "test" ? `digest-test:${Date.now()}` : "digest";
-    if (!await claim(kind, p.id, p.email, subject)) { skipped.push(p.email); continue; }
+    const blocked = await claim(kind, p.id, p.email, subject);
+    if (blocked) { skip(p.email, blocked); continue; }
     try { await sendMail(p.email, subject, html); await finish(kind, p.id, "sent"); sent.push(p.email); }
-    catch (err) { await finish(kind, p.id, "failed", String(err).slice(0, 300)); failed.push(p.email); }
+    catch (err) {
+      await finish(kind, p.id, "failed", String(err).slice(0, 300));
+      failed.push(p.email); why.push({ email: p.email, reason: String(err).slice(0, 200) });
+    }
   }
 
-  return json({ mode, day, sent: sent.length, skipped: skipped.length, failed: failed.length, recipients: sent });
+  return json({ mode, day, sent: sent.length, skipped: skipped.length, failed: failed.length,
+                recipients: sent, why });
 });
