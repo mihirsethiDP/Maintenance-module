@@ -4,7 +4,7 @@
 --
 -- BEFORE running:
 --   1. supabase functions deploy send-notifications
---   2. supabase secrets set RESEND_API_KEY=re_...
+--   2. supabase secrets set SENDGRID_API_KEY=SG....
 --      supabase secrets set MAIL_FROM="DigitalPaani Maintenance <maintenance@digitalpaani.com>"
 --      supabase secrets set CRON_SECRET=<long random string>
 --   3. Replace PASTE_CRON_SECRET_HERE below with the SAME string.

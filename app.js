@@ -2391,8 +2391,8 @@ async function sendTestDigest(userId) {
   if (error) {
     let msg = error.message || String(error);
     try { const j = await error.context.json(); if (j) msg = j.message || j.error || msg; } catch {}
-    appAlert(/not_configured|RESEND_API_KEY/i.test(msg)
-      ? 'Email isn\'t configured yet. Add RESEND_API_KEY (and MAIL_FROM) under Supabase → Edge Functions → Secrets, then deploy send-notifications.'
+    appAlert(/not_configured|SENDGRID_API_KEY/i.test(msg)
+      ? 'Email isn\'t configured yet. Add SENDGRID_API_KEY (and MAIL_FROM) under Supabase → Edge Functions → Secrets, then deploy send-notifications.'
       : 'Could not send: ' + msg, 'Email test');
     return;
   }

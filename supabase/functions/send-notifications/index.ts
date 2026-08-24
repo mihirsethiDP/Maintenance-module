@@ -12,13 +12,15 @@
 // double-send.
 //
 // Deploy:   supabase functions deploy send-notifications
-// Secrets:  RESEND_API_KEY   (required — nothing sends without it)
-//           MAIL_FROM        e.g. "DigitalPaani Maintenance <maintenance@digitalpaani.com>"
-//           APP_URL          e.g. "https://mihirsethidp.github.io/Maintenance-module/"
-//           CRON_SECRET      shared with 27_email_cron.sql
+// Secrets:  SENDGRID_API_KEY  (required — nothing sends without it)
+//           MAIL_FROM         e.g. "DigitalPaani Maintenance <maintenance@digitalpaani.com>"
+//                             The address must be a verified sender (or sit on
+//                             an authenticated domain) in the SendGrid account.
+//           APP_URL           e.g. "https://mihirsethidp.github.io/Maintenance-module/"
+//           CRON_SECRET       shared with 27_email_cron.sql
 //
-// Swapping providers: only sendMail() talks to Resend. Point it at
-// SendGrid/SES/Postmark and nothing else changes.
+// Swapping providers: only sendMail() talks to SendGrid. Point it at
+// SES/Postmark/Resend and nothing else changes.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -36,16 +38,36 @@ const istToday = () =>
 const esc = (s: unknown) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+// MAIL_FROM accepts either "Name <a@b.com>" or a bare address.
+function parseFrom(raw: string) {
+  const m = raw.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+  return m ? { name: m[1] || undefined, email: m[2] } : { email: raw.trim() };
+}
+
 async function sendMail(to: string, subject: string, html: string) {
-  const key = Deno.env.get("RESEND_API_KEY");
-  if (!key) throw new Error("not_configured: RESEND_API_KEY is not set");
-  const from = Deno.env.get("MAIL_FROM") || "DigitalPaani Maintenance <onboarding@resend.dev>";
-  const resp = await fetch("https://api.resend.com/emails", {
+  const key = Deno.env.get("SENDGRID_API_KEY");
+  if (!key) throw new Error("not_configured: SENDGRID_API_KEY is not set");
+  const from = parseFrom(Deno.env.get("MAIL_FROM") || "maintenance@digitalpaani.com");
+  const resp = await fetch("https://api.sendgrid.com/v3/mail/send", {
     method: "POST",
     headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to: [to], subject, html }),
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from,
+      subject,
+      content: [{ type: "text/html", value: html }],
+      // Tags these in the company's existing SendGrid stats, so this tool's
+      // volume is separable from everything else the account sends.
+      categories: ["maintenance-ops"],
+    }),
   });
-  if (!resp.ok) throw new Error(`mail_failed ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+  // SendGrid answers 202 Accepted on success; resp.ok covers 200-299.
+  if (!resp.ok) {
+    const text = await resp.text();
+    let detail = text.slice(0, 200);
+    try { detail = JSON.parse(text).errors?.[0]?.message || detail; } catch { /* keep raw */ }
+    throw new Error(`mail_failed ${resp.status}: ${detail}`);
+  }
 }
 
 const APP = () => Deno.env.get("APP_URL") || "https://mihirsethidp.github.io/Maintenance-module/";
@@ -104,8 +126,8 @@ Deno.serve(async (req) => {
     callerId = user.id;
   }
 
-  if (!Deno.env.get("RESEND_API_KEY")) {
-    return json({ error: "not_configured", message: "RESEND_API_KEY is not set — nothing was sent." }, 501);
+  if (!Deno.env.get("SENDGRID_API_KEY")) {
+    return json({ error: "not_configured", message: "SENDGRID_API_KEY is not set — nothing was sent." }, 501);
   }
 
   const body = await req.json().catch(() => ({}));
