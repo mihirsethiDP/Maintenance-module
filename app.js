@@ -2472,6 +2472,7 @@ function openEditUserModal(userId) {
           <span class="text-xs text-slate-700"><b>Breakdown alerts</b> — emailed the moment a machine at their plants
             is reported broken down.</span>
         </label>
+        ${emailScopeNote(u)}
         ${isSuperadmin() ? `<button type="button" onclick="sendTestDigest('${userId}')" class="mt-2 text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Send a test summary now</button>` : ''}
       </div>` : ''}
       ${SUPA && isSuperadmin() ? `<div>
@@ -2489,6 +2490,22 @@ function openEditUserModal(userId) {
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
   pushOverlayState();
+}
+// Both email types are scoped to the plants a person can see. Ticking a box for
+// an engineer with no assignments therefore sends nothing at all -- which looks
+// identical to a broken mailer. Say it at the checkbox, not in a support call.
+function emailScopeNote(u) {
+  const seesEverything = u.role === 'Admin' || u.role === 'Superadmin';
+  if (seesEverything) {
+    return `<div class="text-[11px] text-slate-400 mt-1.5">Covers every plant, as ${esc(u.role === 'Superadmin' ? 'a Superadmin' : 'an Admin')}.</div>`;
+  }
+  const n = assignmentsFor(u.id).length;
+  if (n) {
+    return `<div class="text-[11px] text-slate-400 mt-1.5">Covers the ${n} plant${n === 1 ? '' : 's'} assigned to them — nothing outside that.</div>`;
+  }
+  return `<div class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 mt-1.5">
+    <b>No plants assigned yet</b>, so these emails would have nothing to report and none would be sent.
+    Use <b>Assign plants</b> on their row first for either setting to have an effect.</div>`;
 }
 async function submitEditUser(ev, userId) {
   ev.preventDefault();
