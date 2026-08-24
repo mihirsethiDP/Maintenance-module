@@ -16,8 +16,9 @@
 //           MAIL_FROM         e.g. "DigitalPaani Maintenance <support@ecoinnovision.com>"
 //                             The address must be a verified sender (or sit on
 //                             an authenticated domain) in the SendGrid account.
-//           MAIL_REPLY_TO     optional — where replies should go, when the
-//                             verified sender is not a monitored mailbox.
+//           MAIL_REPLY_TO     optional. These are no-reply notifications, so
+//                             normally leave it unset; set it only if you ever
+//                             want replies routed somewhere real.
 //           APP_URL           e.g. "https://mihirsethidp.github.io/Maintenance-module/"
 //           CRON_SECRET       shared with 27_email_cron.sql
 //
@@ -88,7 +89,9 @@ function shell(title: string, intro: string, sections: string, footer: string) {
       <p style="font-size:14px;margin:0 0 14px">${intro}</p>
       ${sections}
       <p style="margin:20px 0 0"><a href="${APP()}" style="background:#193458;color:#fff;text-decoration:none;padding:9px 16px;border-radius:6px;font-size:13px;display:inline-block">Open the tool</a></p>
-      <p style="font-size:11px;color:#94a3b8;margin:16px 0 0;border-top:1px solid #eef2f7;padding-top:10px">${footer}</p>
+      <p style="font-size:11px;color:#94a3b8;margin:16px 0 0;border-top:1px solid #eef2f7;padding-top:10px">
+        <b style="color:#64748b">This mailbox is not monitored — please do not reply.</b><br/>${footer}
+      </p>
     </div>
   </div>`;
 }
