@@ -2397,7 +2397,7 @@ async function sendTestDigest(userId) {
     return;
   }
   if (data && data.sent) appAlert(`Sent to ${data.recipients.join(', ')}. If it does not arrive, check the spam folder and the sender domain.`, 'Test sent');
-  else appAlert('Nothing to send — that person has no overdue, due-today or scheduled work right now, so a real digest would stay silent too.', 'Nothing to report');
+  else appAlert('Nothing was sent. A test now goes out even when there is no outstanding work, so the cause is one of: no email address on their profile, the account is deactivated, or (for an engineer) no plants are assigned to them yet.', 'Not sent');
 }
 
 // Deactivate / reactivate a user (real mode). The DB guard (SQL 20) enforces

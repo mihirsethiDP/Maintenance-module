@@ -234,19 +234,34 @@ Deno.serve(async (req) => {
     const dueToday = mine.filter((l) => String(l.etr) === day).map(row);
     const ready = mine.filter((l) => l.wo_state === "open" && (!l.etr || String(l.etr) > day)).map(row);
 
-    if (!overdue.length && !dueToday.length && !ready.length) { skipped.push(p.email); continue; }
+    const nothingOutstanding = !overdue.length && !dueToday.length && !ready.length;
+    // The real digest stays silent on quiet days. A TEST must still arrive --
+    // its job is to prove delivery, not to report work.
+    if (nothingOutstanding && mode !== "test") { skipped.push(p.email); continue; }
 
-    const subject = overdue.length
-      ? `${overdue.length} overdue · ${dueToday.length} due today — maintenance summary`
-      : `${dueToday.length} due today · ${ready.length} upcoming — maintenance summary`;
+    const isTest = mode === "test";
+    const subject = isTest
+      ? `Test — maintenance summary delivery works`
+      : overdue.length
+        ? `${overdue.length} overdue · ${dueToday.length} due today — maintenance summary`
+        : `${dueToday.length} due today · ${ready.length} upcoming — maintenance summary`;
+
+    const intro = isTest
+      ? `This is a test send${p.name ? " for " + esc(p.name.split(" ")[0]) : ""}. If you are reading it, email delivery is working.` +
+        (nothingOutstanding
+          ? ` Right now there is no overdue, due-today or scheduled work across your ${scope.length} plant${scope.length === 1 ? "" : "s"}, so a real digest would stay silent — that is by design.`
+          : ` Below is your live position across ${scope.length} plant${scope.length === 1 ? "" : "s"}.`)
+      : `Good morning${p.name ? " " + esc(p.name.split(" ")[0]) : ""} — here is where your maintenance stands across ${scope.length} plant${scope.length === 1 ? "" : "s"}.`;
 
     const html = shell(
-      `Daily summary · ${day}`,
-      `Good morning${p.name ? " " + esc(p.name.split(" ")[0]) : ""} — here is where your maintenance stands across ${scope.length} plant${scope.length === 1 ? "" : "s"}.`,
+      isTest ? `Test send · ${day}` : `Daily summary · ${day}`,
+      intro,
       table("Overdue", "#b91c1c", overdue) +
       table("Due today", "#b45309", dueToday) +
       table("Scheduled, not started", "#193458", ready),
-      "One email a day, and none at all on days with nothing outstanding. An admin can turn this off for you on the Team page.",
+      isTest
+        ? "Sent from the Team page by an administrator to check email delivery. Real digests arrive at 07:00 and only when there is something outstanding."
+        : "One email a day, and none at all on days with nothing outstanding. An admin can turn this off for you on the Team page.",
     );
 
     const kind = mode === "test" ? `digest-test:${Date.now()}` : "digest";
