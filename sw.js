@@ -8,13 +8,12 @@
 //     offline without them.
 //   - Supabase API + all non-GET requests: network only, never cached. Data
 //     freshness and writes are the app's job (it keeps its own snapshot).
-const CACHE = 'mm-shell-v2';
+const CACHE = 'mm-shell-v3';   // v3: purge poisoned Tailwind-CDN entries; CSS is now our own file
 // Bare same-origin paths (retrieval uses ignoreSearch, so app.js matches
 // app.js?v=N) plus the CDN libraries — offline must work after ONE visit.
 const CORE = [
   './', 'index.html', 'manifest.json', 'logo.png', 'icon-180.png', 'icon-512.png',
-  'app.js', 'supabase-config.js',
-  'https://cdn.tailwindcss.com/',
+  'app.js', 'supabase-config.js', 'tailwind.css',
   'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js',
@@ -22,9 +21,13 @@ const CORE = [
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
 ];
 const CDN_HOSTS = [
-  'cdn.tailwindcss.com', 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com',
+  'cdn.jsdelivr.net', 'cdnjs.cloudflare.com',
   'fonts.googleapis.com', 'fonts.gstatic.com', 'esm.sh', 'unpkg.com',
 ];
+// Hosts whose requests stay no-cors (font files referenced from Google's CSS):
+// their responses are opaque by nature, and the worst a bad cache entry can do
+// is an ugly font. Everything else is fetched with CORS and must be resp.ok.
+const OPAQUE_OK = ['fonts.gstatic.com', 'fonts.googleapis.com'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
@@ -56,7 +59,12 @@ self.addEventListener('fetch', (e) => {
       const cache = await caches.open(CACHE);
       const hit = await cache.match(req);
       const refresh = fetch(req).then((resp) => {
-        if (resp.ok || resp.type === 'opaque') cache.put(req, resp.clone());
+        // Script tags now carry crossorigin, so real status is visible -- a
+        // captive portal's junk HTML is a redirect/non-ok, not cacheable. The
+        // old `|| resp.type === 'opaque'` clause cached exactly that junk and
+        // silently killed every Tailwind class on the page.
+        const opaqueOk = resp.type === 'opaque' && OPAQUE_OK.includes(url.hostname);
+        if (resp.ok || opaqueOk) cache.put(req, resp.clone());
         return resp;
       }).catch(() => null);
       if (hit) { e.waitUntil(refresh.then(() => {})); return hit; }
