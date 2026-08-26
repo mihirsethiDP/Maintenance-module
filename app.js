@@ -771,6 +771,46 @@ function renderNav() {
   }).join('');
 }
 
+// ---------- Phone card layout support ----------
+// On phones every .list-table renders as a stack of cards (see index.html):
+// seven columns cannot fit 360px, and scrolling sideways pushed the one column
+// you scan for -- the name -- off screen while a sticky action button kept a
+// third of the width. As cards, each cell has to name its own column, since the
+// header row is no longer on screen. Deriving those labels from the table's own
+// <thead> covers every list page, and any table added later, with no per-page
+// markup. Runs off a MutationObserver because each route branch returns
+// straight out of its own render call, so there is no single post-render hook.
+function labelListTables(root) {
+  if (!root || !root.querySelectorAll) return;
+  const tables = root.matches && root.matches('table.list-table')
+    ? [root] : [...root.querySelectorAll('table.list-table')];
+  tables.forEach(t => {
+    const heads = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    t.querySelectorAll('tbody tr').forEach(tr => {
+      const cells = [...tr.children];
+      // Empty-state rows span the whole card and take no label.
+      if (cells.length === 1 && cells[0].hasAttribute('colspan')) { cells[0].classList.add('c-span'); return; }
+      cells.forEach((td, i) => {
+        if (!td.hasAttribute('data-label')) td.setAttribute('data-label', heads[i] || '');
+        const txt = td.textContent.trim();
+        if (i === 0) td.classList.add('c-title');
+        else if (i === cells.length - 1 && td.querySelector('button')) td.classList.add('c-action');
+        else if (!txt || txt === '—') td.classList.add('c-hide');
+      });
+    });
+  });
+}
+// Observe childList only -- setting attributes must not retrigger this.
+function startTableLabeller() {
+  const view = document.getElementById('view');
+  const modal = document.getElementById('modalBody');
+  const obs = new MutationObserver(muts => {
+    for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) labelListTables(n);
+  });
+  [view, modal].forEach(el => el && obs.observe(el, { childList: true, subtree: true }));
+  [view, modal].forEach(el => el && labelListTables(el));
+}
+
 function route() {
   // A configured deployment with no auth library cannot sign anyone in. Say so
   // instead of degrading into the local prototype, which would offer demo
@@ -807,6 +847,7 @@ function route() {
   location.hash = homeHashFor(user);
 }
 window.addEventListener('hashchange', route);
+startTableLabeller();
 // Escape closes the topmost overlay (notification panel, then modal).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -1412,6 +1453,7 @@ function renderEquipment() {
   const sf = ui.eqStatusFilter || 'all';
   let eq = applyTypeFilter(applyPlantFilter(activeEquipment()));
   if (sf !== 'all') eq = eq.filter(e => e.status === sf);
+  const samePlant = ui.plantFilter !== 'all';
   const rows = eq.map(e => {
     const log = openLogFor(e.id);
     const openWo = openLogFor(e.id);
@@ -1421,14 +1463,18 @@ function renderEquipment() {
         ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     const hs = SUPA && !isSimple() ? healthScore(e) : null;
+    // On phones this row is rendered as a card, where each cell shows its own
+    // label -- so a cell with no content must be dropped rather than print an
+    // empty "Expected completion —" line.
+    const etrEmpty = !(log && log.etr) ? ' c-hide' : '';
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
-      <td><div class="cell-primary">${esc(plantName(e.plantId))}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div>${SUPA && !isSimple() && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<div class="text-[10px] font-medium text-amber-600 mt-0.5">No parts recorded</div>' : ''}</td>
-      <td><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
-      ${hs ? `<td class="col-center">${healthBadge(hs.score)}</td>` : ''}
-      <td class="col-center">${statusBadge(e.status)}</td>
-      <td class="col-center">${action}</td>
+      <td data-label="Equipment" class="c-title"><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.location)}</div></td>
+      <td data-label="Plant"${samePlant ? ' class="c-hide"' : ''}><div class="cell-primary">${esc(plantName(e.plantId))}</div></td>
+      <td data-label="Type"><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div>${SUPA && !isSimple() && isAdmin() && !isValveType(e.type) && !partsFor(e.id).length ? '<div class="text-[10px] font-medium text-amber-600 mt-0.5">No parts recorded</div>' : ''}</td>
+      <td data-label="Expected completion" class="c-etr${etrEmpty}"><div class="cell-primary">${log?.etr ? log.etr : '—'}</div><div class="cell-muted">${log ? log.reason : ''}</div></td>
+      ${hs ? `<td data-label="Health" class="col-center">${healthBadge(hs.score)}</td>` : ''}
+      <td data-label="Status" class="col-center">${statusBadge(e.status)}</td>
+      <td class="col-center c-action">${action}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="${SUPA && !isSimple() ? 7 : 6}" class="py-6 text-center text-slate-500">${
     (sf !== 'all' || ui.typeFilter !== 'all')

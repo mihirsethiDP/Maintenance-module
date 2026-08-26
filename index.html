@@ -210,16 +210,59 @@
       /* Notification panel controls */
       .notif-head button { min-height: 40px; min-width: 36px; }
       .notif-seg button { padding: 8px 12px; }
-      /* The action column stays visible while the rest of the table scrolls */
-      .list-table td:last-child, .list-table th:last-child {
-        position: sticky; right: 0; background: #fff;
-        box-shadow: -6px 0 8px -6px rgba(15,23,42,0.12);
-      }
-      .list-table thead th:last-child { background: #f1f5f9; }
       /* Slimmer sticky header — phones need the vertical space */
       header .max-w-7xl { padding-top: 8px; padding-bottom: 8px; }
       header img { height: 30px; }
-      .list-table { min-width:640px; }               /* tables scroll sideways instead of crushing */
+
+
+      /* A one-line page subtitle is right on a wide screen; on a phone it
+         clipped mid-word ("...full maintena..."). Let it wrap to two lines. */
+      #view h1 + p.truncate { white-space:normal; overflow:visible; text-overflow:clip; }
+
+      /* ---- Phone card layout: every list table becomes a card stack ----
+         Seven columns cannot fit a 360px screen. Scrolling sideways pushed the
+         equipment tag -- the one thing you scan for -- off screen, while the
+         sticky action column kept a third of the width for a button. As cards,
+         the tag leads, every value names itself, and the button is full width
+         inside its own card instead of competing with the identity. */
+      .list-table { min-width:0 !important; display:block; }
+      .list-table thead { display:none; }
+      .list-table tbody { display:block; }
+      .list-table tbody tr {
+        display:block; background:#fff; border:1px solid #e2e8f0;
+        border-radius:12px; padding:12px 14px; margin-bottom:10px;
+      }
+      .list-table tbody tr:hover { background:#fff; }
+      .list-table tbody tr:last-child { margin-bottom:0; }
+      .list-table tbody td {
+        display:flex; align-items:baseline; gap:10px;
+        padding:4px 0 !important; border:0 !important; text-align:left !important;
+      }
+      /* The column name, printed per cell since the header row is gone. */
+      .list-table tbody td::before {
+        content:attr(data-label); flex:0 0 8.5rem;
+        font-size:10px; font-weight:600; text-transform:uppercase;
+        letter-spacing:0.04em; color:#94a3b8; padding-top:2px;
+      }
+      .list-table tbody td.col-center > * { display:inline-flex; }
+      /* Identity leads the card, full width, no label. */
+      .list-table tbody td.c-title { display:block; padding-bottom:8px !important; }
+      .list-table tbody td.c-title::before { display:none; }
+      .list-table tbody td.c-title .cell-primary { font-size:15px; }
+      /* Cells with nothing to say are dropped rather than shown empty. */
+      .list-table tbody td.c-hide { display:none; }
+      /* Action sits at the foot of its own card and may take the full width. */
+      .list-table tbody td.c-action {
+        display:block; margin-top:8px; padding-top:10px !important;
+        border-top:1px solid #f1f5f9 !important;
+      }
+      .list-table tbody td.c-action::before { display:none; }
+      .list-table tbody td.c-action > button,
+      .list-table tbody td.c-action > .inline-flex { width:100%; }
+      .list-table tbody td.c-action > .inline-flex > button { flex:1; }
+      /* Empty-state row spans the card, centred, with no label. */
+      .list-table tbody td.c-span::before { display:none; }
+      .list-table tbody td.c-span { display:block; text-align:center !important; }
       .list-table thead th { padding:10px 12px; }
       .list-table tbody td { padding:12px 12px; }
       #modal { padding:8px; }
@@ -276,6 +319,6 @@
       document.write('<scr' + 'ipt src="seed-data.js?v=1"><\/scr' + 'ipt>');
     }
   </script>
-  <script src="app.js?v=79"></script>
+  <script src="app.js?v=81"></script>
 </body>
 </html>
