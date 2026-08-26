@@ -33,7 +33,18 @@ insert into public.private_config (key, value)
 values ('cron_secret', 'PASTE_CRON_SECRET_HERE')          -- <<< EDIT
 on conflict (key) do update set value = excluded.value;
 
--- ---- 3. Re-schedule, reading the secret instead of embedding it ----
+-- ---- 3. Guard: stop here if the placeholder survived ----
+-- Raised before anything is scheduled, so a missed edit cannot install a
+-- job that fails silently at 07:00.
+do $$
+begin
+  if exists (select 1 from public.private_config
+             where key = 'cron_secret' and value = 'PASTE_CRON_SECRET_HERE') then
+    raise exception 'Replace PASTE_CRON_SECRET_HERE on the <<< EDIT line with your real CRON_SECRET, then run this file again.';
+  end if;
+end $$;
+
+-- ---- 4. Re-schedule, reading the secret instead of embedding it ----
 do $$
 begin
   if exists (select 1 from cron.job where jobname = 'daily-email-digest') then
@@ -56,15 +67,6 @@ select cron.schedule(
   );
   $$
 );
-
--- ---- 4. Guard: the placeholder must never survive ----
-do $$
-begin
-  if exists (select 1 from public.private_config
-             where key = 'cron_secret' and value = 'PASTE_CRON_SECRET_HERE') then
-    raise exception 'Replace PASTE_CRON_SECRET_HERE on the <<< EDIT line with your real CRON_SECRET, then run this file again.';
-  end if;
-end $$;
 
 select jobname, schedule, active from cron.job where jobname = 'daily-email-digest';
 
