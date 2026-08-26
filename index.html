@@ -265,7 +265,17 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-config.js?v=1"></script>
-  <script src="seed-data.js?v=1"></script>
+  <!-- 124 KB of demo fleet data, read only by the localStorage prototype.
+       On a configured deployment seedIfNeeded() returns before touching it, so
+       shipping it to an engineer on plant Wi-Fi buys nothing. document.write is
+       deliberate: app.js reads SEED_* at parse time, so this has to resolve
+       synchronously before it - a deferred or injected tag would arrive late.
+       app.js already falls back to empty arrays when it is absent. -->
+  <script>
+    if (!(window.SUPABASE_URL && window.SUPABASE_ANON_KEY)) {
+      document.write('<scr' + 'ipt src="seed-data.js?v=1"><\/scr' + 'ipt>');
+    }
+  </script>
   <script src="app.js?v=78"></script>
 </body>
 </html>

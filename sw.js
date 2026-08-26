@@ -13,7 +13,7 @@ const CACHE = 'mm-shell-v2';
 // app.js?v=N) plus the CDN libraries — offline must work after ONE visit.
 const CORE = [
   './', 'index.html', 'manifest.json', 'logo.png', 'icon-180.png', 'icon-512.png',
-  'app.js', 'supabase-config.js', 'seed-data.js',
+  'app.js', 'supabase-config.js',
   'https://cdn.tailwindcss.com/',
   'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
