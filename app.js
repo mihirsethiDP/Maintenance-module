@@ -2036,7 +2036,7 @@ function renderLog() {
         ${exportDropdown('', 'log-export')}
       </div>
     </div>
-    <div class="flex items-center mb-4 gap-2 flex-nowrap overflow-x-auto pb-1">
+    <div class="filter-strip flex items-center mb-4 gap-2 flex-nowrap overflow-x-auto pb-1">
       ${suggestFilter({ id: 'fSearch', listId: 'logSuggest', placeholder: 'Search…',
         options: (() => { const ids = accessiblePlantIds();
           return [...new Set(state.logs.map(l => eqById(l.equipmentId)).filter(Boolean)

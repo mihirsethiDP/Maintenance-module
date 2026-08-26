@@ -236,6 +236,18 @@
       }
       #view .ml-auto.flex.gap-2 > button { flex: 1 1 100%; min-height: 44px; white-space: nowrap; }
 
+      /* The Maintenance Log filter strip scrolls sideways on desktop; on a
+         phone that hides most filters off screen. Same treatment as the other
+         toolbars: wrap into equal-width pairs, date range on its own row. */
+      .filter-strip { flex-wrap: wrap; overflow-x: visible; }
+      .filter-strip > select, .filter-strip > input {
+        flex: 1 1 40% !important; width: auto !important; min-width: 0; min-height: 42px;
+      }
+      .filter-strip > .inline-flex {
+        flex: 1 1 100%; min-height: 42px; justify-content: space-between; padding: 6px 10px;
+      }
+      .filter-strip > .inline-flex input[type="date"] { flex: 1 1 auto; min-width: 0; }
+
       /* ---- Dashboard KPI tiles: sized for a 2x2, numbers stay the hero ---- */
       [data-tour="kpi-cards"] { gap: 10px; margin-bottom: 20px; }
       [data-tour="kpi-cards"] > button { padding: 14px; border-radius: 12px; }
@@ -347,6 +359,6 @@
       document.write('<scr' + 'ipt src="seed-data.js?v=1"><\/scr' + 'ipt>');
     }
   </script>
-  <script src="app.js?v=83"></script>
+  <script src="app.js?v=84"></script>
 </body>
 </html>
