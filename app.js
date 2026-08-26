@@ -2267,9 +2267,9 @@ function renderTeam() {
   const inviteRows = pending.map(i => `<tr>
       <td>
         <div class="cell-primary">${esc(i.name)}</div>
-        <div class="cell-muted">${i.email}</div>
+        <div class="cell-muted">${esc(i.email)}</div>
       </td>
-      <td><span class="badge ${i.role === 'Admin' ? 'badge-brand' : 'badge-neutral'}">${i.role}</span></td>
+      <td><span class="badge ${i.role === 'Admin' ? 'badge-brand' : 'badge-neutral'}">${esc(i.role)}</span></td>
       <td><div class="cell-muted">Invited ${new Date(i.ts).toLocaleDateString()}</div></td>
       <td><span class="badge badge-mt">Pending</span></td>
       <td class="col-center">
@@ -2749,7 +2749,7 @@ function renderAcceptInvite(token) {
   const existing = state.users.find(u => u.email.toLowerCase() === data.e.toLowerCase());
   if (existing && existing.status === 'active') {
     document.getElementById('view').innerHTML = wrap(card(`<h1 class="text-lg font-semibold mb-1">Already a member</h1>
-      <p class="text-sm text-slate-500 mb-4">${data.e} already has an active account. Please sign in.</p>
+      <p class="text-sm text-slate-500 mb-4">${esc(data.e)} already has an active account. Please sign in.</p>
       <button onclick="location.hash='#/dashboard'; route();" class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Go to sign in</button>`));
     return;
   }
@@ -2758,10 +2758,10 @@ function renderAcceptInvite(token) {
     <p class="text-xs text-slate-500 mb-4">You've been invited to DigitalPaani Maintenance Ops. Set a password to activate your account.</p>
     <form onsubmit="submitAcceptInvite(event, '${token}')" class="space-y-3">
       <div><label class="block text-xs text-slate-600 mb-1">Name</label>
-        <input value="${(data.n||'').replace(/"/g,'&quot;')}" disabled class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-slate-50 text-slate-500" /></div>
+        <input value="${esc(data.n)}" disabled class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-slate-50 text-slate-500" /></div>
       <div><label class="block text-xs text-slate-600 mb-1">Email</label>
-        <input value="${data.e}" disabled class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-slate-50 text-slate-500" /></div>
-      <div class="flex items-center gap-2 text-xs text-slate-600">Role: <span class="badge ${data.r === 'Admin' ? 'badge-brand' : 'badge-neutral'}">${data.r || 'Engineer'}</span></div>
+        <input value="${esc(data.e)}" disabled class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-slate-50 text-slate-500" /></div>
+      <div class="flex items-center gap-2 text-xs text-slate-600">Role: <span class="badge ${data.r === 'Admin' ? 'badge-brand' : 'badge-neutral'}">${esc(data.r) || 'Engineer'}</span></div>
       <div><label class="block text-xs text-slate-600 mb-1">Choose a password <span class="text-red-500">*</span></label>
         <input name="password" type="password" required minlength="6" autocomplete="new-password" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="At least 6 characters" /></div>
       <div><label class="block text-xs text-slate-600 mb-1">Confirm password <span class="text-red-500">*</span></label>
@@ -2818,7 +2818,7 @@ function openAssignPlantsModal(userId) {
   const boxes = state.plants.map(p => `
     <label class="flex items-center gap-2 p-2 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer text-xs">
       <input type="checkbox" name="plant.${p.id}" ${assigned.includes(p.id)?'checked':''} />
-      <span><span class="font-medium text-slate-800">${p.name}</span>${p.location?` <span class="text-slate-400">· ${p.location}</span>`:''}</span>
+      <span><span class="font-medium text-slate-800">${esc(p.name)}</span>${p.location?` <span class="text-slate-400">· ${esc(p.location)}</span>`:''}</span>
     </label>`).join('');
   document.getElementById('modalTitle').textContent = `Assign plants — ${u.name}`;
   document.getElementById('modalBody').innerHTML = `
@@ -4661,13 +4661,13 @@ function onPPMFileChosen(input) {
           : `${n} to research this import (~₹${n * 7}) · ${b.left} of ${b.limit} calls left today.`;
       }
       const byType = rows.reduce((m, r) => { m[r.type] = (m[r.type]||0)+1; return m; }, {});
-      const summary = Object.entries(byType).map(([t,c]) => `<span class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-brand-50 text-brand border border-brand-100 font-medium">${t}<span class="text-brand-600">${c}</span></span>`).join('');
+      const summary = Object.entries(byType).map(([t,c]) => `<span class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-brand-50 text-brand border border-brand-100 font-medium">${esc(t)}<span class="text-brand-600">${c}</span></span>`).join('');
       const sample = rows.slice(0, 8).map(r => `<tr>
-        <td class="py-1 px-2 font-medium">${r.tag}</td>
-        <td class="py-1 px-2 text-slate-600">${r.type}</td>
-        <td class="py-1 px-2 text-slate-600">${r.make||'—'}</td>
-        <td class="py-1 px-2 text-slate-600">${r.model||'—'}</td>
-        <td class="py-1 px-2"><span class="text-xs px-2 py-0.5 rounded-full border ${r.slot?'border-brand-100 bg-brand-50 text-brand':'border-slate-200 bg-slate-50 text-slate-500'} font-medium">${r.slot||'—'}</span></td>
+        <td class="py-1 px-2 font-medium">${esc(r.tag)}</td>
+        <td class="py-1 px-2 text-slate-600">${esc(r.type)}</td>
+        <td class="py-1 px-2 text-slate-600">${esc(r.make)||'—'}</td>
+        <td class="py-1 px-2 text-slate-600">${esc(r.model)||'—'}</td>
+        <td class="py-1 px-2"><span class="text-xs px-2 py-0.5 rounded-full border ${r.slot?'border-brand-100 bg-brand-50 text-brand':'border-slate-200 bg-slate-50 text-slate-500'} font-medium">${esc(r.slot)||'—'}</span></td>
       </tr>`).join('');
       preview.innerHTML = `
         <div class="border border-slate-200 rounded-lg overflow-hidden bg-white">
@@ -4684,7 +4684,7 @@ function onPPMFileChosen(input) {
           ${rows.length > 8 ? `<div class="px-4 py-2 text-xs text-slate-500 border-t border-slate-100">…and ${rows.length - 8} more</div>` : ''}
         </div>`;
     } catch (e) {
-      preview.innerHTML = `<div class="p-3 rounded-md bg-red-50 border border-red-200 text-xs text-red-700">Could not parse file: ${e.message}</div>`;
+      preview.innerHTML = `<div class="p-3 rounded-md bg-red-50 border border-red-200 text-xs text-red-700">Could not parse file: ${esc(e.message)}</div>`;
       btn.disabled = true;
       window._importedRows = null;
     }
