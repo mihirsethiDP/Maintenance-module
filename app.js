@@ -440,6 +440,13 @@ const routes = [
 // Capture the auth-redirect hash (invite / password recovery) BEFORE the client consumes it.
 const _initHash = location.hash || '';
 let needsPasswordSet = /(?:^|[#&])type=(invite|recovery|signup)/.test(_initHash);
+// Configured for a real backend? That is decided by supabase-config.js alone.
+// SUPA additionally needs the CDN library, so the two can disagree -- and when
+// they do, this is a real deployment whose auth library failed to load, NOT a
+// prototype. Treating it as a prototype showed a fake sign-in screen on the
+// live site. Kept as a separate flag so that case can be refused outright.
+const SUPA_CONFIGURED = !!(window.SUPABASE_URL && window.SUPABASE_ANON_KEY);
+const SUPA_LIB_MISSING = SUPA_CONFIGURED && !window.supabase;
 const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY)
   ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
       // Plant Wi-Fi blips: retry a connection-level failure once, silently —
@@ -765,6 +772,10 @@ function renderNav() {
 }
 
 function route() {
+  // A configured deployment with no auth library cannot sign anyone in. Say so
+  // instead of degrading into the local prototype, which would offer demo
+  // credentials that cannot work and write real work to localStorage.
+  if (SUPA_LIB_MISSING) { renderAuthUnavailable(); return; }
   state = load();
   const user = currentUser();
   renderHeaderChrome();
@@ -850,13 +861,27 @@ function renderLogin() {
             <button class="w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Sign in</button>
             ${SUPA ? `<button type="button" onclick="sendPasswordReset()" class="w-full text-center text-xs text-slate-500 hover:text-brand pt-1">Forgot password?</button>` : ''}
           </form>
-          ${SUPA ? '' : `<div class="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500 leading-relaxed">
-            <div class="font-medium text-slate-600 mb-1">Demo accounts</div>
-            <button onclick="fillLogin('mihir.sethi@digitalpaani.com','admin123')" class="block text-left hover:text-brand">Admin — mihir.sethi@digitalpaani.com / admin123</button>
-            <button onclick="fillLogin('amehta@digitalpaani.com','eng123')" class="block text-left hover:text-brand">Engineer — amehta@digitalpaani.com / eng123</button>
-          </div>`}
         </div>
-        <p class="text-[10px] text-slate-400 text-center mt-3">${SUPA ? 'Secured by Supabase Auth.' : 'Prototype sign-in — not real authentication. See backend plan for production.'}</p>
+        ${SUPA ? `<p class="text-[10px] text-slate-400 text-center mt-3">Secured by Supabase Auth.</p>` : ''}
+      </div>
+    </div>`;
+}
+// Shown only when supabase-js failed to load on a configured deployment --
+// usually a blocked CDN, captive portal, or a dead connection at a plant.
+function renderAuthUnavailable() {
+  clearNav();
+  document.getElementById('view').innerHTML = `
+    <div class="min-h-[70vh] flex items-center justify-center px-4">
+      <div class="w-full max-w-sm text-center">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div class="w-11 h-11 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto mb-3 text-amber-600 text-xl">!</div>
+          <h1 class="text-lg font-semibold text-slate-800">Can't reach sign-in</h1>
+          <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">The sign-in service didn't load. This is almost always the
+            network — a plant Wi-Fi portal, or no connection at all. Your data is safe on the server.</p>
+          <button onclick="location.reload()" class="mt-4 w-full px-3 py-2 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Try again</button>
+          <p class="text-[11px] text-slate-400 mt-3">If this keeps happening on a working connection, tell your administrator
+            that <b>supabase-js</b> is being blocked.</p>
+        </div>
       </div>
     </div>`;
 }
@@ -901,10 +926,6 @@ async function submitSetPassword(ev) {
     location.hash = homeHashFor(authUser);
   }
   route();
-}
-function fillLogin(email, pw) {
-  const f = document.querySelector('#view form');
-  if (f) { f.email.value = email; f.password.value = pw; }
 }
 async function sendPasswordReset() {
   const email = (document.querySelector('input[name="email"]')?.value || '').trim();
