@@ -793,9 +793,15 @@ function labelListTables(root) {
       cells.forEach((td, i) => {
         if (!td.hasAttribute('data-label')) td.setAttribute('data-label', heads[i] || '');
         const txt = td.textContent.trim();
-        if (i === 0) td.classList.add('c-title');
-        else if (i === cells.length - 1 && td.querySelector('button')) td.classList.add('c-action');
-        else if (!txt || txt === '—') td.classList.add('c-hide');
+        if (i === 0) { td.classList.add('c-title'); return; }
+        if (i === cells.length - 1 && td.querySelector('button')) { td.classList.add('c-action'); return; }
+        if (!txt || txt === '—') { td.classList.add('c-hide'); return; }
+        // Badge-only cell -> unlabeled chip; "Operational" explains itself.
+        if (td.querySelector('.badge')) {
+          const probe = td.cloneNode(true);
+          probe.querySelectorAll('.badge').forEach(b => b.remove());
+          if (!probe.textContent.trim()) { td.classList.add('c-chip'); return; }
+        }
       });
     });
   });
@@ -832,6 +838,7 @@ function route() {
   renderNav();
   let h = location.hash || homeHashFor(user);
   if (!routeAllowed(h, user)) { location.hash = homeHashFor(user); return; }
+  if (window._renderedHash !== h) { window._renderedHash = h; window.scrollTo(0, 0); }
   sweepOverdue();
   // The status filter exists for KPI deep-links; it must never silently
   // follow the user back to Equipment later and hide rows (import bug).
