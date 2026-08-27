@@ -718,6 +718,10 @@ function healthScore(e) {
 function accessiblePlantIds() {
   const u = currentUser();
   if (!u || effRole(u) === 'Admin') return state.plants.map(p => p.id);
+  // Technicians roam: they get sent wherever the work order takes them, so
+  // they can look up any plant and any machine (QR scans must work anywhere).
+  // What they can ACT on is scoped by assignment, in the database.
+  if (u.role === 'Technician') return state.plants.map(p => p.id);
   if (SUPA) return (authUser && authUser.plants) ? authUser.plants.slice() : [];
   return state.plants.map(p => p.id); // prototype: engineers unrestricted
 }
@@ -2364,13 +2368,16 @@ function renderTeam() {
   const userRows = visibleUsers.map(u => {
     const roleBadge = (u.role === 'Admin' || u.role === 'Superadmin') ? 'badge-brand' : 'badge-neutral';
     const isSelf = currentUser()?.id === u.id;
-    const isEng = u.role === 'Engineer' || u.role === 'Technician';
+    const isEng = u.role === 'Engineer';
+    const isTech = u.role === 'Technician';
     const assigned = assignmentsFor(u.id);
-    const plantsCell = isEng
-      ? (assigned.length
-          ? `<div class="cell-primary">${assigned.length} plant${assigned.length===1?'':'s'}</div><div class="cell-muted truncate max-w-[220px]">${assigned.map(plantName).join(', ')}</div>`
-          : `<span class="badge badge-mt">None assigned</span>`)
-      : `<span class="text-xs text-slate-500">All plants</span>`;
+    const plantsCell = isTech
+      ? `<span class="text-xs text-slate-500">Any plant — scoped by work order</span>`
+      : isEng
+        ? (assigned.length
+            ? `<div class="cell-primary">${assigned.length} plant${assigned.length===1?'':'s'}</div><div class="cell-muted truncate max-w-[220px]">${assigned.map(plantName).join(', ')}</div>`
+            : `<span class="badge badge-mt">None assigned</span>`)
+        : `<span class="text-xs text-slate-500">All plants</span>`;
     const actions = [];
     if (!engView) actions.push(`<button onclick="openEditUserModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Edit</button>`);
     if (isEng && !engView) {
@@ -2387,7 +2394,7 @@ function renderTeam() {
     // is enforced in the DB — a deactivated account loses data access, not
     // just its UI. Admins manage engineers; only the Superadmin manages Admins.
     // (Permanent deletion stays in Supabase Auth — it is rarely the right tool.)
-    if (SUPA && !engView && !isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer' || u.role === 'Technician'))
+    if (SUPA && !engView && !isSelf && u.role !== 'Superadmin' && (isSuperadmin() || isEng || isTech))
       actions.push(u.status === 'active'
         ? `<button onclick="setUserStatus('${u.id}', 'disabled')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Deactivate</button>`
         : `<button onclick="setUserStatus('${u.id}', 'active')" class="text-xs px-2.5 py-1 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100">Reactivate</button>`);
@@ -2733,14 +2740,14 @@ function openInviteModal() {
         <div class="grid gap-2">
           ${engCaller ? `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 bg-slate-50">
             <input type="radio" name="role" value="Technician" checked class="mt-0.5" />
-            <div><div class="font-medium text-slate-800">Technician</div><div class="text-[11px] text-slate-500">Sees My Work and the equipment at their plants. Completes the jobs you assign.</div></div>
+            <div><div class="font-medium text-slate-800">Technician</div><div class="text-[11px] text-slate-500">Sees My Work and can look up any plant. Completes the jobs you assign.</div></div>
           </label>` : `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="role" value="Engineer" checked class="mt-0.5" />
             <div><div class="font-medium text-slate-800">Engineer</div><div class="text-[11px] text-slate-500">Owns sites: equipment, work orders, Engineering Corner.</div></div>
           </label>
           <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="role" value="Technician" class="mt-0.5" />
-            <div><div class="font-medium text-slate-800">Technician</div><div class="text-[11px] text-slate-500">Sees My Work and the equipment at their plants. Completes assigned jobs.</div></div>
+            <div><div class="font-medium text-slate-800">Technician</div><div class="text-[11px] text-slate-500">Sees My Work and can look up any plant. Completes assigned jobs.</div></div>
           </label>
           ${isSuperadmin() ? `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="role" value="Admin" class="mt-0.5" />

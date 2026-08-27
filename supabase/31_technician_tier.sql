@@ -184,5 +184,5 @@ select column_name from information_schema.columns
 -- update public.technicians
 --   set user_id = (select id from public.profiles where email = 'devid.rajput@digitalpaani.com')
 --   where user_id is null and lower(name) like 'devid%';
--- -- He needs plant assignments to see anything (Team → Assign plants), and
--- -- his engineer schedule PDFs stop being relevant — My Work replaces them.
+-- -- Technicians roam (see 32) — no plant assignment needed. His engineer
+-- -- schedule PDFs stop being relevant; My Work replaces them.
