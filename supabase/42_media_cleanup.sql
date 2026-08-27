@@ -1,61 +1,59 @@
 -- ===================================================================
--- DigitalPaani Maintenance Ops — work-order photo cleanup
--- Run in Supabase → SQL Editor (after 41).
+-- DigitalPaani Maintenance Ops — work-order photo housekeeping
+-- Run in Supabase → SQL Editor (after 41). Safe to re-run.
 --
--- PART 1 adds a helper so a photo can be removed in ONE call instead of
--- two that can half-fail. The app deletes a photo client-side as
--- storage.remove() then a table delete; if the second fails you get a
--- file with no record, and if the first fails you get a record with no
--- file. This does both in one transaction.
+-- CORRECTION: the first version of this file added a function that
+-- deleted straight from storage.objects. Supabase blocks that with a
+-- storage.protect_delete() trigger, deliberately — deleting the row
+-- would orphan the underlying file. Deletion must go through the
+-- Storage API, which means the app's existing two-call pattern
+-- (storage.remove() then a row delete) was already correct and my
+-- "improvement" was a mistake. This file drops that function and keeps
+-- only what SQL is actually allowed to do.
 --
--- PART 2 removes two test files Claude uploaded while verifying the
--- storage path on 2026-08-27. Named exactly — nothing to edit.
+-- FILES STILL TO REMOVE BY HAND (Storage API only):
+--   L-1787824767113/1787829756717_0.jpg   27,981 bytes
+--   L-1787824767113/1787829756435_0.jpg   27,981 bytes
+-- Both are Claude test uploads from 2026-08-27 11:24. Delete them in
+-- Dashboard → Storage → wo-media → L-1787824767113 → tick both → Delete.
+-- Then run this file to clear the records they leave behind.
 -- ===================================================================
 
--- ---- 1. One-call photo delete ----
--- Permission mirrors the wom_delete policy: an admin any time, or the
--- uploader while the work order is not yet closed.
-create or replace function public.delete_work_order_photo(p_path text)
-returns boolean language plpgsql security definer set search_path = public as $$
-declare v_row record; v_state text; v_end date;
+-- ---- 1. Remove the function that could never work ----
+drop function if exists public.delete_work_order_photo(text);
+
+-- ---- 2. Clear metadata rows whose file is gone ----
+-- Legitimate: work_order_media is our own table. This is the other half of
+-- a Storage-API delete, and it also self-heals any half-finished delete the
+-- app may have left behind (storage.remove() succeeded, row delete failed).
+create or replace function public.purge_orphan_wo_media()
+returns int language plpgsql security definer set search_path = public as $$
+declare n int;
 begin
-  select * into v_row from public.work_order_media where path = p_path;
-  if v_row.id is null then
-    -- No record: allow an admin to clear an orphaned object anyway.
-    if not public.is_admin() then
-      raise exception 'No such photo.';
-    end if;
-    delete from storage.objects where bucket_id = 'wo-media' and name = p_path;
-    return found;
+  if not public.is_admin() then
+    raise exception 'Admins only.';
   end if;
-
-  select wo_state, end_date into v_state, v_end
-    from public.maintenance_logs where id = v_row.log_id;
-
-  if not (public.is_admin()
-          or (v_row.uploaded_by = auth.uid() and coalesce(v_state,'') <> 'done')) then
-    raise exception 'You can only remove your own photos, and only before the job is approved.';
-  end if;
-
-  delete from storage.objects where bucket_id = 'wo-media' and name = p_path;
-  delete from public.work_order_media where id = v_row.id;
-  return true;
+  with gone as (
+    delete from public.work_order_media m
+     where not exists (select 1 from storage.objects o
+                        where o.bucket_id = 'wo-media' and o.name = m.path)
+    returning 1
+  )
+  select count(*) into n from gone;
+  return n;
 end;
 $$;
-revoke all on function public.delete_work_order_photo(text) from public, anon;
-grant execute on function public.delete_work_order_photo(text) to authenticated;
+revoke all on function public.purge_orphan_wo_media() from public, anon;
+grant execute on function public.purge_orphan_wo_media() to authenticated;
 
--- ---- 2. Remove Claude's two test uploads ----
--- Both 27,981 bytes, uploaded 2026-08-27 11:24 while verifying that a
--- technician can put a photo in the bucket. The duplicate exists because
--- the browser tool executed the upload twice. The real photos on these
--- jobs (183,393 and 102,902 bytes) are left alone.
-select public.delete_work_order_photo('L-1787824767113/1787829756717_0.jpg') as deleted_1,
-       public.delete_work_order_photo('L-1787824767113/1787829756435_0.jpg') as deleted_2;
+select public.purge_orphan_wo_media() as orphan_records_cleared;
 
--- ---- 3. Verify: the two test files are gone, real photos remain ----
+-- ---- 3. What is left in the bucket ----
+-- Anything at 27,981 bytes is a Claude test file and still needs deleting
+-- through the Storage UI; everything else is real.
 select o.name, (o.metadata->>'size')::int as bytes, o.created_at::date as uploaded,
-       case when (o.metadata->>'size')::int = 27981 then 'TEST FILE — SHOULD BE GONE' else 'real' end as verdict
+       case when (o.metadata->>'size')::int = 27981 then 'TEST FILE — delete via Storage UI' else 'real' end as verdict,
+       exists (select 1 from public.work_order_media m where m.path = o.name) as has_record
 from storage.objects o
 where o.bucket_id = 'wo-media'
 order by o.created_at desc;
