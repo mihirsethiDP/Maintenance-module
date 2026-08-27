@@ -516,3 +516,180 @@ A.append(callout('Need help?', 'Contact Mihir Sethi for anything to do with acco
                  'guide are normal.'))
 
 build('DigitalPaani-Maintenance-Ops-Admin-Guide.pdf', 'Administrator Guide', A)
+
+
+# ======================================================================
+# TECHNICIAN GUIDE
+# Written for a phone screen and for someone who may not read English
+# comfortably: short sentences, one instruction at a time, no jargon.
+# ======================================================================
+T = []
+T += cover('Technician Guide',
+           'Your jobs, your photos, your sign-off',
+           'It tells you which machines to work on, keeps a record of what you did with photos, and '
+           'creates the service report that your engineer and the client sign.',
+           [['Getting started', 'Signing in and putting the app on your phone.'],
+            ['My Work', 'Your jobs: open, completed, and reports.'],
+            ['Doing a job', 'Start, work, photos, and closing it.'],
+            ['Found a problem?', 'Telling your engineer about a part that needs attention.'],
+            ['The service report', 'Getting your engineer and the client to sign.'],
+            ['Quick reference', 'One page to keep on your phone.']])
+
+T += section('1. Getting started', 'Do this once.')
+
+T.append(Paragraph('Signing in', st_h2))
+T.append(steps([
+    'You get an <b>email invitation</b>. Open it and choose your own password.',
+    'After that, go to <b>' + SITE + '</b>, type your email and password, and press <b>Sign in</b>.',
+    'Forgot your password? Type your email on the sign-in screen and press <b>Forgot password?</b>. '
+    'A new link comes to your email.',
+]))
+
+T.append(Paragraph('Put the app on your phone', st_h2))
+T.append(PHONE_INSTALL)
+T.append(Spacer(1, 4))
+T.append(Paragraph('You will see <b>My Work</b> when you sign in. That is your home screen — every job '
+                   'you have to do is there.', st_body))
+T.append(Spacer(1, 3))
+T.append(OFFLINE)
+T.append(Spacer(1, 3))
+T.append(callout('You can visit any plant',
+                 'You are not tied to one site. You can look up <b>any</b> plant and any machine in the '
+                 'tool — useful when you are sent somewhere new. You can only start and close the jobs '
+                 'that are given to you.'))
+
+T += section('2. My Work', 'Three tabs. Everything you need is in them.')
+T.append(table(['Tab', 'What is in it'],
+    [['Open', 'Jobs waiting for you. Also any job your engineer sent back for a fix — those show a '
+              'red <b>Returned</b> label and his note.'],
+     ['Completed', 'Jobs you finished. <b>Awaiting review</b> means your engineer has not looked at it '
+                   'yet. <b>Completed</b> means he approved it.'],
+     ['Reports', 'One line for each day you worked at a plant. This is where the service report is '
+                 'made and signed.']],
+    [26 * mm, None]))
+T.append(Spacer(1, 4))
+T.append(Paragraph('The <b>bell</b> at the top shows a red number when something needs you — a new job, '
+                   'or a job sent back. Tap it to go straight there.', st_body))
+
+T += section('3. Doing a job', 'Start it, do it, close it.')
+T.append(steps([
+    'Open <b>My Work</b>. Find the machine in the <b>Open</b> tab.',
+    'Press <b>Start Work</b>. Now everyone can see you are working on that machine.',
+    'Do the work on the machine.',
+    'Press <b>Mark Complete</b>. Fill in the form and press <b>Confirm</b>.',
+]))
+T.append(Spacer(1, 3))
+T.append(Paragraph('Small job, finished in a few minutes? Press <b>Complete now</b> instead of Start Work. '
+                   'It records the start and the finish together.', st_small))
+
+T.append(Paragraph('The closing form', st_h3))
+T.append(bullets([
+    '<b>Service guide</b> — tap to open it if you want a reminder of the usual steps for that machine. '
+    'Nothing to tick.',
+    '<b>Photos</b> — press <b>Add photos</b> and use your camera. If the job says photos are needed, '
+    'you cannot close it without at least one. Breakdowns always need photos.',
+    '<b>Completion notes</b> — tap a ready-made phrase ("No abnormalities", "Tested OK") or type your '
+    'own. For a breakdown you must describe what happened.',
+]))
+T.append(Spacer(1, 3))
+T.append(callout('What photos to take',
+                 'Take the machine before you start, the part you worked on, and the machine working again '
+                 'at the end. Also photograph the nameplate if the make or model is not in the tool. '
+                 'Up to 8 photos per job — they go into the report the client sees.'))
+
+T.append(Paragraph('If your engineer sends a job back', st_h2))
+T.append(Paragraph('It appears at the top of your <b>Open</b> tab with a red <b>Returned</b> label and his '
+                   'note — for example "add a photo of the new seal". The machine stays in service; only '
+                   'the record needs fixing.', st_body))
+T.append(Spacer(1, 3))
+T.append(steps([
+    'Read his note.',
+    'Press <b>Fix &amp; resubmit</b>.',
+    'Change the notes, add the photos he asked for, and press <b>Resubmit for review</b>.',
+]))
+
+T += section('4. Found a problem?', 'Tell your engineer. He decides what happens next.')
+T.append(Paragraph('If you see a part that needs <b>servicing</b>, <b>repair</b>, or <b>replacement</b> — '
+                   'even on a machine you were not sent for — report it. Two ways:', st_body))
+T.append(bullets([
+    '<b>While closing a job:</b> in the closing form, open <b>"Found something needing attention?"</b>, '
+    'write what is wrong, and choose repair, servicing or replacement.',
+    '<b>Any other time:</b> open the machine (scan its <b>QR sticker</b> with your camera — fastest) '
+    'and press <b>Report issue</b>.',
+]))
+T.append(Spacer(1, 3))
+T.append(Paragraph('Your engineer sees it straight away. He will schedule the work, mark it as already '
+                   'handled, or explain why nothing is needed. What you report also appears in the service '
+                   'report, so the client knows what you found.', st_body))
+T.append(Spacer(1, 3))
+T.append(callout('Do not wait to be asked',
+                 'A weeping seal or a noisy bearing you report today is a small job. The same part left '
+                 'alone is a breakdown next month. Reporting it takes twenty seconds and it is on record '
+                 'that you found it.'))
+
+T += section('5. The service report', 'Your work, signed by three people.')
+T.append(Paragraph('At the end of a visit, the tool puts together a report of everything you did at that '
+                   'plant that day — the jobs, your notes, your photos, and the problems you reported. '
+                   'Three people sign it, in this order:', st_body))
+T.append(Spacer(1, 3))
+T.append(table(['Who signs', 'How'],
+    [['1. You', 'Go to <b>My Work → Reports</b>, find the day, press <b>Create &amp; sign</b>. '
+                'Pressing it signs the report as you and sends it to your engineer.'],
+     ['2. Your engineer', 'He checks it and signs. If something is missing he sends it back — the line '
+                          'turns <b>Needs changes</b> with his note. Fix it and submit again.'],
+     ['3. The client', 'When the line says <b>Ready for client signature</b>, press '
+                       '<b>Client sign-off</b> and hand your phone to the client. They sign on the '
+                       'screen with a finger and type their name and job title.']],
+    [30 * mm, None]))
+T.append(Spacer(1, 4))
+T.append(Paragraph('After the client signs, the report is <b>locked</b>. Nobody can change it — not you, '
+                   'not your engineer. That is what makes it proof of the work.', st_body))
+T.append(Spacer(1, 3))
+T.append(callout('Client not there?',
+                 'Leave it. The line stays at <b>Ready for client signature</b> and you can collect it on '
+                 'your next visit. Your engineer has already signed, so the work is recorded either way.'))
+
+T.append(PageBreak())
+T += section('6. Quick reference', 'Keep this page on your phone.')
+
+T.append(Paragraph('I want to...', st_h2))
+T.append(table(['I want to', 'Where'],
+    [['See my jobs', '<b>My Work</b> → Open'],
+     ['Start a job', '<b>Start Work</b> on the job'],
+     ['Finish a small job in one step', '<b>Complete now</b>'],
+     ['Close a job I started', '<b>Mark Complete</b>'],
+     ['Add photos', '<b>Add photos</b> in the closing form'],
+     ['Report a bad part', '<b>Report issue</b> on the machine, or in the closing form'],
+     ['Find a machine fast', 'Scan its <b>QR sticker</b> with your phone camera'],
+     ['Fix a job sent back to me', '<b>Fix &amp; resubmit</b> on the red Returned job'],
+     ['Make the service report', '<b>My Work</b> → Reports → <b>Create &amp; sign</b>'],
+     ['Get the client to sign', '<b>Client sign-off</b> — hand them the phone'],
+     ['See a machine\'s past work', 'Tap the machine name anywhere']],
+    [58 * mm, None]))
+
+T.append(Paragraph('Questions', st_h2))
+for q, a in [
+    ('I cannot close the job — it asks for photos.',
+     'That job needs at least one photo. Press Add photos and use your camera. Breakdowns always need '
+     'photos.'),
+    ('The job is not in my list.',
+     'It has not been given to you yet. Call your engineer — he assigns the work.'),
+    ('There is no signal at the plant.',
+     'You can still open the app and read everything. Saving needs signal. Do the work, then close the '
+     'job when you have signal again — you can change the completion date to the day you actually '
+     'did it.'),
+    ('I did the work but forgot to record it.',
+     'Record it when you remember. Change the completion date to the real day.'),
+    ('The client signed but the report looks wrong.',
+     'A signed report cannot be changed. Tell your engineer — he will make a correction report.'),
+    ('Can I put a machine into maintenance myself?',
+     'No. Engineers create the jobs; you do them and close them. If a machine needs work, use '
+     'Report issue.'),
+]:
+    T.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
+
+T.append(Spacer(1, 6))
+T.append(callout('Need help?', 'Call your service engineer. For sign-in problems, contact your '
+                 'administrator. The tool is improved often — small differences from this guide are normal.'))
+
+build('DigitalPaani-Maintenance-Ops-Technician-Guide.pdf', 'Technician Guide', T)
