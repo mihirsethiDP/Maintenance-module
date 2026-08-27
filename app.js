@@ -1535,7 +1535,7 @@ function renderEquipment() {
       : (openWo && woStateOf(openWo) === 'open')
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${openWo.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></div>`
       : e.status === 'Operational'
-        ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
+        ? `<button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     const hs = SUPA && !isSimple() ? healthScore(e) : null;
     // On phones this row is rendered as a card, where each cell shows its own
@@ -1654,7 +1654,7 @@ function renderEquipmentDetail(id) {
     const main = (detailOpenWo && woStateOf(detailOpenWo) === 'open')
       ? `<span class="inline-flex gap-2"><button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button><button class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></span>`
       : e.status === 'Operational'
-        ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
+        ? `<button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     actionBtn = reassign + main;
   }
@@ -1701,7 +1701,7 @@ function renderEquipmentDetail(id) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
             Edit
           </button>` : ''}
-          ${SUPA && !retired ? `<button onclick="openIssueModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 text-sm font-medium">Report issue</button>` : ''}
+          ${SUPA && !retired && !detailOpenWo ? `<button onclick="openIssueModal('${e.id}')" title="Log it for later — the machine keeps running and nobody is assigned yet. An engineer decides what happens next." class="px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 text-sm font-medium">Report issue</button>` : ''}
           ${exportDropdown(`'${e.id}'`, 'detail-export')}
           ${replaceBtn}
           ${actionBtn}
@@ -4751,6 +4751,10 @@ function openMaintModal(eqId, fromIssueId) {
   document.getElementById('modalTitle').textContent = `Put ${e.tag} in maintenance`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitMaint(event, '${eqId}')" class="space-y-3 text-sm">
+      <div class="p-2.5 rounded-md bg-brand-50 border border-brand-100 text-[11px] text-brand leading-relaxed">
+        <b>This takes the machine out of service</b> and puts the job on someone's queue from today.
+        Just noting something for later? Close this and use <b>Report issue</b> instead — the machine keeps running.
+      </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-slate-600 mb-1">Reason <span class="text-red-500">*</span></label>
@@ -4941,7 +4945,11 @@ function openIssueModal(eqId) {
   document.getElementById('modalTitle').textContent = `Report issue — ${e.tag}`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitIssue(event, '${eqId}')" class="space-y-3 text-sm">
-      <p class="text-xs text-slate-500">Goes to the engineers for this plant — they schedule the work, mark it handled, or dismiss it with a reason.</p>
+      <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+        <b>This is a note, not a job.</b> The machine keeps running and nobody is assigned. An engineer will
+        schedule the work, mark it handled, or dismiss it with a reason.
+        ${isTechnician() ? '' : '<br />Need work done <b>now</b>? Close this and use <b>Put in Maintenance</b> instead — that takes the machine out of service.'}
+      </div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">What's wrong <span class="text-red-500">*</span></label>
         <textarea name="desc" rows="3" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Mechanical seal weeping, bearing noisy at high speed."></textarea>
