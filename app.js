@@ -391,6 +391,8 @@ const statusBadge = s => {
 };
 const reasonBadge = r => `<span class="badge ${r === 'Breakdown' ? 'badge-bd' : 'badge-brand'}">${r}</span>`;
 function ongoingStatusPill(log) {
+  if (woStateOf(log) === 'submitted') return `<span class="badge badge-mt">Awaiting review</span>`;
+  if (woStateOf(log) === 'returned')  return `<span class="badge badge-bd">Returned for fixes</span>`;
   if (log.endDate) return `<span class="badge badge-op">Completed</span>`;
   if (isOverdue(log)) return `<span class="badge badge-bd">Overdue</span>`;
   if (woStateOf(log) === 'open') return `<span class="badge badge-neutral">Not started</span>`;
@@ -487,7 +489,7 @@ async function loadAuthProfile(u) {
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
 const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null, expectedLifeYears: r.expected_life_years || null, lineageId: r.lineage_id || r.id, retiredAt: r.retired_at || null, replacedBy: r.replaced_by || null, addedOn: String(r.created_at || '').slice(0, 10) });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
-const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -1150,6 +1152,21 @@ function buildNotifFeed() {
     else if (woStateOf(l) === 'open') feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Scheduled task ready to start — ${e.tag} at ${plantName(e.plantId)}.` });
   });
+  // Review traffic: engineers/admins see what awaits their verdict;
+  // technicians see what came back to them.
+  if (!techMe && SUPA) {
+    getSubmittedWOs().forEach(({ l, e }) => {
+      feed.push({ key: `wo-review-${l.id}`, group: 'due', date: l.endDate, plantId: e.plantId, href: '#/engineer',
+        message: `Awaiting your review — ${e.tag} completed by ${l.technician || 'a technician'}.` });
+    });
+  }
+  if (techMe) {
+    state.logs.filter(l => l.assignedTo === techMe && woStateOf(l) === 'returned').forEach(l => {
+      const e = eqById(l.equipmentId); if (!e) return;
+      feed.push({ key: `wo-returned-${l.id}`, group: 'overdue', date: l.endDate, plantId: e.plantId, href: '#/mywork',
+        message: `Sent back for fixes — ${e.tag}. See your engineer's note in My Work.` });
+    });
+  }
   if (!techMe) {
   // Overdue PPM (planned date passed, no completion this month)
   getOverduePPM().forEach(({ e, date }) => {
@@ -2062,13 +2079,24 @@ function renderMyWork() {
   const me = currentUser()?.id;
   const tab = ui.myWorkTab || 'open';
   const mine = state.logs.filter(l => l.assignedTo === me);
-  const open = mine.filter(l => !l.endDate)
+  // "Open" = anything still needing THEIR action: not yet completed, or
+  // completed but sent back by the engineer for fixes.
+  const open = mine.filter(l => !l.endDate || woStateOf(l) === 'returned')
     .sort((a, b) => String(a.etr || a.startDate).localeCompare(String(b.etr || b.startDate)));
-  const done = mine.filter(l => l.endDate)
+  const done = mine.filter(l => l.endDate && woStateOf(l) !== 'returned')
     .sort((a, b) => String(b.endDate).localeCompare(String(a.endDate))).slice(0, 100);
 
   const openRows = open.map(l => {
     const e = eqById(l.equipmentId); if (!e) return '';
+    if (woStateOf(l) === 'returned') {
+      return `<tr>
+        <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
+        <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">Engineer's note: ${esc(l.reviewNote || '')}</div></td>
+        <td><div class="cell-primary">${l.endDate}</div><div class="cell-muted">Completed, sent back</div></td>
+        <td class="col-center"><span class="badge badge-bd">Returned</span></td>
+        <td class="col-center"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="openResubmitModal('${l.id}')">Fix &amp; resubmit</button></td>
+      </tr>`;
+    }
     const et = ecStatus(l.etr, null);
     const act = woStateOf(l) === 'open'
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${l.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')" title="Done on the spot — record it in one go">Complete now</button></div>`
@@ -2084,11 +2112,14 @@ function renderMyWork() {
 
   const doneRows = done.map(l => {
     const e = eqById(l.equipmentId); if (!e) return '';
+    const chip = woStateOf(l) === 'submitted'
+      ? '<span class="badge badge-mt">Awaiting review</span>'
+      : '<span class="badge badge-op">Completed</span>';
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${esc(l.completionNotes || '')}</div></td>
       <td><div class="cell-primary">${l.endDate}</div><div class="cell-muted">Started ${l.startDate}</div></td>
-      <td class="col-center"><span class="badge badge-op">Completed</span></td>
+      <td class="col-center">${chip}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="4" class="py-8 text-center text-slate-500">No completed jobs yet — they collect here as you close them.</td></tr>`;
 
@@ -2110,6 +2141,49 @@ function renderMyWork() {
           : `<table class="list-table"><thead><tr><th>Equipment</th><th>Work done</th><th>Completed</th><th class="col-center">Status</th></tr></thead><tbody>${doneRows}</tbody></table>`}
       </div>
     </div>`;
+}
+
+// A returned job: the technician fixes the record (note + more photos) and
+// resubmits. The machine's status never changes — this is paperwork repair.
+function openResubmitModal(logId) {
+  window._woPhotos = [];
+  const l = state.logs.find(x => x.id === logId); if (!l) return;
+  const e = eqById(l.equipmentId);
+  document.getElementById('modalTitle').textContent = `Fix & resubmit — ${e ? e.tag : logId}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitResubmit(event, '${logId}')" class="space-y-3 text-sm">
+      <div class="p-3 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900">
+        <b>Engineer's note:</b> ${esc(l.reviewNote || '')}
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Completion notes <span class="text-red-500">*</span></label>
+        <textarea name="notes" rows="3" required class="w-full border border-slate-300 rounded-md px-2 py-1.5">${esc(l.completionNotes || '')}</textarea>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Add photos <span class="text-slate-400">(existing ones stay attached)</span></label>
+        <input type="file" id="woPhotoInput" accept="image/*" capture="environment" multiple class="hidden" onchange="onWoPhotosPicked(this)" />
+        <div id="woPhotoStrip" class="flex gap-2 flex-wrap mb-1.5"></div>
+        <button type="button" onclick="document.getElementById('woPhotoInput').click()" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Add photos</button>
+        <span id="woPhotoCount" class="text-[11px] text-slate-400 ml-2"></span>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Resubmit for review</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
+}
+async function submitResubmit(ev, logId) {
+  ev.preventDefault();
+  const notes = new FormData(ev.target).get('notes') || '';
+  const unlock = lockSubmit(ev);
+  const upErr = await uploadWoPhotos(logId);
+  if (upErr) { unlock(); appAlert('Could not save the photos — nothing was resubmitted. ' + upErr); return; }
+  const { error } = await SUPA.rpc('resubmit_work_order', { p_log: logId, p_notes: notes });
+  if (error) { unlock(); appAlert('Could not resubmit: ' + error.message); return; }
+  await hydrateCloud(); closeModal(); route();
+  toast('Resubmitted — your engineer will take another look.');
 }
 
 // ---------- Maintenance Log ----------
@@ -3511,10 +3585,12 @@ function renderEngineer() {
   const overdue  = getOverduePPM();
   const upcoming = getUpcomingPPM(30);
   const visits   = getVisits();
+  const toReview = getSubmittedWOs();
 
   let body = '';
   if (tab === 'pending') body = renderPendingTab(pending, overdue);
   else if (tab === 'upcoming') body = renderUpcomingTab(upcoming);
+  else if (tab === 'wo-review') body = renderWoReviewTab(toReview);
   else body = renderVisitsTab(visits);
 
   document.getElementById('view').innerHTML = `
@@ -3529,10 +3605,78 @@ function renderEngineer() {
     <div class="flex gap-2 mb-5 flex-wrap">
       ${tabBtn('pending',  'Pending', pending.length + overdue.length)}
       ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}
+      ${SUPA ? tabBtn('wo-review', 'To review', toReview.length) : ''}
       ${tabBtn('visits',   'Visit Reports', visits.length)}
     </div>
     ${body}
   `;
+}
+
+// Work completed by technicians, awaiting the engineer's verdict.
+function getSubmittedWOs() {
+  if (!SUPA) return [];
+  const ids = accessiblePlantIds();
+  return state.logs
+    .filter(l => woStateOf(l) === 'submitted')
+    .map(l => ({ l, e: eqById(l.equipmentId) }))
+    .filter(({ e }) => e && ids.includes(e.plantId))
+    .sort((a, b) => String(a.l.endDate).localeCompare(String(b.l.endDate)));
+}
+function renderWoReviewTab(items) {
+  if (!items.length) return `<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500">Nothing awaiting review. Technician-completed jobs land here for your sign-off.</div>`;
+  const cards = items.map(({ l, e }) => `
+    <div class="bg-white rounded-xl border border-slate-200 p-4" data-review-log="${l.id}">
+      <div class="flex items-start gap-3 flex-wrap">
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-400 font-normal">· ${esc(plantName(e.plantId))}</span></div>
+          <div class="text-xs text-slate-500 mt-0.5">${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b></div>
+        </div>
+        <span class="badge badge-mt">Awaiting review</span>
+      </div>
+      <div class="text-xs text-slate-700 mt-2 whitespace-pre-line">${esc(l.completionNotes) || '<span class="text-slate-400">No completion notes.</span>'}</div>
+      <div class="flex gap-2 flex-wrap mt-2 wo-media-strip" data-log="${l.id}"><span class="text-[11px] text-slate-400">Loading photos…</span></div>
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+        <button onclick="openReturnWoModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-medium">Send back</button>
+        <button onclick="reviewWo('${l.id}', true)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Approve</button>
+      </div>
+    </div>`).join('');
+  queueMicrotask(() => fillWoMedia(items.map(x => x.l.id)));
+  return `<div class="grid gap-3">${cards}</div>`;
+}
+async function fillWoMedia(logIds) {
+  const byLog = await mediaForLogs(logIds);
+  logIds.forEach(id => {
+    const strip = document.querySelector(`.wo-media-strip[data-log="${id}"]`);
+    if (!strip) return;
+    const urls = byLog[id] || [];
+    strip.innerHTML = urls.length
+      ? urls.map(u => `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" class="w-20 h-20 object-cover rounded-md border border-slate-200" alt="job photo" /></a>`).join('')
+      : `<span class="text-[11px] text-slate-400">No photos attached.</span>`;
+  });
+}
+async function reviewWo(logId, approve, note) {
+  const { error } = await SUPA.rpc('review_work_order', { p_log: logId, p_approve: approve, p_note: note || null });
+  if (error) { appAlert('Could not save the review: ' + error.message); return; }
+  await hydrateCloud(); closeModal(); route();
+  toast(approve ? 'Approved and closed.' : 'Sent back to the technician with your note.');
+}
+function openReturnWoModal(logId) {
+  const l = state.logs.find(x => x.id === logId); if (!l) return;
+  document.getElementById('modalTitle').textContent = 'Send back for fixes';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="event.preventDefault(); reviewWo('${logId}', false, this.querySelector('[name=note]').value)" class="space-y-3 text-sm">
+      <p class="text-xs text-slate-500">The job stays recorded and the machine stays in service — this sends the paperwork back to <b>${esc(l.technician) || 'the technician'}</b> to fix and resubmit.</p>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">What needs fixing <span class="text-red-500">*</span></label>
+        <textarea name="note" rows="3" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Add a photo of the replaced seal, and note the test result."></textarea>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Send back</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
 }
 
 function renderPendingTab(pending, overdue) {
@@ -4259,6 +4403,11 @@ function openMaintModal(eqId) {
         </div>
       </div>
       ${assignToControl()}
+      ${SUPA ? `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+        <input type="checkbox" name="photosReq" class="mt-0.5" />
+        <span class="text-xs text-slate-700"><b>Require photos on completion</b> — the job cannot be closed without
+        at least one photo. Breakdowns require photos regardless.</span>
+      </label>` : ''}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Technician <span class="text-red-500">*</span></label>
         <input name="technician" required list="techList" autocomplete="off" value="${(currentUser()?.name || '').replace(/"/g, '&quot;')}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="${technicianNames().length ? 'Pick an existing technician or type a new name' : 'e.g. A. Mehta'}" />
@@ -4281,6 +4430,80 @@ function openMaintModal(eqId) {
   document.getElementById('modal').classList.remove('hidden');
   pushOverlayState();
 }
+// ---------- Work-order photos ----------
+// Staged in memory as compressed JPEG blobs; uploaded to the wo-media bucket
+// only when the completion actually submits. Phone camera files arrive at
+// 5-12 MB; 1600px JPEG keeps the evidence and drops the megabytes.
+const WO_PHOTO_MAX = 8;
+async function compressPhoto(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(bmp.width * scale); cv.height = Math.round(bmp.height * scale);
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  bmp.close?.();
+  return await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.82));
+}
+async function onWoPhotosPicked(input) {
+  const files = [...(input.files || [])];
+  input.value = '';
+  for (const file of files) {
+    if ((window._woPhotos || []).length >= WO_PHOTO_MAX) { toast(`Up to ${WO_PHOTO_MAX} photos per job.`); break; }
+    try {
+      const blob = await compressPhoto(file);
+      if (blob) window._woPhotos.push({ blob, url: URL.createObjectURL(blob) });
+    } catch (e) { appAlert('That image could not be read — try another photo.'); }
+  }
+  renderWoPhotoStrip();
+}
+function removeWoPhoto(i) {
+  URL.revokeObjectURL(window._woPhotos[i]?.url);
+  window._woPhotos.splice(i, 1);
+  renderWoPhotoStrip();
+}
+function renderWoPhotoStrip() {
+  const strip = document.getElementById('woPhotoStrip');
+  const count = document.getElementById('woPhotoCount');
+  if (!strip) return;
+  strip.innerHTML = (window._woPhotos || []).map((p, i) => `
+    <div class="relative">
+      <img src="${p.url}" class="w-16 h-16 object-cover rounded-md border border-slate-200" alt="photo ${i + 1}" />
+      <button type="button" onclick="removeWoPhoto(${i})" aria-label="Remove photo"
+        class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-700 text-white text-[11px] leading-none grid place-items-center">×</button>
+    </div>`).join('');
+  if (count) count.textContent = window._woPhotos?.length ? `${window._woPhotos.length} of ${WO_PHOTO_MAX}` : '';
+}
+// Upload staged photos for a log. Returns null on success, or an error message.
+async function uploadWoPhotos(logId) {
+  const staged = window._woPhotos || [];
+  if (!staged.length) return null;
+  const rows = [];
+  for (let i = 0; i < staged.length; i++) {
+    const path = `${logId}/${Date.now()}_${i}.jpg`;
+    const { error } = await SUPA.storage.from('wo-media').upload(path, staged[i].blob, { contentType: 'image/jpeg' });
+    if (error) return 'photo upload failed: ' + error.message;
+    rows.push({ log_id: logId, path });
+  }
+  const { error: mErr } = await SUPA.from('work_order_media').insert(rows);
+  if (mErr) return 'photo record failed: ' + mErr.message;
+  staged.forEach(p => URL.revokeObjectURL(p.url));
+  window._woPhotos = [];
+  return null;
+}
+async function mediaForLogs(logIds) {
+  if (!SUPA || !logIds.length) return {};
+  const { data } = await SUPA.from('work_order_media').select('log_id,path').in('log_id', logIds);
+  const byLog = {};
+  const paths = (data || []).map(m => m.path);
+  if (!paths.length) return byLog;
+  const { data: signed } = await SUPA.storage.from('wo-media').createSignedUrls(paths, 3600);
+  (data || []).forEach((m, i) => {
+    const u = signed?.[i]?.signedUrl;
+    if (u) (byLog[m.log_id] = byLog[m.log_id] || []).push(u);
+  });
+  return byLog;
+}
+
 // Technician ACCOUNTS (people who log in) - distinct from the registry of
 // typed names below. Assigning to an account puts the job on their My Work.
 function technicianAccounts() {
@@ -4363,8 +4586,17 @@ async function submitMaint(ev, eqId) {
       p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
       p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
       p_priority: log.priority, p_part_id: log.affectedPartId, p_severity: log.severity,
-      p_assigned: assignTo,
+      p_assigned: assignTo, p_photos: f.get('photosReq') === 'on',
     });
+    if (error && error.code === 'PGRST202') {
+      // Photos migration (33) not applied yet — start without the flag.
+      ({ error } = await SUPA.rpc('log_maintenance_start', {
+        p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
+        p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
+        p_priority: log.priority, p_part_id: log.affectedPartId, p_severity: log.severity,
+        p_assigned: assignTo,
+      }));
+    }
     if (error && error.code === 'PGRST202') {
       // Technician migration (31) not applied yet — start without assignment.
       ({ error } = await SUPA.rpc('log_maintenance_start', {
@@ -4400,6 +4632,7 @@ async function submitMaint(ev, eqId) {
 }
 
 function openCompleteModal(eqId) {
+  window._woPhotos = [];   // photos staged for THIS completion only
   const e = eqById(eqId);
   const log = openLogFor(eqId);
   const parts = SUPA && !isSimple() ? partsFor(eqId) : [];
@@ -4446,6 +4679,16 @@ function openCompleteModal(eqId) {
       </div>` : ''}
       ${partsSection}
       ${checklistSection}
+      ${SUPA ? `<div>
+        <label class="block text-xs text-slate-600 mb-1">Photos ${log?.photosRequired ? '<span class="text-red-500">*</span> <span class="text-slate-400">(required for this job)</span>' : '<span class="text-slate-400">(optional — before/after, nameplates, damage)</span>'}</label>
+        <input type="file" id="woPhotoInput" accept="image/*" capture="environment" multiple class="hidden" onchange="onWoPhotosPicked(this)" />
+        <div id="woPhotoStrip" class="flex gap-2 flex-wrap mb-1.5"></div>
+        <button type="button" onclick="document.getElementById('woPhotoInput').click()" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Add photos
+        </button>
+        <span id="woPhotoCount" class="text-[11px] text-slate-400 ml-2"></span>
+      </div>` : ''}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion date <span class="text-red-500">*</span></label>
         <input type="date" name="endDate" value="${today()}" required ${log && woStateOf(log) !== 'open' && log.startDate ? `min="${log.startDate}"` : ''} class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
@@ -4501,7 +4744,15 @@ async function submitComplete(ev, eqId) {
       toast(`${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
       return;
     }
+    if (log.photosRequired && !(window._woPhotos || []).length) {
+      appAlert('This job requires photos — add at least one before completing.');
+      return;
+    }
     const unlock = lockSubmit(ev);
+    // Photos go up FIRST: they attach to the still-open log, so a failed
+    // upload leaves the job open and retryable instead of closed and bare.
+    const upErr = await uploadWoPhotos(log.id);
+    if (upErr) { unlock(); appAlert('Could not save the photos — the job is still open. ' + upErr); return; }
     // Atomic RPC: closes the log, records part actions, stamps part history,
     // and returns the equipment to service — one transaction.
     let { error } = await SUPA.rpc('log_maintenance_complete', {
@@ -4531,7 +4782,9 @@ async function submitComplete(ev, eqId) {
     await hydrateCloud();
     closeModal(); route();
     pushEventNotification('operational', eqById(eqId), closedLog);
-    toast(`${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
+    toast(isTechnician()
+      ? `${esc(eqById(eqId)?.tag || 'Equipment')} is back in service — submitted for your engineer's review.`
+      : `${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
     if (wantReport) generateSingleServiceReport(eqId, closedLog);
     return;
   }
