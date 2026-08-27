@@ -442,6 +442,7 @@ const routes = [
   { hash: '#/log',       label: 'Maintenance Log',     roles: ['Admin','Engineer'] },
   { hash: '#/engineer',  label: 'Engineering Corner',  roles: ['Admin','Engineer'] },
   { hash: '#/review',    label: 'Review',             roles: ['Admin'] },
+  { hash: '#/oversight', label: 'Oversight',          roles: ['Admin'] },
   { hash: '#/plants',    label: 'Plants',             roles: ['Admin'] },
   // Engineers see Team too, trimmed to the technicians they work with.
   { hash: '#/team',      label: 'Team',               roles: ['Admin','Engineer'] },
@@ -887,6 +888,7 @@ function route() {
   if (h === '#/team')      return renderTeam();
   if (h === '#/engineer')  return renderEngineer();
   if (h === '#/review')    return renderReview();
+  if (h === '#/oversight') return renderOversight();
   if (h === '#/dashboard') return renderDashboard();
   location.hash = homeHashFor(user);
 }
@@ -2463,6 +2465,177 @@ async function submitResubmit(ev, logId) {
   if (error) { unlock(); appAlert('Could not resubmit: ' + error.message); return; }
   await hydrateCloud(); closeModal(); route();
   toast('Resubmitted — your engineer will take another look.');
+}
+
+// ---------- Oversight (admins) ----------
+// Answers "who is holding what up, and for how long". Everything here is
+// derived from records the flows already create, so nothing new to maintain.
+//
+// Ageing is CALENDAR days, deliberately: a client waiting on a signed report
+// does not care that Sunday intervened. Note that a job held up by parts on
+// order ages exactly like a neglected one -- the on-hold state that would fix
+// that is not built yet, so read long waits as "ask why", not "blame".
+const AGE = { review: 2, returned: 2, issue: 7, clientSign: 14 };
+const daysAgo = ts => ts ? Math.max(0, daysBetween(String(ts).slice(0, 10), today())) : 0;
+function ageChip(days, threshold) {
+  if (days < threshold) return `<span class="text-slate-500">${days}d</span>`;
+  const bad = days >= threshold * 2;
+  return `<span class="badge ${bad ? 'badge-bd' : 'badge-mt'}">${days}d</span>`;
+}
+
+function oversightData() {
+  const logs = state.logs;
+  const issues = (cloudIssues || []).filter(i => i.status === 'open');
+  const reports = cloudReports || [];
+  const eqPlant = id => eqById(id)?.plantId;
+
+  // Engineers own plants, so their queue is everything at those plants.
+  const engineers = (state.users || []).filter(u => u.role === 'Engineer' && u.status === 'active').map(u => {
+    const plants = assignmentsFor(u.id);
+    const at = l => plants.includes(eqPlant(l.equipmentId));
+    const submitted = logs.filter(l => woStateOf(l) === 'submitted' && at(l));
+    const returned  = logs.filter(l => woStateOf(l) === 'returned' && at(l));
+    const theirIssues = issues.filter(i => plants.includes(eqPlant(i.equipment_id)));
+    const theirReports = reports.filter(r => r.status === 'submitted' && plants.includes(r.plant_id));
+    const openWo = logs.filter(l => !l.endDate && at(l));
+    return {
+      u, plants: plants.length,
+      openWo: openWo.length,
+      overdueWo: openWo.filter(isOverdue).length,
+      toReview: submitted.length,
+      toReviewOldest: Math.max(0, ...submitted.map(l => daysAgo(l.submittedAt || l.endDate))),
+      returned: returned.length,
+      returnedOldest: Math.max(0, ...returned.map(l => daysAgo(l.endDate))),
+      issues: theirIssues.length,
+      issuesOldest: Math.max(0, ...theirIssues.map(i => daysAgo(i.created_at))),
+      reports: theirReports.length,
+    };
+  });
+
+  // Technicians are judged on their own assignments, wherever they are.
+  const technicians = (state.users || []).filter(u => u.role === 'Technician' && u.status === 'active').map(u => {
+    const mine = logs.filter(l => l.assignedTo === u.id);
+    const open = mine.filter(l => !l.endDate);
+    const returned = mine.filter(l => woStateOf(l) === 'returned');
+    const awaitingClient = reports.filter(r => r.technician_id === u.id && r.status === 'eng_signed');
+    const cutoff = dstr(new Date(Date.now() - 30 * 864e5));
+    return {
+      u,
+      open: open.length,
+      overdue: open.filter(isOverdue).length,
+      returned: returned.length,
+      returnedOldest: Math.max(0, ...returned.map(l => daysAgo(l.endDate))),
+      done30: mine.filter(l => l.endDate && l.endDate >= cutoff && woStateOf(l) === 'done').length,
+      awaitingClient: awaitingClient.length,
+      awaitingClientOldest: Math.max(0, ...awaitingClient.map(r => daysAgo(r.updated_at))),
+    };
+  });
+
+  // The specific stuck items, so the page is actionable and not just a scoreboard.
+  const stuck = [];
+  logs.filter(l => woStateOf(l) === 'submitted').forEach(l => {
+    const d = daysAgo(l.submittedAt || l.endDate);
+    if (d >= AGE.review) stuck.push({ d, kind: 'Unreviewed work', who: 'engineers for ' + plantName(eqPlant(l.equipmentId)),
+      what: (eqById(l.equipmentId)?.tag || '') + (l.woNo ? ' \u00b7 ' + l.woNo : ''), href: '#/engineer' });
+  });
+  logs.filter(l => woStateOf(l) === 'returned').forEach(l => {
+    const d = daysAgo(l.endDate);
+    if (d >= AGE.returned) stuck.push({ d, kind: 'Sent back, not resubmitted', who: l.technician || 'technician',
+      what: (eqById(l.equipmentId)?.tag || '') + (l.woNo ? ' \u00b7 ' + l.woNo : ''), href: '#/engineer' });
+  });
+  issues.forEach(i => {
+    const d = daysAgo(i.created_at);
+    if (d >= AGE.issue) stuck.push({ d, kind: 'Issue not triaged', who: 'engineers for ' + plantName(eqPlant(i.equipment_id)),
+      what: (eqById(i.equipment_id)?.tag || '') + ' \u2014 ' + (i.description || '').slice(0, 40), href: '#/engineer' });
+  });
+  reports.filter(r => r.status === 'submitted').forEach(r => {
+    const d = daysAgo(r.updated_at);
+    if (d >= AGE.review) stuck.push({ d, kind: 'Report unsigned by engineer', who: 'engineers for ' + plantName(r.plant_id),
+      what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer' });
+  });
+  reports.filter(r => r.status === 'eng_signed').forEach(r => {
+    const d = daysAgo(r.updated_at);
+    if (d >= AGE.clientSign) stuck.push({ d, kind: 'Client signature outstanding', who: r.technician_name || 'technician',
+      what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer' });
+  });
+  stuck.sort((a, b) => b.d - a.d);
+  return { engineers, technicians, stuck };
+}
+
+function renderOversight() {
+  if (!isAdmin()) { location.hash = homeHashFor(currentUser()); return; }
+  if (!SUPA) {
+    document.getElementById('view').innerHTML = `<h1 class="text-2xl font-semibold mb-2">Oversight</h1>
+      <div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500">Oversight needs the live database — it reports on real assignments, reviews and reports.</div>`;
+    return;
+  }
+  const { engineers, technicians, stuck } = oversightData();
+
+  const kpi = (label, value, tone) => `<div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
+    <div class="text-2xl font-semibold mt-0.5 ${value ? tone : 'text-slate-300'}">${value}</div>
+  </div>`;
+
+  const engRows = engineers.map(r => `<tr>
+      <td><div class="cell-primary">${esc(r.u.name)}</div><div class="cell-muted">${r.plants} plant${r.plants === 1 ? '' : 's'}</div></td>
+      <td class="col-center"><div class="cell-primary">${r.openWo}</div>${r.overdueWo ? `<div class="text-[11px] text-red-600">${r.overdueWo} overdue</div>` : ''}</td>
+      <td class="col-center">${r.toReview ? `${r.toReview} ${ageChip(r.toReviewOldest, AGE.review)}` : '<span class="text-slate-300">\u2014</span>'}</td>
+      <td class="col-center">${r.returned ? `${r.returned} ${ageChip(r.returnedOldest, AGE.returned)}` : '<span class="text-slate-300">\u2014</span>'}</td>
+      <td class="col-center">${r.issues ? `${r.issues} ${ageChip(r.issuesOldest, AGE.issue)}` : '<span class="text-slate-300">\u2014</span>'}</td>
+      <td class="col-center">${r.reports || '<span class="text-slate-300">\u2014</span>'}</td>
+    </tr>`).join('') || `<tr><td colspan="6" class="py-6 text-center text-slate-500">No active engineers.</td></tr>`;
+
+  const techRows = technicians.map(r => `<tr>
+      <td><div class="cell-primary">${esc(r.u.name)}</div><div class="cell-muted">any plant</div></td>
+      <td class="col-center"><div class="cell-primary">${r.open}</div>${r.overdue ? `<div class="text-[11px] text-red-600">${r.overdue} overdue</div>` : ''}</td>
+      <td class="col-center">${r.returned ? `${r.returned} ${ageChip(r.returnedOldest, AGE.returned)}` : '<span class="text-slate-300">\u2014</span>'}</td>
+      <td class="col-center">${r.awaitingClient ? `${r.awaitingClient} ${ageChip(r.awaitingClientOldest, AGE.clientSign)}` : '<span class="text-slate-300">\u2014</span>'}</td>
+      <td class="col-center"><span class="text-slate-600">${r.done30}</span></td>
+    </tr>`).join('') || `<tr><td colspan="5" class="py-6 text-center text-slate-500">No technician accounts yet — invite one from Team.</td></tr>`;
+
+  const stuckRows = stuck.slice(0, 40).map(x => `<tr>
+      <td><div class="cell-primary">${esc(x.kind)}</div><div class="cell-muted">${esc(x.what)}</div></td>
+      <td><div class="cell-muted">${esc(x.who)}</div></td>
+      <td class="col-center">${ageChip(x.d, 1)}</td>
+      <td class="col-center"><a href="${x.href}" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium inline-block">Open</a></td>
+    </tr>`).join('');
+
+  document.getElementById('view').innerHTML = `
+    <div class="flex items-center mb-1 flex-wrap gap-3">
+      <div class="min-w-0 flex-1">
+        <h1 class="text-2xl font-semibold">Oversight</h1>
+        <p class="text-slate-500 text-sm">Who is holding what up, and for how long. Ages are calendar days.</p>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 mb-6">
+      ${kpi('Unreviewed &gt; ' + AGE.review + 'd', stuck.filter(x => x.kind === 'Unreviewed work').length, 'text-amber-600')}
+      ${kpi('Sent back &gt; ' + AGE.returned + 'd', stuck.filter(x => x.kind === 'Sent back, not resubmitted').length, 'text-amber-600')}
+      ${kpi('Issues &gt; ' + AGE.issue + 'd', stuck.filter(x => x.kind === 'Issue not triaged').length, 'text-red-600')}
+      ${kpi('Signatures &gt; ' + AGE.clientSign + 'd', stuck.filter(x => x.kind === 'Client signature outstanding').length, 'text-red-600')}
+    </div>
+    ${stuckRows ? `<h2 class="font-semibold text-sm mb-2">Stuck items (${stuck.length})</h2>
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6"><div class="overflow-x-auto">
+      <table class="list-table"><thead><tr><th>What</th><th>Waiting on</th><th class="col-center">Age</th><th class="col-center">Action</th></tr></thead>
+      <tbody>${stuckRows}</tbody></table>
+    </div></div>` : `<div class="bg-white rounded-xl border border-slate-200 p-6 text-center text-slate-500 mb-6">Nothing is stuck. Every review, issue and signature is inside its window.</div>`}
+
+    <h2 class="font-semibold text-sm mb-2">Service engineers</h2>
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6"><div class="overflow-x-auto">
+      <table class="list-table"><thead><tr>
+        <th>Engineer</th><th class="col-center">Open jobs</th><th class="col-center">To review</th>
+        <th class="col-center">Sent back</th><th class="col-center">Open issues</th><th class="col-center">Reports to sign</th>
+      </tr></thead><tbody>${engRows}</tbody></table>
+    </div></div>
+
+    <h2 class="font-semibold text-sm mb-2">Technicians</h2>
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="overflow-x-auto">
+      <table class="list-table"><thead><tr>
+        <th>Technician</th><th class="col-center">Assigned open</th><th class="col-center">Sent back</th>
+        <th class="col-center">Client signature</th><th class="col-center">Closed (30d)</th>
+      </tr></thead><tbody>${techRows}</tbody></table>
+    </div></div>
+    <p class="text-[11px] text-slate-400 mt-4">A job waiting on parts ages the same as a neglected one — long waits are a
+      prompt to ask why, not proof of neglect.</p>`;
 }
 
 // ---------- Maintenance Log ----------

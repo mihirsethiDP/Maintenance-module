@@ -260,6 +260,65 @@ Deno.serve(async (req) => {
     return json({ error: "db_error", message: "reading maintenance_logs: " + logErr.message }, 500);
   }
 
+  // ---- Records the accountability section reports on. Each read is
+  // OPTIONAL: a project that has not run the Phase 2/3 migrations yet must
+  // still get its daily digest, so a failure here degrades the section
+  // rather than the email.
+  const { data: pendingLogs } = await db.from("maintenance_logs")
+    .select("id,equipment_id,wo_no,technician,wo_state,end_date,submitted_at")
+    .in("wo_state", ["submitted", "returned"]);
+  const { data: openIssues } = await db.from("wo_issues")
+    .select("id,equipment_id,description,created_at").eq("status", "open");
+  const { data: liveReports } = await db.from("service_reports")
+    .select("id,plant_id,visit_date,technician_name,status,updated_at")
+    .in("status", ["submitted", "eng_signed"]);
+
+  // Calendar days between an ISO timestamp and today, in IST terms.
+  const ageDays = (ts: unknown) => {
+    if (!ts) return 0;
+    const then = Date.parse(String(ts).slice(0, 10) + "T00:00:00Z");
+    const now = Date.parse(day + "T00:00:00Z");
+    return Number.isFinite(then) ? Math.max(0, Math.round((now - then) / 864e5)) : 0;
+  };
+  // Same thresholds as the Oversight page in app.js. Change both together.
+  const AGE = { review: 2, returned: 2, issue: 7, clientSign: 14 };
+
+  // Build the admin-only "needs a nudge" rows once, scoped per recipient below.
+  const stuckFor = (scope: string[]) => {
+    const rows: string[][] = [];
+    for (const l of pendingLogs || []) {
+      const e = eqById(l.equipment_id as string);
+      if (!e || !scope.includes(e.plant_id as string)) continue;
+      const submitted = String(l.wo_state) === "submitted";
+      const d = ageDays(submitted ? (l.submitted_at || l.end_date) : l.end_date);
+      if (d < (submitted ? AGE.review : AGE.returned)) continue;
+      rows.push([
+        `${e.tag}${l.wo_no ? " \u00b7 " + l.wo_no : ""}`,
+        submitted ? "awaiting engineer review" : `sent back to ${l.technician || "technician"}`,
+        `${d}d`,
+      ]);
+    }
+    for (const i of openIssues || []) {
+      const e = eqById(i.equipment_id as string);
+      if (!e || !scope.includes(e.plant_id as string)) continue;
+      const d = ageDays(i.created_at);
+      if (d < AGE.issue) continue;
+      rows.push([`${e.tag} \u2014 ${String(i.description || "").slice(0, 40)}`, "issue not triaged", `${d}d`]);
+    }
+    for (const r of liveReports || []) {
+      if (!scope.includes(String(r.plant_id))) continue;
+      const d = ageDays(r.updated_at);
+      const submitted = String(r.status) === "submitted";
+      if (d < (submitted ? AGE.review : AGE.clientSign)) continue;
+      rows.push([
+        `${plantName(String(r.plant_id))} \u00b7 ${r.visit_date}`,
+        submitted ? "report awaiting engineer signature" : `client signature outstanding (${r.technician_name || "technician"})`,
+        `${d}d`,
+      ]);
+    }
+    return rows.sort((a, b) => parseInt(b[2]) - parseInt(a[2])).slice(0, 15);
+  };
+
   const targets = mode === "test" && body.userId
     ? active.filter((p) => p.id === body.userId)
     : active.filter((p) => p.email_digest);
@@ -292,7 +351,12 @@ Deno.serve(async (req) => {
     const dueToday = mine.filter((l) => String(l.etr) === day).map(row);
     const ready = mine.filter((l) => l.wo_state === "open" && (!l.etr || String(l.etr) > day)).map(row);
 
-    const nothingOutstanding = !overdue.length && !dueToday.length && !ready.length;
+    // Admins get the accountability section; engineers already see their own
+    // queue in the tables above and do not need to be told about themselves.
+    const isBoss = p.role === "Admin" || p.role === "Superadmin";
+    const stuck = isBoss ? stuckFor(scope) : [];
+
+    const nothingOutstanding = !overdue.length && !dueToday.length && !ready.length && !stuck.length;
     // The real digest stays silent on quiet days. A TEST must still arrive --
     // its job is to prove delivery, not to report work.
     if (nothingOutstanding && mode !== "test") { skip(p.email, "nothing outstanding today"); continue; }
@@ -302,7 +366,9 @@ Deno.serve(async (req) => {
       ? `Test — maintenance summary delivery works`
       : overdue.length
         ? `${overdue.length} overdue · ${dueToday.length} due today — maintenance summary`
-        : `${dueToday.length} due today · ${ready.length} upcoming — maintenance summary`;
+        : (!dueToday.length && !ready.length && stuck.length)
+          ? `${stuck.length} item${stuck.length === 1 ? "" : "s"} waiting on someone — maintenance summary`
+          : `${dueToday.length} due today · ${ready.length} upcoming — maintenance summary`;
 
     const intro = isTest
       ? `This is a test send${p.name ? " for " + esc(p.name.split(" ")[0]) : ""}. If you are reading it, email delivery is working.` +
@@ -316,7 +382,8 @@ Deno.serve(async (req) => {
       intro,
       table("Overdue", "#b91c1c", overdue) +
       table("Due today", "#b45309", dueToday) +
-      table("Scheduled, not started", "#193458", ready),
+      table("Scheduled, not started", "#193458", ready) +
+      table("Waiting on someone", "#7c3aed", stuck),
       isTest
         ? "Sent from the Team page by an administrator to check email delivery. Real digests arrive at 07:00 and only when there is something outstanding."
         : "One email a day, and none at all on days with nothing outstanding. An admin can turn this off for you on the Team page.",
