@@ -385,7 +385,25 @@ const plantById = id => state.plants.find(p => p.id === id);
 const plantName = id => plantById(id)?.name || '—';
 const openLogFor = eqId => state.logs.find(l => l.equipmentId === eqId && !l.endDate);
 function daysBetween(a, b) { if (!a || !b) return null; return Math.round((new Date(b) - new Date(a)) / 86400000); }
-function isOverdue(log) { return log && !log.endDate && log.etr && new Date(log.etr) < new Date(today() + 'T00:00:00'); }
+// A hold pauses the overdue clock only while it lasts. Once the check-back
+// date passes the job is overdue again -- an unattended hold must force a
+// decision, not quietly keep hiding the job.
+const HOLD_KIND = { vendor: 'waiting on vendor', shutdown: 'awaiting shutdown window',
+                    access: 'awaiting site access', budget: 'awaiting approval', other: 'on hold' };
+function onHold(log)      { return !!(log && !log.endDate && log.holdUntil && log.holdUntil >= today()); }
+function holdExpired(log) { return !!(log && !log.endDate && log.holdUntil && log.holdUntil < today()); }
+function isOverdue(log) {
+  if (onHold(log)) return false;
+  return log && !log.endDate && log.etr && new Date(log.etr) < new Date(today() + 'T00:00:00');
+}
+function holdChip(log) {
+  if (!log || (!onHold(log) && !holdExpired(log))) return '';
+  const ext = log.holdReviews > 1 ? ` \u00b7 extended ${log.holdReviews - 1}\u00d7` : '';
+  const tip = esc((HOLD_KIND[log.holdKind] || 'on hold') + ' \u2014 ' + (log.holdReason || ''));
+  return onHold(log)
+    ? `<span class="badge badge-neutral" title="${tip}">Check back ${log.holdUntil}${ext}</span>`
+    : `<span class="badge badge-bd" title="${tip}">Check-back overdue \u00b7 ${log.holdUntil}${ext}</span>`;
+}
 
 const statusBadge = s => {
   const cls = s === 'Operational' ? 'badge-op' : s === 'In Maintenance' ? 'badge-brand' : 'badge-bd';
@@ -401,6 +419,7 @@ function woRef(log, cls) {
 }
 function ongoingStatusPill(log) {
   if (woStateOf(log) === 'submitted') return `<span class="badge badge-mt">Awaiting review</span>`;
+  if (onHold(log) || holdExpired(log)) return holdChip(log);
   if (woStateOf(log) === 'returned')  return `<span class="badge badge-bd">Returned for fixes</span>`;
   if (log.endDate) return `<span class="badge badge-op">Completed</span>`;
   if (isOverdue(log)) return `<span class="badge badge-bd">Overdue</span>`;
@@ -499,7 +518,9 @@ async function loadAuthProfile(u) {
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
 const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null, expectedLifeYears: r.expected_life_years || null, lineageId: r.lineage_id || r.id, retiredAt: r.retired_at || null, replacedBy: r.replaced_by || null, addedOn: String(r.created_at || '').slice(0, 10) });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
-const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null, woNo: r.wo_no || null, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null, woNo: r.wo_no || null,
+  holdUntil: r.hold_until || null, holdReason: r.hold_reason || '', holdKind: r.hold_kind || null,
+  holdAt: r.hold_at || null, holdReviews: r.hold_reviews || 0, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -1626,6 +1647,7 @@ function renderEquipmentDetail(id) {
           ? `<span class="text-xs text-slate-400">(${daysBetween(l.startDate, l.endDate)} day${daysBetween(l.startDate,l.endDate)===1?'':'s'})</span>`
           : `<span class="text-xs ${isOverdue(l)?'text-red-600 font-medium':'text-brand'}">Expected ${l.etr || '—'}</span>`}
       </div>
+      ${holdChip(l) ? `<div class="mt-1">${holdChip(l)} <span class="text-xs text-slate-500">${esc(l.holdReason)}</span></div>` : ''}
       <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${esc(l.notes) || '—'}</div>
       ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${esc(l.completionNotes)}</div>` : ''}
       ${(() => {
@@ -1661,12 +1683,18 @@ function renderEquipmentDetail(id) {
   } else if (!retired) {
     const reassign = (detailOpenWo && SUPA && technicianAccounts().length)
       ? `<button onclick="openReassignModal('${detailOpenWo.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium">Reassign</button>` : '';
+    const hb = 'px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium';
+    const holdBtn = (detailOpenWo && SUPA)
+      ? (onHold(detailOpenWo)
+          ? `<button onclick="openHoldModal('${detailOpenWo.id}')" class="${hb}">Extend hold</button><button onclick="releaseHold('${detailOpenWo.id}')" class="${hb}">Release hold</button>`
+          : `<button onclick="openHoldModal('${detailOpenWo.id}')" class="${hb}">Put on hold</button>`)
+      : '';
     const main = (detailOpenWo && woStateOf(detailOpenWo) === 'open')
       ? `<span class="inline-flex gap-2"><button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button><button class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></span>`
       : e.status === 'Operational'
         ? `<button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
-    actionBtn = reassign + main;
+    actionBtn = reassign + holdBtn + main;
   }
   const replaceBtn = (!retired && isValveType(e.type) && !isTechnician())
     ? `<button onclick="openReplaceValveModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium">Replace ${e.type}</button>` : '';
@@ -2140,13 +2168,13 @@ function renderMyWork() {
         <td class="col-center"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="openResubmitModal('${l.id}')">Fix &amp; resubmit</button></td>
       </tr>`;
     }
-    const et = ecStatus(l.etr, null);
+    const et = onHold(l) ? { cls: 'text-slate-500', label: 'On hold \u00b7 check back ' + l.holdUntil } : ecStatus(l.etr, null);
     const act = woStateOf(l) === 'open'
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${l.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')" title="Done on the spot — record it in one go">Complete now</button></div>`
       : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')">Mark Complete</button>`;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div>${woRef(l, 'block mt-0.5')}</td>
-      <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${esc(l.notes || '')}</div></td>
+      <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${onHold(l) ? esc((HOLD_KIND[l.holdKind] || 'on hold') + ': ' + l.holdReason) : esc(l.notes || '')}</div></td>
       <td><div class="cell-primary">${l.etr || '—'}</div><div class="cell-muted">Started ${l.startDate}</div></td>
       <td class="col-center"><span class="${et.cls}">${et.label}</span></td>
       <td class="col-center">${act}</td>
@@ -2502,6 +2530,7 @@ function oversightData() {
       u, plants: plants.length,
       openWo: openWo.length,
       overdueWo: openWo.filter(isOverdue).length,
+      held: openWo.filter(onHold).length,
       toReview: submitted.length,
       toReviewOldest: Math.max(0, ...submitted.map(l => daysAgo(l.submittedAt || l.endDate))),
       returned: returned.length,
@@ -2523,6 +2552,7 @@ function oversightData() {
       u,
       open: open.length,
       overdue: open.filter(isOverdue).length,
+      held: open.filter(onHold).length,
       returned: returned.length,
       returnedOldest: Math.max(0, ...returned.map(l => daysAgo(l.endDate))),
       done30: mine.filter(l => l.endDate && l.endDate >= cutoff && woStateOf(l) === 'done').length,
@@ -2558,6 +2588,22 @@ function oversightData() {
     if (d >= AGE.clientSign) stuck.push({ d, kind: 'Client signature outstanding', who: r.technician_name || 'technician',
       what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer' });
   });
+  // A passed check-back is the one hold state that IS a problem: the date the
+  // engineer set has gone and nobody has revisited it.
+  logs.filter(holdExpired).forEach(l => {
+    stuck.push({ d: daysAgo(l.holdUntil), kind: 'Check-back date passed',
+      who: 'engineers for ' + plantName(eqPlant(l.equipmentId)),
+      what: (eqById(l.equipmentId)?.tag || '') + ' \u2014 ' + (l.holdReason || '').slice(0, 40)
+            + (l.holdReviews > 1 ? ' (extended ' + (l.holdReviews - 1) + '\u00d7)' : ''),
+      href: '#/equipment/' + l.equipmentId });
+  });
+  // Rolled forward three times or more: an escalation, not a maintenance task.
+  logs.filter(l => onHold(l) && l.holdReviews >= 3).forEach(l => {
+    stuck.push({ d: daysAgo(l.holdAt), kind: 'Hold extended repeatedly',
+      who: 'engineers for ' + plantName(eqPlant(l.equipmentId)),
+      what: (eqById(l.equipmentId)?.tag || '') + ' \u2014 ' + (l.holdReviews - 1) + '\u00d7 \u00b7 ' + (HOLD_KIND[l.holdKind] || 'on hold'),
+      href: '#/equipment/' + l.equipmentId });
+  });
   stuck.sort((a, b) => b.d - a.d);
   return { engineers, technicians, stuck };
 }
@@ -2578,7 +2624,7 @@ function renderOversight() {
 
   const engRows = engineers.map(r => `<tr>
       <td><div class="cell-primary">${esc(r.u.name)}</div><div class="cell-muted">${r.plants} plant${r.plants === 1 ? '' : 's'}</div></td>
-      <td class="col-center"><div class="cell-primary">${r.openWo}</div>${r.overdueWo ? `<div class="text-[11px] text-red-600">${r.overdueWo} overdue</div>` : ''}</td>
+      <td class="col-center"><div class="cell-primary">${r.openWo}</div>${r.overdueWo ? `<div class="text-[11px] text-red-600">${r.overdueWo} overdue</div>` : ''}${r.held ? `<div class="text-[11px] text-slate-400">${r.held} on hold</div>` : ''}</td>
       <td class="col-center">${r.toReview ? `${r.toReview} ${ageChip(r.toReviewOldest, AGE.review)}` : '<span class="text-slate-300">\u2014</span>'}</td>
       <td class="col-center">${r.returned ? `${r.returned} ${ageChip(r.returnedOldest, AGE.returned)}` : '<span class="text-slate-300">\u2014</span>'}</td>
       <td class="col-center">${r.issues ? `${r.issues} ${ageChip(r.issuesOldest, AGE.issue)}` : '<span class="text-slate-300">\u2014</span>'}</td>
@@ -2587,7 +2633,7 @@ function renderOversight() {
 
   const techRows = technicians.map(r => `<tr>
       <td><div class="cell-primary">${esc(r.u.name)}</div><div class="cell-muted">any plant</div></td>
-      <td class="col-center"><div class="cell-primary">${r.open}</div>${r.overdue ? `<div class="text-[11px] text-red-600">${r.overdue} overdue</div>` : ''}</td>
+      <td class="col-center"><div class="cell-primary">${r.open}</div>${r.overdue ? `<div class="text-[11px] text-red-600">${r.overdue} overdue</div>` : ''}${r.held ? `<div class="text-[11px] text-slate-400">${r.held} on hold</div>` : ''}</td>
       <td class="col-center">${r.returned ? `${r.returned} ${ageChip(r.returnedOldest, AGE.returned)}` : '<span class="text-slate-300">\u2014</span>'}</td>
       <td class="col-center">${r.awaitingClient ? `${r.awaitingClient} ${ageChip(r.awaitingClientOldest, AGE.clientSign)}` : '<span class="text-slate-300">\u2014</span>'}</td>
       <td class="col-center"><span class="text-slate-600">${r.done30}</span></td>
@@ -2612,7 +2658,19 @@ function renderOversight() {
       ${kpi('Sent back &gt; ' + AGE.returned + 'd', stuck.filter(x => x.kind === 'Sent back, not resubmitted').length, 'text-amber-600')}
       ${kpi('Issues &gt; ' + AGE.issue + 'd', stuck.filter(x => x.kind === 'Issue not triaged').length, 'text-red-600')}
       ${kpi('Signatures &gt; ' + AGE.clientSign + 'd', stuck.filter(x => x.kind === 'Client signature outstanding').length, 'text-red-600')}
+      ${kpi('Check-backs passed', stuck.filter(x => x.kind === 'Check-back date passed').length, 'text-red-600')}
     </div>
+    ${(() => {
+      const held = state.logs.filter(onHold);
+      if (!held.length) return '';
+      const by = {};
+      held.forEach(l => { const k = l.holdKind || 'other'; by[k] = (by[k] || 0) + 1; });
+      return `<div class="bg-white rounded-xl border border-slate-200 p-4 mb-6">
+        <div class="text-xs uppercase tracking-wide text-slate-500 mb-2">On hold right now (${held.length}) \u2014 what they are waiting on</div>
+        <div class="flex gap-2 flex-wrap">${Object.entries(by).sort((a, b) => b[1] - a[1])
+          .map(([k, c]) => `<span class="badge badge-neutral">${esc(HOLD_KIND[k] || k)} \u00b7 ${c}</span>`).join('')}</div>
+      </div>`;
+    })()}
     ${stuckRows ? `<h2 class="font-semibold text-sm mb-2">Stuck items (${stuck.length})</h2>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6"><div class="overflow-x-auto">
       <table class="list-table"><thead><tr><th>What</th><th>Waiting on</th><th class="col-center">Age</th><th class="col-center">Action</th></tr></thead>
@@ -2634,8 +2692,10 @@ function renderOversight() {
         <th class="col-center">Client signature</th><th class="col-center">Closed (30d)</th>
       </tr></thead><tbody>${techRows}</tbody></table>
     </div></div>
-    <p class="text-[11px] text-slate-400 mt-4">A job waiting on parts ages the same as a neglected one — long waits are a
-      prompt to ask why, not proof of neglect.</p>`;
+    <p class="text-[11px] text-slate-400 mt-4">Ages count calendar days. A job blocked on a vendor, a shutdown window or an approval should be
+      <b>put on hold</b> from its equipment page. A hold's date is a <b>check-back</b>, not a promise the work will be done \u2014
+      you need not know when a vendor will deliver, only when you will chase them. Once that date passes, or a hold has been
+      extended three times, it appears above as its own problem.</p>`;
 }
 
 // ---------- Maintenance Log ----------
@@ -5217,6 +5277,87 @@ function onAssignPick(sel) {
   const t = technicianAccounts().find(x => x.id === sel.value);
   if (t) { inp.value = t.name; inp.readOnly = true; }
   else { inp.readOnly = false; }
+}
+
+// ---------- Work-order holds ----------
+// Separates "waiting on the world" from "nobody is doing it", so Oversight
+// stops reading a vendor delay as neglect. Placed by an engineer, never by the
+// technician whose clock it stops. The date asks a question that always has an
+// honest answer -- when will you look at this again? -- rather than demanding a
+// delivery date nobody knows.
+function openHoldModal(logId) {
+  const l = state.logs.find(x => x.id === logId); if (!l) return;
+  const e = eqById(l.equipmentId);
+  const openIssues = (cloudIssues || []).filter(i => i.equipment_id === l.equipmentId && i.status !== 'dismissed' && i.status !== 'handled');
+  const plus = d => dstr(new Date(Date.now() + d * 864e5));
+  document.getElementById('modalTitle').textContent = `${l.holdReviews ? 'Extend hold' : 'Put on hold'} \u2014 ${e ? e.tag : logId}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitHold(event, '${logId}')" class="space-y-3 text-sm">
+      <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+        A hold pauses this job's overdue clock, so a real blocker stops reading as neglect.
+        <b>You do not need to know when the blocker clears</b> \u2014 only when you will check on it again.
+        ${l.holdReviews ? `<br />This hold has been set ${l.holdReviews}\u00d7 already.` : ''}
+      </div>
+      ${openIssues.length ? `<div>
+        <label class="block text-xs text-slate-600 mb-1">Related issue <span class="text-slate-400">(optional)</span></label>
+        <select name="issue" onchange="const r=this.form.querySelector('[name=reason]'); if(this.value && !r.value.trim()) r.value = this.selectedOptions[0].dataset.d || '';"
+          class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
+          <option value="">\u2014 none \u2014</option>
+          ${openIssues.map(i => `<option value="${i.id}" data-d="Waiting on: ${esc(i.description).replace(/"/g, '&quot;')}">${ISSUE_NEED_LABEL[i.need] || i.need} \u2014 ${esc(i.description).slice(0, 50)}</option>`).join('')}
+        </select>
+      </div>` : ''}
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">What is it waiting on? <span class="text-red-500">*</span></label>
+        <select name="kind" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
+          <option value="vendor">A vendor \u2014 part or service on order</option>
+          <option value="shutdown">A shutdown window</option>
+          <option value="access">Site access or client permission</option>
+          <option value="budget">An approval</option>
+          <option value="other">Something else</option>
+        </select>
+        <div class="text-[10px] text-slate-400 mt-0.5">Grouped on Oversight, so a run of vendor delays shows up as a pattern.</div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Details <span class="text-red-500">*</span></label>
+        <textarea name="reason" rows="2" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Mechanical seal ordered from Kirloskar, no ETA confirmed yet."></textarea>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Check back on <span class="text-red-500">*</span></label>
+        <div class="flex gap-1.5 flex-wrap mb-1.5">
+          ${[[3, 'In 3 days'], [7, 'In a week'], [14, 'In 2 weeks'], [30, 'In a month']].map(([d, lbl]) =>
+            `<button type="button" data-d="${plus(d)}" onclick="this.form.querySelector('[name=until]').value = this.dataset.d"
+              class="text-[11px] px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 hover:border-brand hover:text-brand">${lbl}</button>`).join('')}
+        </div>
+        <input type="date" name="until" required value="${plus(14)}" min="${plus(1)}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+        <div class="text-[10px] text-slate-400 mt-0.5">Not a promise the work will be done \u2014 just when you will look again. After that date it counts as overdue and appears on Oversight.</div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">${l.holdReviews ? 'Extend hold' : 'Put on hold'}</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
+}
+async function submitHold(ev, logId) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const unlock = lockSubmit(ev);
+  const { error } = await SUPA.rpc('hold_work_order', {
+    p_log: logId, p_until: f.get('until'), p_reason: (f.get('reason') || '').trim(),
+    p_kind: f.get('kind') || 'other',
+    p_issue: f.get('issue') ? parseInt(f.get('issue'), 10) : null,
+  });
+  if (error) { unlock(); appAlert('Could not place the hold: ' + error.message); return; }
+  await hydrateCloud(); closeModal(); route();
+  toast('On hold \u2014 the overdue clock is paused until your check-back date.');
+}
+async function releaseHold(logId) {
+  if (!await appConfirm('Release the hold? The job starts counting towards overdue again from its expected completion date.', 'Release hold')) return;
+  const { error } = await SUPA.rpc('release_work_order_hold', { p_log: logId });
+  if (error) { appAlert('Could not release the hold: ' + error.message); return; }
+  await hydrateCloud(); route();
+  toast('Hold released.');
 }
 
 // ---------- Issues ----------
