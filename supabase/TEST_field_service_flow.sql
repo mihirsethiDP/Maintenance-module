@@ -39,6 +39,9 @@ declare
   v_wono    text;
   v_eqstat  text;
   v_today   date := (now() at time zone 'Asia/Kolkata')::date;
+  -- Deliberately far from any real visit: submit_service_report keys on
+  -- (plant, date, technician), and this must not touch live records.
+  v_vdate   date := ((now() at time zone 'Asia/Kolkata')::date - 200);
 begin
   -- ---------- fixtures ----------
   select id into v_tech from public.profiles
@@ -64,7 +67,7 @@ begin
     raise exception 'TEST RESULTS%', E'\n  ABORT: no operational equipment without an open work order.';
   end if;
 
-  res := res || ('fixtures: technician=' || v_tech || ', admin=' || v_boss || ', equipment=' || v_eq);
+  res := array_append(res, ('fixtures: technician=' || v_tech || ', admin=' || v_boss || ', equipment=' || v_eq));
 
   -- =========================================================
   -- 1. Creating work orders
@@ -73,37 +76,37 @@ begin
   begin
     perform public.log_maintenance_start(v_log, v_eq, 'Scheduled', v_today, v_today, 'x', 'test',
                                          'Normal', null::bigint, null::text, v_tech, false);
-    res := res || 'FAIL  a technician was allowed to CREATE a work order';
+    res := array_append(res, 'FAIL  a technician was allowed to CREATE a work order');
   exception when others then
-    res := res || 'PASS  technician cannot create work orders';
+    res := array_append(res, 'PASS  technician cannot create work orders');
   end;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
   begin
     perform public.log_maintenance_start(v_log, v_eq, 'Scheduled', v_today, v_today, 'Test Tech', 'self-test',
                                          'Normal', null::bigint, null::text, v_tech, true);
-    res := res || 'PASS  admin created a work order, assigned, photos required';
+    res := array_append(res, 'PASS  admin created a work order, assigned, photos required');
   exception when others then
-    res := res || ('FAIL  admin could not create a work order: ' || sqlerrm);
+    res := array_append(res, ('FAIL  admin could not create a work order: ' || sqlerrm));
   end;
 
   select wo_no, wo_state into v_wono, v_state from public.maintenance_logs where id = v_log;
-  res := res || ('      wo_no assigned by trigger = ' || coalesce(v_wono, '(NULL - trigger missing!)'));
-  if v_wono is null then res := res || 'FAIL  work-order number was not assigned (check 38)'; end if;
+  res := array_append(res, ('      wo_no assigned by trigger = ' || coalesce(v_wono, '(NULL - trigger missing!)')));
+  if v_wono is null then res := array_append(res, 'FAIL  work-order number was not assigned (check 38)'); end if;
 
   select status into v_eqstat from public.equipment where id = v_eq;
-  res := res || ('      equipment status after creation = ' || v_eqstat ||
-                 case when v_eqstat = 'In Maintenance' then ' (correct)' else ' (EXPECTED In Maintenance)' end);
+  res := array_append(res, ('      equipment status after creation = ' || v_eqstat ||
+                 case when v_eqstat = 'In Maintenance' then ' (correct)' else ' (EXPECTED In Maintenance)' end));
 
   -- =========================================================
   -- 2. Completion: photos required, technician-only, submits not closes
   -- =========================================================
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
-    perform public.log_maintenance_complete(v_log, v_today, 'done', null, null);
-    res := res || 'FAIL  completed a photos-required job with no photos attached';
+    perform public.log_maintenance_complete(v_log, v_vdate, 'done', null, null);
+    res := array_append(res, 'FAIL  completed a photos-required job with no photos attached');
   exception when others then
-    res := res || 'PASS  photos-required job refused completion without a photo';
+    res := array_append(res, 'PASS  photos-required job refused completion without a photo');
   end;
 
   -- Attach a metadata row (the storage object itself needs a browser).
@@ -112,21 +115,21 @@ begin
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
-    perform public.log_maintenance_complete(v_log, v_today, 'Serviced and tested OK.', null, null);
+    perform public.log_maintenance_complete(v_log, v_vdate, 'Serviced and tested OK.', null, null);
     select wo_state into v_state from public.maintenance_logs where id = v_log;
     select status into v_eqstat from public.equipment where id = v_eq;
     if v_state = 'submitted' then
-      res := res || 'PASS  technician completion -> submitted (not closed)';
+      res := array_append(res, 'PASS  technician completion -> submitted (not closed)');
     else
-      res := res || ('FAIL  expected wo_state=submitted, got ' || v_state);
+      res := array_append(res, ('FAIL  expected wo_state=submitted, got ' || v_state));
     end if;
     if v_eqstat = 'Operational' then
-      res := res || 'PASS  machine returned to service at submission (review does not hold it hostage)';
+      res := array_append(res, 'PASS  machine returned to service at submission (review does not hold it hostage)');
     else
-      res := res || ('FAIL  equipment left as ' || v_eqstat || ' while awaiting review');
+      res := array_append(res, ('FAIL  equipment left as ' || v_eqstat || ' while awaiting review'));
     end if;
   exception when others then
-    res := res || ('FAIL  technician could not complete with a photo: ' || sqlerrm);
+    res := array_append(res, ('FAIL  technician could not complete with a photo: ' || sqlerrm));
   end;
 
   -- =========================================================
@@ -135,45 +138,45 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
     perform public.review_work_order(v_log, true, null);
-    res := res || 'FAIL  a technician reviewed their own work';
+    res := array_append(res, 'FAIL  a technician reviewed their own work');
   exception when others then
-    res := res || 'PASS  technician cannot review work orders';
+    res := array_append(res, 'PASS  technician cannot review work orders');
   end;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
   begin
     perform public.review_work_order(v_log, false, null);
-    res := res || 'FAIL  sent a job back with no note';
+    res := array_append(res, 'FAIL  sent a job back with no note');
   exception when others then
-    res := res || 'PASS  sending back requires a note';
+    res := array_append(res, 'PASS  sending back requires a note');
   end;
   begin
     perform public.review_work_order(v_log, false, 'Add a photo of the replaced seal.');
     select wo_state into v_state from public.maintenance_logs where id = v_log;
-    res := res || case when v_state = 'returned' then 'PASS  returned with a note'
-                       else 'FAIL  expected returned, got ' || v_state end;
+    res := array_append(res, case when v_state = 'returned' then 'PASS  returned with a note'
+                       else 'FAIL  expected returned, got ' || v_state end);
   exception when others then
-    res := res || ('FAIL  could not return: ' || sqlerrm);
+    res := array_append(res, ('FAIL  could not return: ' || sqlerrm));
   end;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
     perform public.resubmit_work_order(v_log, 'Photo added, retested OK.');
     select wo_state into v_state from public.maintenance_logs where id = v_log;
-    res := res || case when v_state = 'submitted' then 'PASS  technician resubmitted'
-                       else 'FAIL  expected submitted, got ' || v_state end;
+    res := array_append(res, case when v_state = 'submitted' then 'PASS  technician resubmitted'
+                       else 'FAIL  expected submitted, got ' || v_state end);
   exception when others then
-    res := res || ('FAIL  resubmit failed: ' || sqlerrm);
+    res := array_append(res, ('FAIL  resubmit failed: ' || sqlerrm));
   end;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
   begin
     perform public.review_work_order(v_log, true, null);
     select wo_state into v_state from public.maintenance_logs where id = v_log;
-    res := res || case when v_state = 'done' then 'PASS  approved -> done'
-                       else 'FAIL  expected done, got ' || v_state end;
+    res := array_append(res, case when v_state = 'done' then 'PASS  approved -> done'
+                       else 'FAIL  expected done, got ' || v_state end);
   exception when others then
-    res := res || ('FAIL  approve failed: ' || sqlerrm);
+    res := array_append(res, ('FAIL  approve failed: ' || sqlerrm));
   end;
 
   -- =========================================================
@@ -184,24 +187,24 @@ begin
     insert into public.wo_issues (equipment_id, log_id, description, need, raised_name)
     values (v_eq, v_log, 'Self-test: bearing noisy', 'repair', 'Self test')
     returning id into v_issue;
-    res := res || 'PASS  technician raised an issue';
+    res := array_append(res, 'PASS  technician raised an issue');
   exception when others then
-    res := res || ('FAIL  technician could not raise an issue: ' || sqlerrm);
+    res := array_append(res, ('FAIL  technician could not raise an issue: ' || sqlerrm));
   end;
 
   if v_issue is not null then
     begin
       perform public.triage_issue(v_issue, 'dismissed', null);
-      res := res || 'FAIL  dismissed an issue with no reason';
+      res := array_append(res, 'FAIL  dismissed an issue with no reason');
     exception when others then
-      res := res || 'PASS  dismissing an issue requires a reason';
+      res := array_append(res, 'PASS  dismissing an issue requires a reason');
     end;
     perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
     begin
       perform public.triage_issue(v_issue, 'handled', 'Self-test triage.');
-      res := res || 'PASS  engineer triaged the issue';
+      res := array_append(res, 'PASS  engineer triaged the issue');
     exception when others then
-      res := res || ('FAIL  triage failed: ' || sqlerrm);
+      res := array_append(res, ('FAIL  triage failed: ' || sqlerrm));
     end;
   end if;
 
@@ -214,95 +217,99 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
     perform public.hold_work_order(v_log2, v_today + 7, 'Technician self-pausing', 'vendor', null);
-    res := res || 'FAIL  a technician paused their own overdue clock';
+    res := array_append(res, 'FAIL  a technician paused their own overdue clock');
   exception when others then
-    res := res || 'PASS  technician cannot place a hold';
+    res := array_append(res, 'PASS  technician cannot place a hold');
   end;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
   begin
     perform public.hold_work_order(v_log2, v_today, 'No end date', 'vendor', null);
-    res := res || 'FAIL  accepted a check-back date of today';
+    res := array_append(res, 'FAIL  accepted a check-back date of today');
   exception when others then
-    res := res || 'PASS  hold requires a future check-back date';
+    res := array_append(res, 'PASS  hold requires a future check-back date');
   end;
   begin
     perform public.hold_work_order(v_log2, v_today + 14, 'Seal on order, no ETA.', 'vendor', null);
     perform public.hold_work_order(v_log2, v_today + 28, 'Still no ETA.', 'vendor', null);
-    res := res || ('PASS  hold placed and extended (hold_reviews='
-      || (select hold_reviews::text from public.maintenance_logs where id = v_log2) || ', expected 2)');
+    res := array_append(res, ('PASS  hold placed and extended (hold_reviews='
+      || (select hold_reviews::text from public.maintenance_logs where id = v_log2) || ', expected 2)'));
   exception when others then
-    res := res || ('FAIL  hold failed: ' || sqlerrm);
+    res := array_append(res, ('FAIL  hold failed: ' || sqlerrm));
   end;
 
   -- =========================================================
   -- 6. Service report: three signatures, in order, then locked
   -- =========================================================
+  -- Leave the hold-test job SUBMITTED, so there is genuinely unreviewed work
+  -- from this visit -- otherwise the refusal below would pass vacuously.
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
+  perform public.log_maintenance_complete(v_log2, v_vdate, 'Hold-test job done.', null, null);
+
   begin
-    perform public.submit_service_report(v_rep, v_plant, v_today,
-      json_build_object('plant_id', v_plant, 'visit_date', v_today, 'jobs', '[]'::json)::jsonb);
-    res := res || 'FAIL  raised a report while a job from that visit is unapproved';
+    perform public.submit_service_report(v_rep, v_plant, v_vdate,
+      json_build_object('plant_id', v_plant, 'visit_date', v_vdate, 'jobs', '[]'::json)::jsonb);
+    res := array_append(res, 'FAIL  raised a report while a job from that visit is unapproved');
   exception when others then
-    res := res || 'PASS  report refused while the visit has unreviewed work';
+    res := array_append(res, 'PASS  report refused while the visit has unreviewed work');
   end;
 
-  -- Close the hold-test job so the visit is clean, then retry.
+  -- Approve it through the real RPC, then the visit is clean.
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
-  update public.maintenance_logs set wo_state = 'done', end_date = v_today where id = v_log2;
+  perform public.review_work_order(v_log2, true, null);
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
-    perform public.submit_service_report(v_rep, v_plant, v_today,
-      json_build_object('plant_id', v_plant, 'visit_date', v_today, 'jobs', '[]'::json)::jsonb);
+    perform public.submit_service_report(v_rep, v_plant, v_vdate,
+      json_build_object('plant_id', v_plant, 'visit_date', v_vdate, 'jobs', '[]'::json)::jsonb);
     select status, content_hash into v_status, v_hash from public.service_reports where id = v_rep;
-    res := res || ('PASS  technician submitted the report (status=' || v_status || ')');
-    res := res || ('      sha256 = ' || coalesce(left(v_hash, 16) || '...', '(NULL - hashing broken!)'));
-    if v_hash is null or v_hash = '' then res := res || 'FAIL  content hash is empty (check 39)'; end if;
+    res := array_append(res, ('PASS  technician submitted the report (status=' || v_status || ')'));
+    res := array_append(res, ('      sha256 = ' || coalesce(left(v_hash, 16) || '...', '(NULL - hashing broken!)')));
+    if v_hash is null or v_hash = '' then res := array_append(res, 'FAIL  content hash is empty (check 39)'); end if;
   exception when others then
-    res := res || ('FAIL  report submission failed: ' || sqlerrm);
+    res := array_append(res, ('FAIL  report submission failed: ' || sqlerrm));
   end;
 
   -- Client cannot sign before the engineer.
   begin
     perform public.client_sign_report(v_rep, 'Test Client', 'Plant In-charge', v_rep || '/sig.png');
-    res := res || 'FAIL  client signed before the engineer co-signed';
+    res := array_append(res, 'FAIL  client signed before the engineer co-signed');
   exception when others then
-    res := res || 'PASS  signature order enforced (engineer must sign first)';
+    res := array_append(res, 'PASS  signature order enforced (engineer must sign first)');
   end;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
   begin
     perform public.engineer_review_report(v_rep, true, null);
     select status into v_status from public.service_reports where id = v_rep;
-    res := res || case when v_status = 'eng_signed' then 'PASS  engineer co-signed'
-                       else 'FAIL  expected eng_signed, got ' || v_status end;
+    res := array_append(res, case when v_status = 'eng_signed' then 'PASS  engineer co-signed'
+                       else 'FAIL  expected eng_signed, got ' || v_status end);
   exception when others then
-    res := res || ('FAIL  engineer signing failed: ' || sqlerrm);
+    res := array_append(res, ('FAIL  engineer signing failed: ' || sqlerrm));
   end;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
     perform public.client_sign_report(v_rep, '', '', v_rep || '/sig.png');
-    res := res || 'FAIL  accepted a client signature with no name';
+    res := array_append(res, 'FAIL  accepted a client signature with no name');
   exception when others then
-    res := res || 'PASS  client signature requires a name';
+    res := array_append(res, 'PASS  client signature requires a name');
   end;
   begin
     perform public.client_sign_report(v_rep, 'Test Client', 'Plant In-charge', v_rep || '/sig.png');
     select status into v_status from public.service_reports where id = v_rep;
-    res := res || case when v_status = 'signed' then 'PASS  client signed -> signed'
-                       else 'FAIL  expected signed, got ' || v_status end;
+    res := array_append(res, case when v_status = 'signed' then 'PASS  client signed -> signed'
+                       else 'FAIL  expected signed, got ' || v_status end);
   exception when others then
-    res := res || ('FAIL  client signing failed: ' || sqlerrm);
+    res := array_append(res, ('FAIL  client signing failed: ' || sqlerrm));
   end;
 
   -- The lock.
   begin
     update public.service_reports set review_note = 'tampered' where id = v_rep;
-    res := res || 'FAIL  a SIGNED report was edited (guard trigger not working)';
+    res := array_append(res, 'FAIL  a SIGNED report was edited (guard trigger not working)');
   exception when others then
-    res := res || 'PASS  signed report is immutable (guard trigger held)';
+    res := array_append(res, 'PASS  signed report is immutable (guard trigger held)');
   end;
 
   -- =========================================================
@@ -312,9 +319,9 @@ begin
   begin
     perform public.engineer_create_report(v_rep || 'B', v_plant, v_today - 400, v_tech,
       json_build_object('jobs', '[]'::json)::jsonb);
-    res := res || 'FAIL  compiled a report for a date with no completed work';
+    res := array_append(res, 'FAIL  compiled a report for a date with no completed work');
   exception when others then
-    res := res || 'PASS  engineer cannot compile a report for a visit that did not happen';
+    res := array_append(res, 'PASS  engineer cannot compile a report for a visit that did not happen');
   end;
 
   raise exception 'TEST RESULTS%', E'\n  ' || array_to_string(res, E'\n  ') ||
