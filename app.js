@@ -392,6 +392,13 @@ const statusBadge = s => {
   return `<span class="badge ${cls}">${s}</span>`;
 };
 const reasonBadge = r => `<span class="badge ${r === 'Breakdown' ? 'badge-bd' : 'badge-brand'}">${r}</span>`;
+// The work order's human reference (WO-2026-0147). Historical work orders
+// predate numbering and simply have none — show nothing rather than a
+// placeholder that looks like a missing value.
+function woRef(log, cls) {
+  if (!log || !log.woNo) return '';
+  return `<span class="font-mono text-[11px] text-slate-500 ${cls || ''}">${esc(log.woNo)}</span>`;
+}
 function ongoingStatusPill(log) {
   if (woStateOf(log) === 'submitted') return `<span class="badge badge-mt">Awaiting review</span>`;
   if (woStateOf(log) === 'returned')  return `<span class="badge badge-bd">Returned for fixes</span>`;
@@ -491,7 +498,7 @@ async function loadAuthProfile(u) {
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
 const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null, expectedLifeYears: r.expected_life_years || null, lineageId: r.lineage_id || r.id, retiredAt: r.retired_at || null, replacedBy: r.replaced_by || null, addedOn: String(r.created_at || '').slice(0, 10) });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
-const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null, woNo: r.wo_no || null, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -1611,6 +1618,7 @@ function renderEquipmentDetail(id) {
       <div class="absolute -left-[7px] top-1 w-3 h-3 rounded-full ${l.endDate ? 'bg-slate-300' : (isOverdue(l) ? 'bg-red-400' : 'bg-brand')}"></div>
       <div class="flex flex-wrap items-center gap-2 text-sm">
         ${reasonBadge(l.reason)}
+        ${woRef(l)}
         <span class="text-slate-500">${l.startDate} → ${l.endDate || 'ongoing'}</span>
         ${l.endDate
           ? `<span class="text-xs text-slate-400">(${daysBetween(l.startDate, l.endDate)} day${daysBetween(l.startDate,l.endDate)===1?'':'s'})</span>`
@@ -2123,7 +2131,7 @@ function renderMyWork() {
     const e = eqById(l.equipmentId); if (!e) return '';
     if (woStateOf(l) === 'returned') {
       return `<tr>
-        <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
+        <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div>${woRef(l, 'block mt-0.5')}</td>
         <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">Engineer's note: ${esc(l.reviewNote || '')}</div></td>
         <td><div class="cell-primary">${l.endDate}</div><div class="cell-muted">Completed, sent back</div></td>
         <td class="col-center"><span class="badge badge-bd">Returned</span></td>
@@ -2135,7 +2143,7 @@ function renderMyWork() {
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${l.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')" title="Done on the spot — record it in one go">Complete now</button></div>`
       : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')">Mark Complete</button>`;
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div>${woRef(l, 'block mt-0.5')}</td>
       <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${esc(l.notes || '')}</div></td>
       <td><div class="cell-primary">${l.etr || '—'}</div><div class="cell-muted">Started ${l.startDate}</div></td>
       <td class="col-center"><span class="${et.cls}">${et.label}</span></td>
@@ -2149,7 +2157,7 @@ function renderMyWork() {
       ? '<span class="badge badge-mt">Awaiting review</span>'
       : '<span class="badge badge-op">Completed</span>';
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div>${woRef(l, 'block mt-0.5')}</td>
       <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${esc(l.completionNotes || '')}</div></td>
       <td><div class="cell-primary">${l.endDate}</div><div class="cell-muted">Started ${l.startDate}</div></td>
       <td class="col-center">${chip}</td>
@@ -2226,8 +2234,8 @@ function buildReportContent(plantId, date) {
   const me = currentUser();
   const jobs = state.logs
     .filter(l => l.assignedTo === me.id && l.endDate === date && eqById(l.equipmentId)?.plantId === plantId)
-    .map(l => ({ id: l.id, tag: eqById(l.equipmentId)?.tag || l.equipmentId, reason: l.reason,
-                 scope: l.notes || '', done: l.completionNotes || '', state: woStateOf(l) }));
+    .map(l => ({ id: l.id, wo_no: l.woNo || null, tag: eqById(l.equipmentId)?.tag || l.equipmentId,
+                 reason: l.reason, scope: l.notes || '', done: l.completionNotes || '', state: woStateOf(l) }));
   const issues = (cloudIssues || [])
     .filter(i => i.equipment_id && i.raised_by === me.id && String(i.created_at).slice(0, 10) === date
                  && eqById(i.equipment_id)?.plantId === plantId)
@@ -2244,7 +2252,7 @@ function openReportCompose(plantId, date, existingId) {
       ${r && r.review_note ? `<div class="p-3 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900"><b>Engineer asked:</b> ${esc(r.review_note)}</div>` : ''}
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[38vh] overflow-y-auto">
         ${content.jobs.map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span></div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${content.issues.length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -2361,7 +2369,7 @@ function openReportView(reportId) {
     <div class="space-y-3 text-sm">
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
         ${(c.jobs || []).map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span></div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${(c.issues || []).length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -2512,7 +2520,7 @@ function getFilteredLogs() {
       if (fTo   && l.startDate > fTo)   return false;
       if (fTech && l.technician !== fTech) return false;
       if (fSearch) {
-        const blob = `${e.tag} ${e.make} ${e.model} ${e.location} ${plantName(e.plantId)} ${l.notes} ${l.completionNotes||''} ${l.technician}`.toLowerCase();
+        const blob = `${l.woNo || ''} ${e.tag} ${e.make} ${e.model} ${e.location} ${plantName(e.plantId)} ${l.notes} ${l.completionNotes||''} ${l.technician}`.toLowerCase();
         if (!blob.includes(fSearch)) return false;
       }
       return true;
@@ -2541,7 +2549,7 @@ function renderLogRows() {
       ? `<span class="text-slate-700">${durDays} day${durDays===1?'':'s'}</span>`
       : `<span class="font-medium ${overdue?'text-red-600':'text-brand'}">${durDays} day${durDays===1?'':'s'} (ongoing)</span>`;
     return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.make)} ${esc(e.model)}</div></td>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.make)} ${esc(e.model)}</div>${woRef(l, 'block mt-0.5')}</td>
       <td><div class="cell-primary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${l.reason}</div><div class="cell-muted">${e.type} · ${esc(e.location)}</div></td>
       <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">${l.endDate ? 'End: ' + l.endDate : 'Expected: ' + (l.etr || '—')}</div></td>
@@ -3932,7 +3940,7 @@ function renderWoReviewTab(items) {
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
           <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-400 font-normal">· ${esc(plantName(e.plantId))}</span></div>
-          <div class="text-xs text-slate-500 mt-0.5">${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b></div>
+          <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b></div>
         </div>
         <span class="badge badge-mt">Awaiting review</span>
       </div>
@@ -3948,7 +3956,7 @@ function renderWoReviewTab(items) {
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
           <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-400 font-normal">· ${esc(plantName(e.plantId))}</span></div>
-          <div class="text-xs text-slate-500 mt-0.5">Returned to <b>${esc(l.technician) || 'unknown'}</b> — your note: ${esc(l.reviewNote || '')}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}Returned to <b>${esc(l.technician) || 'unknown'}</b> — your note: ${esc(l.reviewNote || '')}</div>
         </div>
         <span class="badge badge-bd">Waiting on technician</span>
       </div>
@@ -5130,6 +5138,7 @@ function openCompleteModal(eqId) {
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitComplete(event, '${eqId}')" class="space-y-3 text-sm">
       ${log ? `<div class="p-3 rounded-md bg-brand-50 border border-brand-100 text-xs text-slate-700">
+        ${log.woNo ? `<div class="font-mono text-[11px] text-brand mb-1">${esc(log.woNo)}</div>` : ''}
         <div><span class="font-medium">Reason:</span> ${log.reason}</div>
         <div><span class="font-medium">Started:</span> ${log.startDate} · <span class="font-medium">Expected:</span> ${log.etr}</div>
         <div class="mt-1"><span class="font-medium">Scope of work:</span> ${esc(log.notes)||'—'}</div>
