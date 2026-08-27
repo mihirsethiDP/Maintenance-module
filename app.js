@@ -2223,6 +2223,16 @@ function renderMyReportsTab(visits) {
       : v.pending ? `<span class="badge badge-mt">${v.pending} job${v.pending === 1 ? '' : 's'} with your engineer</span>`
       : '<span class="badge badge-neutral">Not raised</span>';
     let act;
+    if (r && r.status === 'eng_signed' && r.eng_sign?.compiled) {
+      // The engineer compiled it — all that is left is the client.
+      act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
+      return `<tr>
+        <td><div class="cell-primary">${esc(plantName(v.plantId))}</div><div class="cell-secondary">${v.date}</div></td>
+        <td><div class="cell-primary">${v.jobs.length} job${v.jobs.length === 1 ? '' : 's'}</div><div class="cell-muted">Report prepared by your engineer</div></td>
+        <td class="col-center"><span class="badge badge-brand">Ready for client signature</span></td>
+        <td class="col-center">${act}</td>
+      </tr>`;
+    }
     if (!r && v.pending) act = `<span class="text-[11px] text-slate-400">Waiting on review</span>`;
     else if (!r) act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Create &amp; sign</button>`;
     else if (r.status === 'changes') act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}', '${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Fix &amp; resubmit</button>`;
@@ -2239,21 +2249,24 @@ function renderMyReportsTab(visits) {
     <table class="list-table"><thead><tr><th>Visit</th><th>Work</th><th class="col-center">Report</th><th class="col-center">Action</th></tr></thead><tbody>${rows}</tbody></table>
   </div></div>`;
 }
-function buildReportContent(plantId, date) {
-  const me = currentUser();
+// techId defaults to the signed-in user (the technician raising their own
+// report); engineers pass the technician whose visit they are compiling.
+function buildReportContent(plantId, date, techId) {
+  const tid = techId || currentUser()?.id;
+  const tech = (state.users || []).find(u => u.id === tid);
   const jobs = state.logs
-    .filter(l => l.assignedTo === me.id && l.endDate === date && eqById(l.equipmentId)?.plantId === plantId)
+    .filter(l => l.assignedTo === tid && l.endDate === date && eqById(l.equipmentId)?.plantId === plantId)
     .map(l => ({ id: l.id, wo_no: l.woNo || null, tag: eqById(l.equipmentId)?.tag || l.equipmentId,
                  reason: l.reason, scope: l.notes || '', done: l.completionNotes || '', state: woStateOf(l) }));
   const issues = (cloudIssues || [])
-    .filter(i => i.equipment_id && i.raised_by === me.id && String(i.created_at).slice(0, 10) === date
+    .filter(i => i.equipment_id && i.raised_by === tid && String(i.created_at).slice(0, 10) === date
                  && eqById(i.equipment_id)?.plantId === plantId)
     .map(i => ({ tag: eqById(i.equipment_id)?.tag || '', description: i.description, need: i.need }));
   return { plant_id: plantId, plant: plantName(plantId), visit_date: date,
-           technician: me.name, jobs, issues };
+           technician: tech?.name || '', jobs, issues };
 }
 function openReportCompose(plantId, date, existingId) {
-  const content = buildReportContent(plantId, date);
+  const content = buildReportContent(plantId, date, currentUser()?.id);
   const r = existingId ? (cloudReports || []).find(x => x.id === existingId) : null;
   document.getElementById('modalTitle').textContent = `Service report — ${esc(plantName(plantId))}, ${date}`;
   document.getElementById('modalBody').innerHTML = `
@@ -2387,7 +2400,9 @@ function openReportView(reportId) {
         </div>` : ''}
       </div>
       <div class="p-3 rounded-md bg-slate-50 border border-slate-200 space-y-1">
-        <div class="text-xs"><span class="text-slate-500">Technician:</span> <b>${esc(r.technician_name)}</b> <span class="text-slate-400">· ${String(r.tech_signed_at || '').slice(0, 16).replace('T', ' ')}</span></div>
+        <div class="text-xs"><span class="text-slate-500">Technician:</span> <b>${esc(r.technician_name)}</b>
+          <span class="text-slate-400">· ${String(r.tech_signed_at || '').slice(0, 16).replace('T', ' ')}</span>
+          ${r.eng_sign?.compiled ? '<span class="text-slate-400">(attested by work-order submission)</span>' : ''}</div>
         ${sig('Engineer', r.eng_sign)}
         ${sig('Client', r.client_sign, r.client_sign?.designation ? `, ${esc(r.client_sign.designation)}` : '')}
         <div id="clientSigImg"></div>
@@ -3942,7 +3957,7 @@ function renderWoReviewTab(items) {
   const returned = getReturnedWOs();
   const issues = getOpenIssues();
   const reports = getSubmittedReports();
-  if (!items.length && !returned.length && !issues.length && !reports.length) {
+  if (!items.length && !returned.length && !issues.length && !reports.length && !visitsReadyForReport().length) {
     return `<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500">Nothing awaiting review. Technician-completed jobs, reported issues and service reports land here for your sign-off.</div>`;
   }
   const cards = items.map(({ l, e }) => `
@@ -4010,12 +4025,28 @@ function renderWoReviewTab(items) {
       </div>
     </div>`).join('');
 
+  const readyVisits = visitsReadyForReport();
+  const readyCards = readyVisits.map(v => `
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="flex items-start gap-3 flex-wrap">
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-sm">${esc(plantName(v.plantId))} — ${v.date}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${v.jobs.length} approved job${v.jobs.length === 1 ? '' : 's'} by <b>${esc(v.techName)}</b> · no report yet</div>
+        </div>
+        <span class="badge badge-neutral">Report not raised</span>
+      </div>
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+        <button onclick="openCompileReportModal('${v.plantId}', '${v.date}', '${v.techId}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Create &amp; sign report</button>
+      </div>
+    </div>`).join('');
+
   const section = (title, inner) => inner ? `<div><h2 class="font-semibold text-sm mb-2 mt-5 first:mt-0">${title}</h2><div class="grid gap-3">${inner}</div></div>` : '';
   queueMicrotask(() => fillWoMedia(items.map(x => x.l.id)));
   return section(`Completed work — awaiting review (${items.length})`, cards)
        + section(`Returned — waiting on the technician (${returned.length})`, returnedCards)
        + section(`Reported issues (${issues.length})`, issueCards)
-       + section(`Service reports (${reports.length})`, reportCards);
+       + section(`Service reports (${reports.length})`, reportCards)
+       + section(`Visits ready for a report (${readyVisits.length})`, readyCards);
 }
 async function triageIssue(id, action, note, followLog) {
   const { error } = await SUPA.rpc('triage_issue', { p_id: id, p_action: action, p_note: note || null, p_follow_log: followLog || null });
@@ -4060,11 +4091,81 @@ async function fillWoMedia(logIds) {
       : `<span class="text-[11px] text-slate-400">No photos attached.</span>`;
   });
 }
+// Visits whose every job is closed and which have no report yet — the
+// engineer can compile and sign these without waiting for the technician.
+function visitsReadyForReport() {
+  if (!SUPA) return [];
+  const ids = accessiblePlantIds();
+  const byKey = new Map();
+  state.logs.forEach(l => {
+    if (!l.endDate || !l.assignedTo) return;
+    const e = eqById(l.equipmentId);
+    if (!e || !ids.includes(e.plantId)) return;
+    const key = e.plantId + '|' + l.endDate + '|' + l.assignedTo;
+    if (!byKey.has(key)) byKey.set(key, { plantId: e.plantId, date: l.endDate, techId: l.assignedTo, jobs: [] });
+    byKey.get(key).jobs.push(l);
+  });
+  return [...byKey.values()]
+    .filter(v => v.jobs.every(l => woStateOf(l) === 'done'))
+    .filter(v => !(cloudReports || []).some(r =>
+      r.plant_id === v.plantId && r.visit_date === v.date && r.technician_id === v.techId))
+    .map(v => ({ ...v, techName: (state.users || []).find(u => u.id === v.techId)?.name || 'technician' }))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 30);
+}
+async function engineerCompileReport(plantId, date, techId) {
+  const content = buildReportContent(plantId, date, techId);
+  const id = 'SR-' + String(Date.now()).slice(-8);
+  const { error } = await SUPA.rpc('engineer_create_report', {
+    p_id: id, p_plant: plantId, p_date: date, p_tech: techId, p_content: content,
+  });
+  if (error) { appAlert('Could not create the report: ' + error.message); return false; }
+  await hydrateCloud(); closeModal(); route();
+  toast('Report created and signed by you — ready for the client signature on site.');
+  return true;
+}
+function openCompileReportModal(plantId, date, techId) {
+  const content = buildReportContent(plantId, date, techId);
+  document.getElementById('modalTitle').textContent = `Service report — ${esc(plantName(plantId))}, ${date}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="event.preventDefault(); engineerCompileReport('${plantId}', '${date}', '${techId}')" class="space-y-3 text-sm">
+      <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
+        ${content.jobs.map(j => `<div class="px-3 py-2">
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
+          <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
+        </div>`).join('')}
+        ${content.issues.length ? `<div class="px-3 py-2 bg-amber-50/50">
+          ${content.issues.map(i => `<div class="text-[11px] text-amber-800">• ${esc(i.tag)}: ${esc(i.description)} (${ISSUE_NEED_LABEL[i.need] || i.need})</div>`).join('')}
+        </div>` : ''}
+      </div>
+      <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+        Covers <b>${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}</b> ${esc(content.technician)} finished
+        at ${esc(plantName(plantId))} on ${date} — all approved by you.
+        <br />Creating it <b>signs it as you</b>. ${esc(content.technician)}'s work-order submissions are
+        recorded as their attestation. The client signs last, on site.
+      </div>
+      <div class="flex gap-2 justify-end pt-1">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Not now</button>
+        <button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white">Create &amp; sign</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
+}
+
 async function reviewWo(logId, approve, note) {
+  const before = state.logs.find(x => x.id === logId);
   const { error } = await SUPA.rpc('review_work_order', { p_log: logId, p_approve: approve, p_note: note || null });
   if (error) { appAlert('Could not save the review: ' + error.message); return; }
   await hydrateCloud(); closeModal(); route();
   toast(approve ? 'Approved and closed.' : 'Sent back to the technician with your note.');
+  // If that approval completed a whole visit, offer its report now rather
+  // than making the engineer come back after the technician raises one.
+  if (!approve || !before) return;
+  const e = eqById(before.equipmentId); if (!e) return;
+  const ready = visitsReadyForReport().find(v =>
+    v.plantId === e.plantId && v.date === before.endDate && v.techId === before.assignedTo);
+  if (ready) openCompileReportModal(ready.plantId, ready.date, ready.techId);
 }
 function openReturnWoModal(logId) {
   const l = state.logs.find(x => x.id === logId); if (!l) return;
