@@ -426,12 +426,14 @@ function expectedLifeFor(e) {
 
 const routes = [
   { hash: '#/dashboard', label: 'Dashboard',          roles: ['Admin'] },
-  { hash: '#/equipment', label: 'Equipment',          roles: ['Admin','Engineer'] },
+  { hash: '#/mywork',    label: 'My Work',            roles: ['Technician'] },
+  { hash: '#/equipment', label: 'Equipment',          roles: ['Admin','Engineer','Technician'] },
   { hash: '#/log',       label: 'Maintenance Log',     roles: ['Admin','Engineer'] },
   { hash: '#/engineer',  label: 'Engineering Corner',  roles: ['Admin','Engineer'] },
   { hash: '#/review',    label: 'Review',             roles: ['Admin'] },
   { hash: '#/plants',    label: 'Plants',             roles: ['Admin'] },
-  { hash: '#/team',      label: 'Team',               roles: ['Admin'] },
+  // Engineers see Team too, trimmed to the technicians they work with.
+  { hash: '#/team',      label: 'Team',               roles: ['Admin','Engineer'] },
 ];
 
 // ---------- Auth ----------
@@ -485,7 +487,7 @@ async function loadAuthProfile(u) {
 // ---- field mappers: DB (snake_case) <-> app (camelCase) ----
 const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || '', model: r.model || '', plantId: r.plant_id, location: r.location || '', installed: r.installed || '', status: r.status, slot: r.slot || null, expectedLifeYears: r.expected_life_years || null, lineageId: r.lineage_id || r.id, retiredAt: r.retired_at || null, replacedBy: r.replaced_by || null, addedOn: String(r.created_at || '').slice(0, 10) });
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
-const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null });
+const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -743,15 +745,24 @@ async function logout() {
   if (SUPA) { try { await SUPA.auth.signOut(); } catch (e) {} authUser = null; route(); return; }
   localStorage.removeItem(LS_SESSION); route();
 }
-// Superadmin and Admin share the same route access; only Engineer is restricted.
-function effRole(user) { return user && user.role === 'Engineer' ? 'Engineer' : 'Admin'; }
+// Superadmin and Admin share the same route access. Engineers are scoped to
+// their plants; Technicians are scoped further, to the work assigned to them.
+function effRole(user) {
+  if (user && user.role === 'Engineer') return 'Engineer';
+  if (user && user.role === 'Technician') return 'Technician';
+  return 'Admin';
+}
+function isTechnician() { const u = currentUser(); return !!u && u.role === 'Technician'; }
 function routeAllowed(hash, user) {
   const base = hash.startsWith('#/equipment/') ? '#/equipment' : hash;
   const r = routes.find(x => x.hash === base);
   if (!r) return true; // notifications panel etc. are not routes
   return r.roles.includes(effRole(user));
 }
-function homeHashFor(user) { return effRole(user) === 'Admin' ? '#/dashboard' : '#/equipment'; }
+function homeHashFor(user) {
+  const r = effRole(user);
+  return r === 'Admin' ? '#/dashboard' : r === 'Technician' ? '#/mywork' : '#/equipment';
+}
 
 // The sign-in / set-password / accept-invite screens are full-screen and
 // have no navigation. route() returns early into them, so it never reaches
@@ -845,6 +856,7 @@ function route() {
   if (!h.startsWith('#/equipment')) ui.eqStatusFilter = 'all';
   if (h.startsWith('#/equipment/')) return renderEquipmentDetail(h.split('/')[2]);
   if (h === '#/equipment') return renderEquipment();
+  if (h === '#/mywork')    return renderMyWork();
   if (h === '#/log')       return renderLog();
   if (h === '#/plants')    return renderPlants();
   if (h === '#/team')      return renderTeam();
@@ -1123,13 +1135,18 @@ function buildNotifFeed() {
   const admin = effRole(u) === 'Admin';
   const todayStr = today();
   const feed = [];
+  // Technicians' bell covers only THEIR assignments — plant-wide planning
+  // noise (PPM slots, other people's jobs) belongs to engineers and admins.
+  const techMe = isTechnician() ? currentUser()?.id : null;
   // Open / overdue work-orders
   getPendingTasks().forEach(({ l, e }) => {
+    if (techMe && l.assignedTo !== techMe) return;
     if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Work-order overdue — ${e.tag} at ${plantName(e.plantId)} (expected ${l.etr}).` });
     else if (woStateOf(l) === 'open') feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Scheduled task ready to start — ${e.tag} at ${plantName(e.plantId)}.` });
   });
+  if (!techMe) {
   // Overdue PPM (planned date passed, no completion this month)
   getOverduePPM().forEach(({ e, date }) => {
     const ds = dstr(date);
@@ -1144,9 +1161,10 @@ function buildNotifFeed() {
     if (ds === todayStr) feed.push({ key: `ppm-due-${e.id}-${ds}`, group: 'due', date: ds, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Maintenance due today — ${e.tag} at ${plantName(e.plantId)}.` });
   });
+  }
   // Health alerts: equipment in the At Risk / Critical bands (scoped like
   // everything else — admins see all, engineers their assigned plants).
-  if (SUPA && !isSimple()) {
+  if (SUPA && !isSimple() && !techMe) {
     const ids = accessiblePlantIds();
     activeEquipment().forEach(e => {
       if (!admin && !ids.includes(e.plantId)) return;
@@ -1362,7 +1380,8 @@ function typeFilterControl() {
   return `<select onchange="ui.typeFilter=this.value; route()" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white">${opts}</select>`;
 }
 function addEquipmentBtn() {
-  if (!isAdmin()) return '';   // engineers cannot add equipment
+  // Admins everywhere; engineers at their own plants (enforced by RLS too).
+  if (!isAdmin() && effRole(currentUser()) !== 'Engineer') return '';
   return `<button onclick="openAddEquipmentModal()" class="px-3 py-1.5 rounded-md bg-brand text-white hover:bg-brand-800 text-sm font-medium inline-flex items-center gap-1">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
     Add Equipment
@@ -1464,7 +1483,11 @@ function renderEquipment() {
   const rows = eq.map(e => {
     const log = openLogFor(e.id);
     const openWo = openLogFor(e.id);
-    const action = (openWo && woStateOf(openWo) === 'open')
+    const action = isTechnician()
+      ? (openWo && openWo.assignedTo === currentUser()?.id
+          ? `<a href="#/mywork" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap inline-block">Open in My Work</a>`
+          : `<span class="text-xs text-slate-400">—</span>`)
+      : (openWo && woStateOf(openWo) === 'open')
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${openWo.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></div>`
       : e.status === 'Operational'
         ? `<button class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
@@ -1573,12 +1596,17 @@ function renderEquipmentDetail(id) {
 
   const retired = e.status === 'Retired';
   const detailOpenWo = openLogFor(e.id);
-  const actionBtn = retired ? '' : (detailOpenWo && woStateOf(detailOpenWo) === 'open')
+  // Technicians act from My Work; on the equipment page they get a link to
+  // their own assignment (if any) rather than status-change controls.
+  const actionBtn = retired ? '' : isTechnician()
+    ? (detailOpenWo && detailOpenWo.assignedTo === currentUser()?.id
+        ? `<a href="#/mywork" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-block">Open in My Work</a>` : '')
+    : (detailOpenWo && woStateOf(detailOpenWo) === 'open')
     ? `<span class="inline-flex gap-2"><button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button><button class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></span>`
     : e.status === 'Operational'
       ? `<button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
       : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
-  const replaceBtn = (!retired && isValveType(e.type))
+  const replaceBtn = (!retired && isValveType(e.type) && !isTechnician())
     ? `<button onclick="openReplaceValveModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium">Replace ${e.type}</button>` : '';
 
   const hs = SUPA && !retired && !isSimple() ? healthScore(e) : null;
@@ -2023,6 +2051,63 @@ async function submitEnrichApprove(ev, eqId) {
   window._enrich = null;
 }
 
+// ---------- My Work (technicians) ----------
+// The technician's home: the work orders assigned to their account, split
+// into open and completed. Everything they can act on lives here.
+function renderMyWork() {
+  const me = currentUser()?.id;
+  const tab = ui.myWorkTab || 'open';
+  const mine = state.logs.filter(l => l.assignedTo === me);
+  const open = mine.filter(l => !l.endDate)
+    .sort((a, b) => String(a.etr || a.startDate).localeCompare(String(b.etr || b.startDate)));
+  const done = mine.filter(l => l.endDate)
+    .sort((a, b) => String(b.endDate).localeCompare(String(a.endDate))).slice(0, 100);
+
+  const openRows = open.map(l => {
+    const e = eqById(l.equipmentId); if (!e) return '';
+    const et = ecStatus(l.etr, null);
+    const act = woStateOf(l) === 'open'
+      ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${l.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')" title="Done on the spot — record it in one go">Complete now</button></div>`
+      : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')">Mark Complete</button>`;
+    return `<tr>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
+      <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${esc(l.notes || '')}</div></td>
+      <td><div class="cell-primary">${l.etr || '—'}</div><div class="cell-muted">Started ${l.startDate}</div></td>
+      <td class="col-center"><span class="${et.cls}">${et.label}</span></td>
+      <td class="col-center">${act}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="5" class="py-8 text-center text-slate-500">Nothing assigned to you right now. New jobs appear here the moment an engineer assigns them.</td></tr>`;
+
+  const doneRows = done.map(l => {
+    const e = eqById(l.equipmentId); if (!e) return '';
+    return `<tr>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
+      <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${esc(l.completionNotes || '')}</div></td>
+      <td><div class="cell-primary">${l.endDate}</div><div class="cell-muted">Started ${l.startDate}</div></td>
+      <td class="col-center"><span class="badge badge-op">Completed</span></td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="4" class="py-8 text-center text-slate-500">No completed jobs yet — they collect here as you close them.</td></tr>`;
+
+  const tabBtn = (key, label, count) => `<button onclick="ui.myWorkTab='${key}'; route()"
+      class="px-3.5 py-1.5 rounded-full text-sm font-medium border ${tab === key ? 'bg-brand text-white border-brand' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}">${label} (${count})</button>`;
+
+  document.getElementById('view').innerHTML = `
+    <div class="flex items-center mb-1 flex-wrap gap-3">
+      <div class="min-w-0 flex-1">
+        <h1 class="text-2xl font-semibold">My Work</h1>
+        <p class="text-slate-500 text-sm">Jobs assigned to you. Start one when you begin, complete it when the machine is back in service.</p>
+      </div>
+    </div>
+    <div class="flex gap-2 mt-3 mb-4 flex-wrap">${tabBtn('open', 'Open', open.length)}${tabBtn('done', 'Completed', done.length)}</div>
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        ${tab === 'open'
+          ? `<table class="list-table"><thead><tr><th>Equipment</th><th>Task</th><th>Expected by</th><th class="col-center">Due status</th><th class="col-center">Action</th></tr></thead><tbody>${openRows}</tbody></table>`
+          : `<table class="list-table"><thead><tr><th>Equipment</th><th>Work done</th><th>Completed</th><th class="col-center">Status</th></tr></thead><tbody>${doneRows}</tbody></table>`}
+      </div>
+    </div>`;
+}
+
 // ---------- Maintenance Log ----------
 function renderLog() {
   document.getElementById('view').innerHTML = `
@@ -2272,10 +2357,14 @@ function assignmentsFor(uid) {
   return (u && u.plantIds) ? u.plantIds : [];
 }
 function renderTeam() {
-  const userRows = state.users.map(u => {
+  // Engineers get a trimmed view: just the technicians they hand work to,
+  // and the button to invite a new one. Managing people stays with admins.
+  const engView = !isAdmin();
+  const visibleUsers = engView ? state.users.filter(u => u.role === 'Technician') : state.users;
+  const userRows = visibleUsers.map(u => {
     const roleBadge = (u.role === 'Admin' || u.role === 'Superadmin') ? 'badge-brand' : 'badge-neutral';
     const isSelf = currentUser()?.id === u.id;
-    const isEng = u.role === 'Engineer';
+    const isEng = u.role === 'Engineer' || u.role === 'Technician';
     const assigned = assignmentsFor(u.id);
     const plantsCell = isEng
       ? (assigned.length
@@ -2283,13 +2372,14 @@ function renderTeam() {
           : `<span class="badge badge-mt">None assigned</span>`)
       : `<span class="text-xs text-slate-500">All plants</span>`;
     const actions = [];
-    actions.push(`<button onclick="openEditUserModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Edit</button>`);
-    if (isEng) {
+    if (!engView) actions.push(`<button onclick="openEditUserModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Edit</button>`);
+    if (isEng && !engView) {
       actions.push(`<button onclick="openAssignPlantsModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100">Assign plants</button>`);
       actions.push(`<button onclick="openScheduleModal('${u.id}')" class="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Generate Schedule</button>`);
     }
     if (isSuperadmin() && !isSelf && u.role !== 'Superadmin')
       actions.push(`<select onchange="setUserRole('${u.id}', this.value)" class="text-xs border border-slate-300 rounded-md px-1.5 py-1 bg-white">
+        <option value="Technician" ${u.role==='Technician'?'selected':''}>Technician</option>
         <option value="Engineer" ${u.role==='Engineer'?'selected':''}>Engineer</option>
         <option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option>
       </select>`);
@@ -2297,7 +2387,7 @@ function renderTeam() {
     // is enforced in the DB — a deactivated account loses data access, not
     // just its UI. Admins manage engineers; only the Superadmin manages Admins.
     // (Permanent deletion stays in Supabase Auth — it is rarely the right tool.)
-    if (SUPA && !isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer'))
+    if (SUPA && !engView && !isSelf && u.role !== 'Superadmin' && (isSuperadmin() || u.role === 'Engineer' || u.role === 'Technician'))
       actions.push(u.status === 'active'
         ? `<button onclick="setUserStatus('${u.id}', 'disabled')" class="text-xs px-2.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Deactivate</button>`
         : `<button onclick="setUserStatus('${u.id}', 'active')" class="text-xs px-2.5 py-1 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100">Reactivate</button>`);
@@ -2349,7 +2439,7 @@ function renderTeam() {
     <div class="flex items-center mb-1 flex-wrap gap-3">
       <div>
         <h1 class="text-2xl font-semibold" data-tour="team-h1">Team</h1>
-        <p class="text-slate-500 text-sm mt-1">Manage who can access the tool and who performs maintenance.</p>
+        <p class="text-slate-500 text-sm mt-1">${engView ? 'The technicians you assign work to. Invite new ones here.' : 'Manage who can access the tool and who performs maintenance.'}</p>
       </div>
       <div class="ml-auto flex gap-2 flex-wrap">
         ${suggestFilter({ id: 'teamSearch', listId: 'teamSuggest', placeholder: 'Find a person…',
@@ -2361,13 +2451,13 @@ function renderTeam() {
         </button>`}
         <button onclick="openInviteModal()" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium inline-flex items-center gap-1.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
-          Invite User
+          ${engView ? 'Invite Technician' : 'Invite User'}
         </button>
       </div>
     </div>
     ${SUPA ? `<div class="mt-3 p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-brand">Invite users by email — they receive a link to set their own password and join with the role you pick. Assign plants below once they appear.</div>` : ''}
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Users <span class="text-slate-400 font-normal">(${state.users.length})</span></div>
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">${engView ? 'Technicians with logins' : 'Users'} <span class="text-slate-400 font-normal">(${visibleUsers.length})</span></div>
       <div class="overflow-x-auto">
         <table class="list-table" id="usersTable">
           <thead><tr><th>User</th><th>Role</th><th>Assigned plants</th><th>Phone</th><th class="col-center">Actions</th></tr></thead>
@@ -2399,7 +2489,7 @@ function techniciansSection() {
           <td><div class="cell-muted">${esc(t.phone) || '—'}</div></td>
           <td><div class="cell-muted">${jobCount(t.name)}</div></td>
           <td><div class="cell-muted">${t.created_at ? new Date(t.created_at).toLocaleDateString() : '—'}</div></td>
-          <td class="col-center"><button onclick="deleteTechnician(${t.id})" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button></td>
+          <td class="col-center">${isAdmin() ? `<button onclick="deleteTechnician(${t.id})" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">Remove</button>` : '<span class="text-xs text-slate-400">—</span>'}</td>
         </tr>`).join('')}</tbody>
       </table></div>`
       : `<div class="px-5 py-5 text-center text-xs text-slate-500">No technicians yet — they're recorded automatically the first time a name is used on a work-order.</div>`}
@@ -2630,8 +2720,8 @@ function inviteLinkFor(invite) {
   return `${location.origin}${location.pathname}#/accept/${token}`;
 }
 function openInviteModal() {
-  if (!isAdmin()) return;
-  document.getElementById('modalTitle').textContent = 'Invite User';
+  const engCaller = !isAdmin();   // engineers invite technicians only
+  document.getElementById('modalTitle').textContent = engCaller ? 'Invite Technician' : 'Invite User';
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitInvite(event)" class="space-y-3 text-sm">
       <div><label class="block text-xs text-slate-600 mb-1">Full name <span class="text-red-500">*</span></label>
@@ -2640,17 +2730,24 @@ function openInviteModal() {
         <input name="email" type="email" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="name@digitalpaani.com" /></div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Role</label>
-        <div class="grid ${isSuperadmin() ? 'grid-cols-2' : 'grid-cols-1'} gap-2">
-          <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+        <div class="grid gap-2">
+          ${engCaller ? `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 bg-slate-50">
+            <input type="radio" name="role" value="Technician" checked class="mt-0.5" />
+            <div><div class="font-medium text-slate-800">Technician</div><div class="text-[11px] text-slate-500">Sees My Work and the equipment at their plants. Completes the jobs you assign.</div></div>
+          </label>` : `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="role" value="Engineer" checked class="mt-0.5" />
-            <div><div class="font-medium text-slate-800">Engineer</div><div class="text-[11px] text-slate-500">Equipment, Engineering Corner, Maintenance Log.</div></div>
+            <div><div class="font-medium text-slate-800">Engineer</div><div class="text-[11px] text-slate-500">Owns sites: equipment, work orders, Engineering Corner.</div></div>
+          </label>
+          <label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <input type="radio" name="role" value="Technician" class="mt-0.5" />
+            <div><div class="font-medium text-slate-800">Technician</div><div class="text-[11px] text-slate-500">Sees My Work and the equipment at their plants. Completes assigned jobs.</div></div>
           </label>
           ${isSuperadmin() ? `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
             <input type="radio" name="role" value="Admin" class="mt-0.5" />
             <div><div class="font-medium text-slate-800">Admin</div><div class="text-[11px] text-slate-500">Full access incl. plants, team, notifications.</div></div>
-          </label>` : ''}
+          </label>` : ''}`}
         </div>
-        ${isSuperadmin() ? '' : '<div class="text-[11px] text-slate-400 mt-1">Only the Superadmin can grant Admin access.</div>'}
+        ${isSuperadmin() || engCaller ? '' : '<div class="text-[11px] text-slate-400 mt-1">Only the Superadmin can grant Admin access.</div>'}
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -2662,12 +2759,15 @@ function openInviteModal() {
 }
 async function submitInvite(ev) {
   ev.preventDefault();
-  if (!isAdmin()) return;
   const f = new FormData(ev.target);
   const email = f.get('email').trim().toLowerCase();
   const name = f.get('name').trim();
   const requestedRole = f.get('role') || 'Engineer';
-  const role = (requestedRole === 'Admin' && isSuperadmin()) ? 'Admin' : 'Engineer';
+  // Mirror of the server's ceiling: engineers invite technicians only;
+  // Admin is Superadmin-granted; the Edge Function re-checks all of it.
+  const role = !isAdmin() ? 'Technician'
+    : requestedRole === 'Admin' ? (isSuperadmin() ? 'Admin' : 'Engineer')
+    : requestedRole === 'Technician' ? 'Technician' : 'Engineer';
 
   if (SUPA) {
     // Real invite: Edge Function calls the admin API; Supabase emails the link.
@@ -4104,6 +4204,7 @@ function closePdfPreview() {
 function closeModal() { document.getElementById('modal').classList.add('hidden'); }
 
 function openMaintModal(eqId) {
+  if (isTechnician()) return;   // technicians complete work orders; engineers create them
   const e = eqById(eqId);
   document.getElementById('modalTitle').textContent = `Put ${e.tag} in maintenance`;
   document.getElementById('modalBody').innerHTML = `
@@ -4150,6 +4251,7 @@ function openMaintModal(eqId) {
           <input type="date" name="etr" required value="${today()}" min="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
         </div>
       </div>
+      ${assignToControl()}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Technician <span class="text-red-500">*</span></label>
         <input name="technician" required list="techList" autocomplete="off" value="${(currentUser()?.name || '').replace(/"/g, '&quot;')}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="${technicianNames().length ? 'Pick an existing technician or type a new name' : 'e.g. A. Mehta'}" />
@@ -4172,6 +4274,34 @@ function openMaintModal(eqId) {
   document.getElementById('modal').classList.remove('hidden');
   pushOverlayState();
 }
+// Technician ACCOUNTS (people who log in) - distinct from the registry of
+// typed names below. Assigning to an account puts the job on their My Work.
+function technicianAccounts() {
+  return (state.users || []).filter(u => u.role === 'Technician' && u.status === 'active');
+}
+function openCountFor(uid) {
+  return state.logs.filter(l => l.assignedTo === uid && !l.endDate).length;
+}
+function assignToControl() {
+  const techs = technicianAccounts();
+  if (!SUPA || !techs.length) return '';
+  return `<div>
+    <label class="block text-xs text-slate-600 mb-1">Assign to</label>
+    <select name="assignTo" onchange="onAssignPick(this)" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
+      <option value="">No one with a login — just record a name below</option>
+      ${techs.map(t => `<option value="${t.id}">${esc(t.name)} — ${openCountFor(t.id)} open job${openCountFor(t.id) === 1 ? '' : 's'}</option>`).join('')}
+    </select>
+    <div class="text-[10px] text-slate-400 mt-0.5">Assigned technicians see this job in <b>My Work</b> when they sign in.</div>
+  </div>`;
+}
+function onAssignPick(sel) {
+  const inp = sel.form.querySelector('[name=technician]');
+  if (!inp) return;
+  const t = technicianAccounts().find(x => x.id === sel.value);
+  if (t) { inp.value = t.name; inp.readOnly = true; }
+  else { inp.readOnly = false; }
+}
+
 // ---------- Technician registry ----------
 // Suggestions come from the registry (real mode) or from names already used
 // in logs (prototype). New names typed on a work-order are saved automatically.
@@ -4219,12 +4349,23 @@ async function submitMaint(ev, eqId) {
   if (SUPA) {
     const unlock = lockSubmit(ev);
     // Atomic RPC: log insert + status change in one transaction, with a
-    // DB-side guard against duplicate open work-orders.
+    // DB-side guard against duplicate open work-orders. Falls back through
+    // older signatures so a not-yet-migrated database still works.
+    const assignTo = f.get('assignTo') || null;
     let { error } = await SUPA.rpc('log_maintenance_start', {
       p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
       p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
       p_priority: log.priority, p_part_id: log.affectedPartId, p_severity: log.severity,
+      p_assigned: assignTo,
     });
+    if (error && error.code === 'PGRST202') {
+      // Technician migration (31) not applied yet — start without assignment.
+      ({ error } = await SUPA.rpc('log_maintenance_start', {
+        p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
+        p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
+        p_priority: log.priority, p_part_id: log.affectedPartId, p_severity: log.severity,
+      }));
+    }
     if (error && error.code === 'PGRST202') {
       // Health migration (12) not applied yet — start without part/severity.
       ({ error } = await SUPA.rpc('log_maintenance_start', {
@@ -4518,7 +4659,9 @@ function updateEqNamePreview(form, excludeId) {
 function openEquipmentFormModal(mode, eqId) {
   const isEdit = mode === 'edit';
   const e = isEdit ? eqById(eqId) : null;
-  const plantOpts = state.plants.map(p => `<option value="${p.id}" ${e && e.plantId === p.id ? 'selected' : ''}>${p.name}</option>`).join('');
+  // Engineers only see their own plants as targets; the database enforces it.
+  const eqFormPlants = isAdmin() ? state.plants : state.plants.filter(p => accessiblePlantIds().includes(p.id));
+  const plantOpts = eqFormPlants.map(p => `<option value="${p.id}" ${e && e.plantId === p.id ? 'selected' : ''}>${p.name}</option>`).join('');
   const typeOpts = EQ_TYPES.map(t => `<option ${e && e.type === t ? 'selected' : ''}>${t}</option>`).join('');
   document.getElementById('modalTitle').textContent = isEdit ? `Edit ${e.tag}` : 'Add Equipment';
   document.getElementById('modalBody').innerHTML = `
@@ -4567,7 +4710,7 @@ function openAddEquipmentModal() { openEquipmentFormModal('add'); }
 function openEditEquipmentModal(eqId) { openEquipmentFormModal('edit', eqId); }
 async function submitEquipmentForm(ev, mode, eqId) {
   ev.preventDefault();
-  if (!isAdmin()) return;
+  if (!isAdmin() && effRole(currentUser()) !== 'Engineer') return;
   const f = new FormData(ev.target);
   const make = (f.get('make') || '').trim(), model = (f.get('model') || '').trim();
   const tag = deriveTag(make, model, f.get('plantId'), mode === 'edit' ? eqId : null);

@@ -1,6 +1,6 @@
 // DigitalPaani Maintenance Ops — invite-user Edge Function
-// Admins invite a user by email; Supabase sends the invite email.
-// The invitee clicks it, lands on the app, and sets their own password.
+// Admins invite anyone; service engineers invite the technicians they hire.
+// Supabase emails the invite; the invitee sets their own password.
 //
 // Deploy:  supabase functions deploy invite-user
 // (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY are injected automatically.)
@@ -34,7 +34,9 @@ Deno.serve(async (req) => {
 
     const { data: prof } = await caller.from("profiles").select("role,status").eq("id", user.id).single();
     const callerRole = prof?.role;
-    if (callerRole !== "Admin" && callerRole !== "Superadmin") return json({ error: "forbidden — admins only" }, 403);
+    if (!["Admin", "Superadmin", "Engineer"].includes(callerRole ?? "")) {
+      return json({ error: "forbidden" }, 403);
+    }
     // A deactivated admin's JWT stays technically valid until it expires —
     // deactivation must close this door too, not just the database's.
     if ((prof?.status ?? "active") !== "active") return json({ error: "forbidden — account deactivated" }, 403);
@@ -42,8 +44,13 @@ Deno.serve(async (req) => {
     const { email, name, role, redirectTo } = await req.json();
     if (!email) return json({ error: "email required" }, 400);
 
-    // Only a Superadmin may grant Admin; everyone else can only invite Engineers.
-    const finalRole = (role === "Admin" && callerRole === "Superadmin") ? "Admin" : "Engineer";
+    // Role ceiling by caller: Superadmin grants anything; Admin grants
+    // Engineer or Technician; an Engineer can only ever invite a Technician.
+    const requested = ["Admin", "Engineer", "Technician"].includes(role) ? role : "Engineer";
+    const finalRole =
+      callerRole === "Engineer" ? "Technician"
+      : requested === "Admin" ? (callerRole === "Superadmin" ? "Admin" : "Engineer")
+      : requested;
 
     // Service-role client performs the privileged invite; Supabase emails the link.
     const admin = createClient(SUPABASE_URL, SERVICE);
@@ -59,6 +66,17 @@ Deno.serve(async (req) => {
       await admin.from("profiles")
         .update({ role: finalRole, name: name || undefined })
         .eq("id", data.user.id);
+      // A technician who was already a registry name (typed on past work
+      // orders) gets linked, so their history follows them into the login.
+      if (finalRole === "Technician" && name) {
+        const { data: reg } = await admin.from("technicians")
+          .select("id,user_id").ilike("name", name.trim()).limit(1).maybeSingle();
+        if (reg && !reg.user_id) {
+          await admin.from("technicians").update({ user_id: data.user.id }).eq("id", reg.id);
+        } else if (!reg) {
+          await admin.from("technicians").insert({ name: name.trim(), user_id: data.user.id, created_by: user.id });
+        }
+      }
     }
 
     return json({ ok: true, userId: data.user?.id, role: finalRole });
