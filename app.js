@@ -2197,7 +2197,13 @@ function myTechVisits(mine) {
     if (!byKey.has(key)) byKey.set(key, { plantId: e.plantId, date: l.endDate, jobs: [] });
     byKey.get(key).jobs.push(l);
   });
-  return [...byKey.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 60);
+  return [...byKey.values()].map(v => ({
+    ...v,
+    // A report says "this work is done". While any job from the day is still
+    // with the engineer (submitted) or sent back (returned), that is not yet
+    // true -- the server refuses it too, so never offer the button.
+    pending: v.jobs.filter(l => ['submitted', 'returned'].includes(woStateOf(l))).length,
+  })).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 60);
 }
 function reportForVisit(plantId, date) {
   return (cloudReports || []).find(r =>
@@ -2213,9 +2219,12 @@ function renderMyReportsTab(visits) {
   };
   const rows = visits.map(v => {
     const r = reportForVisit(v.plantId, v.date);
-    const chip = r ? (CHIP[r.status] || '') : '<span class="badge badge-neutral">Not raised</span>';
+    const chip = r ? (CHIP[r.status] || '')
+      : v.pending ? `<span class="badge badge-mt">${v.pending} job${v.pending === 1 ? '' : 's'} with your engineer</span>`
+      : '<span class="badge badge-neutral">Not raised</span>';
     let act;
-    if (!r) act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Create &amp; sign</button>`;
+    if (!r && v.pending) act = `<span class="text-[11px] text-slate-400">Waiting on review</span>`;
+    else if (!r) act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Create &amp; sign</button>`;
     else if (r.status === 'changes') act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}', '${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Fix &amp; resubmit</button>`;
     else if (r.status === 'eng_signed') act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
     else act = `<button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">View</button>`;
@@ -2260,6 +2269,7 @@ function openReportCompose(plantId, date, existingId) {
           ${content.issues.map(i => `<div class="text-[11px] text-amber-800">• ${esc(i.tag)}: ${esc(i.description)} (${ISSUE_NEED_LABEL[i.need] || i.need})</div>`).join('')}
         </div>` : ''}
       </div>
+      <p class="text-xs text-slate-500">This covers <b>every job you finished at ${esc(plantName(plantId))} on ${date}</b> — ${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}, listed above. One report per plant per day.</p>
       <p class="text-xs text-slate-500">Submitting <b>signs this report as you</b> (${esc(currentUser()?.name || '')}) and sends it to your engineer. The client signs last, on your phone.</p>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
