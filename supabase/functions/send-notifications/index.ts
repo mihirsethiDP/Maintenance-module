@@ -150,7 +150,7 @@ Deno.serve(async (req) => {
 
   // ---- Who can see what -------------------------------------------------
   const { data: people, error: peopleErr } = await db.from("profiles")
-    .select("id,name,email,role,status,email_digest,email_urgent");
+    .select("id,name,email,role,status,email_digest,email_urgent,oversight_thresholds");
   if (peopleErr) {
     return json({ error: "db_error", message: "reading profiles: " + peopleErr.message }, 500);
   }
@@ -280,11 +280,22 @@ Deno.serve(async (req) => {
     const now = Date.parse(day + "T00:00:00Z");
     return Number.isFinite(then) ? Math.max(0, Math.round((now - then) / 864e5)) : 0;
   };
-  // Same thresholds as the Oversight page in app.js. Change both together.
-  const AGE = { review: 2, returned: 2, issue: 7, clientSign: 14 };
+  // Defaults mirror the Oversight page; each admin's own saved clocks
+  // (profiles.oversight_thresholds) override them, so the email agrees with
+  // what that admin sees on screen.
+  const AGE_DEFAULTS = { review: 2, returned: 2, issue: 7, clientSign: 14 };
+  const ageFor = (p: Record<string, unknown>) => {
+    const mine = (p.oversight_thresholds ?? {}) as Record<string, unknown>;
+    const cfg: Record<string, number> = { ...AGE_DEFAULTS };
+    for (const k of Object.keys(AGE_DEFAULTS)) {
+      const v = parseInt(String(mine[k] ?? ""), 10);
+      if (Number.isFinite(v)) cfg[k] = Math.min(90, Math.max(1, v));
+    }
+    return cfg;
+  };
 
-  // Build the admin-only "needs a nudge" rows once, scoped per recipient below.
-  const stuckFor = (scope: string[]) => {
+  // Build the admin-only "needs a nudge" rows, scoped per recipient below.
+  const stuckFor = (scope: string[], AGE: Record<string, number>) => {
     const rows: string[][] = [];
     for (const l of pendingLogs || []) {
       const e = eqById(l.equipment_id as string);
@@ -354,7 +365,7 @@ Deno.serve(async (req) => {
     // Admins get the accountability section; engineers already see their own
     // queue in the tables above and do not need to be told about themselves.
     const isBoss = p.role === "Admin" || p.role === "Superadmin";
-    const stuck = isBoss ? stuckFor(scope) : [];
+    const stuck = isBoss ? stuckFor(scope, ageFor(p)) : [];
 
     const nothingOutstanding = !overdue.length && !dueToday.length && !ready.length && !stuck.length;
     // The real digest stays silent on quiet days. A TEST must still arrive --

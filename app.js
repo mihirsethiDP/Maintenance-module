@@ -577,11 +577,12 @@ async function hydrateCloud() {
   hydrateErrors = [];
   const fail = (name, err) => { hydrateErrors.push(name); console.warn(name + ' hydrate failed', err); };
   await Promise.all([
-    SUPA.from('profiles').select('id,name,role,phone,status,email,ui_mode,email_digest,email_urgent')
+    SUPA.from('profiles').select('id,name,role,phone,status,email,ui_mode,email_digest,email_urgent,oversight_thresholds')
       .then(({ data, error }) => {
         if (error) return fail('users', error);
         cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active', uiMode: p.ui_mode || 'simple',
-          emailDigest: p.email_digest !== false, emailUrgent: p.email_urgent !== false }));
+          emailDigest: p.email_digest !== false, emailUrgent: p.email_urgent !== false,
+          oversightThresholds: p.oversight_thresholds || null }));
       }, e => fail('users', e)),
     SUPA.from('plant_assignments').select('user_id,plant_id')
       .then(({ data, error }) => {
@@ -2503,7 +2504,52 @@ async function submitResubmit(ev, logId) {
 // does not care that Sunday intervened. Note that a job held up by parts on
 // order ages exactly like a neglected one -- the on-hold state that would fix
 // that is not built yet, so read long waits as "ask why", not "blame".
-const AGE = { review: 2, returned: 2, issue: 7, clientSign: 14 };
+const AGE_DEFAULTS = { review: 2, returned: 2, issue: 7, clientSign: 14 };
+const AGE_LABELS = { review: 'Unreviewed work', returned: 'Sent back, unfixed', issue: 'Issue untriaged', clientSign: 'Client signature' };
+// The clocks that define "late" belong to the admin reading the page, not to
+// the developer -- two admins may legitimately disagree. Stored per admin,
+// clamped so a typo cannot make every job "late" or nothing ever late.
+function ageCfg() {
+  const mine = (state.users || []).find(u => u.id === currentUser()?.id)?.oversightThresholds || {};
+  const cfg = { ...AGE_DEFAULTS };
+  for (const k of Object.keys(AGE_DEFAULTS)) {
+    const v = parseInt(mine[k], 10);
+    if (Number.isFinite(v)) cfg[k] = Math.min(90, Math.max(1, v));
+  }
+  return cfg;
+}
+async function saveAgeCfg(ev) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const cfg = {};
+  for (const k of Object.keys(AGE_DEFAULTS)) cfg[k] = Math.min(90, Math.max(1, parseInt(f.get(k), 10) || AGE_DEFAULTS[k]));
+  const unlock = lockSubmit(ev);
+  const { error } = await SUPA.from('profiles').update({ oversight_thresholds: cfg }).eq('id', currentUser().id);
+  if (error) { unlock(); appAlert('Could not save: ' + error.message); return; }
+  await hydrateCloud(); closeModal(); route();
+  toast('Your clocks are saved — they apply to this page and your daily email.');
+}
+function openAgeCfgModal() {
+  const cfg = ageCfg();
+  document.getElementById('modalTitle').textContent = 'Adjust the clocks';
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="saveAgeCfg(event)" class="space-y-3 text-sm">
+      <p class="text-xs text-slate-500">How many days something may wait before this page — and your daily
+        email — flag it. These are <b>your</b> clocks: other admins set their own.</p>
+      ${Object.keys(AGE_DEFAULTS).map(k => `<div class="flex items-center gap-3">
+        <label class="text-xs text-slate-600 flex-1">${AGE_LABELS[k]}</label>
+        <input type="number" name="${k}" value="${cfg[k]}" min="1" max="90" required
+          class="w-20 border border-slate-300 rounded-md px-2 py-1.5 text-right" />
+        <span class="text-xs text-slate-400 w-8">days</span>
+      </div>`).join('')}
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Save my clocks</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
+}
 const daysAgo = ts => ts ? Math.max(0, daysBetween(String(ts).slice(0, 10), today())) : 0;
 function ageChip(days, threshold) {
   if (days < threshold) return `<span class="text-slate-500">${days}d</span>`;
@@ -2512,6 +2558,7 @@ function ageChip(days, threshold) {
 }
 
 function oversightData() {
+  const AGE = ageCfg();
   const logs = state.logs;
   const issues = (cloudIssues || []).filter(i => i.status === 'open');
   const reports = cloudReports || [];
@@ -2616,6 +2663,7 @@ function renderOversight() {
     return;
   }
   const { engineers, technicians, stuck } = oversightData();
+  const AGE = ageCfg();
 
   const kpi = (label, value, tone) => `<div class="bg-white rounded-xl border border-slate-200 p-4">
     <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
@@ -2652,6 +2700,7 @@ function renderOversight() {
         <h1 class="text-2xl font-semibold">Oversight</h1>
         <p class="text-slate-500 text-sm">Who is holding what up, and for how long. Ages are calendar days.</p>
       </div>
+      <div class="ml-auto"><button onclick="openAgeCfgModal()" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium">Adjust the clocks</button></div>
     </div>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 mb-6">
       ${kpi('Unreviewed &gt; ' + AGE.review + 'd', stuck.filter(x => x.kind === 'Unreviewed work').length, 'text-amber-600')}
