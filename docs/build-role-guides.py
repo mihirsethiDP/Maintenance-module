@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""DigitalPaani Maintenance Ops - role-specific guides (two PDFs).
+"""DigitalPaani Maintenance Ops - role-specific guides (three PDFs).
 
 Builds:
-  DigitalPaani-Maintenance-Ops-Engineer-Guide.pdf   (field engineers, phone-first)
-  DigitalPaani-Maintenance-Ops-Admin-Guide.pdf      (administrators / Amit)
+  DigitalPaani-Maintenance-Ops-Technician-Guide.pdf  (field technicians, phone-first)
+  DigitalPaani-Maintenance-Ops-Engineer-Guide.pdf    (service engineers)
+  DigitalPaani-Maintenance-Ops-Admin-Guide.pdf       (administrators / Amit)
+
+Covers the full field-service build: technician logins and My Work, assignment,
+photos and the review loop, issues, holds, work-order numbers, co-signed
+service reports, and the Oversight page. Every button name is written exactly
+as it appears in app.js.
 
 Run:  python docs/build-role-guides.py
 """
@@ -87,31 +93,23 @@ def cover_bg(canv, doc):
 
 
 def steps(items):
-    rows = []
-    for i, txt in enumerate(items):
-        rows.append([Paragraph(str(i + 1) + '.', st_stepn), Paragraph(txt, st_step)])
+    rows = [[Paragraph(str(i + 1) + '.', st_stepn), Paragraph(t, st_step)] for i, t in enumerate(items)]
     t = Table(rows, colWidths=[8 * mm, None])
     t.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 0),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
     ]))
     return t
 
 
 def bullets(items):
-    rows = []
-    for txt in items:
-        rows.append([Paragraph('&bull;', st_body), Paragraph(txt, st_body)])
+    rows = [[Paragraph('&bull;', st_body), Paragraph(t, st_body)] for t in items]
     t = Table(rows, colWidths=[4.5 * mm, None])
     t.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 0),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ('TOPPADDING', (0, 0), (-1, -1), 1.5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 1.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5),
     ]))
     return t
 
@@ -123,10 +121,8 @@ def callout(title, text):
         ('BACKGROUND', (0, 0), (-1, -1), TINT),
         ('BOX', (0, 0), (-1, -1), 0.6, TINT_B),
         ('LINEBEFORE', (0, 0), (0, -1), 2.2, NAVY),
-        ('LEFTPADDING', (0, 0), (-1, -1), 7),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 7),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+        ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
     ]))
     return t
 
@@ -141,23 +137,18 @@ def table(header, rows, widths):
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, TINT]),
         ('GRID', (0, 0), (-1, -1), 0.4, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 6),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
     ]))
     return KeepTogether(t) if len(rows) <= 8 else t
 
 
 def section(title, sub):
-    t = Table([[[Paragraph(title, st_h1), Paragraph(sub, st_h1sub)]]],
-              colWidths=[PW - 2 * M])
+    t = Table([[[Paragraph(title, st_h1), Paragraph(sub, st_h1sub)]]], colWidths=[PW - 2 * M])
     t.setStyle(TableStyle([
         ('LINEABOVE', (0, 0), (-1, 0), 1.1, NAVY),
-        ('LEFTPADDING', (0, 0), (-1, -1), 0),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ('TOPPADDING', (0, 0), (-1, -1), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 9), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
     return [Spacer(1, 8), KeepTogether(t)]
 
@@ -203,325 +194,17 @@ PHONE_INSTALL = table(['Your phone', 'How to install the app'],
     [24 * mm, None])
 
 OFFLINE = callout('No signal at the plant?',
-    'The app still opens and shows everything from your last sync - equipment, tasks, full history - '
-    'with an amber banner telling you how old the data is. Browsing works offline; saving needs a '
-    'connection. If a save fails mid-blip, your entries stay in the form: reconnect and press the '
-    'button again.')
+    'The app still opens and shows everything from your last sync, with an amber banner telling you '
+    'how old the data is. Browsing works offline; saving needs a connection. If a save fails mid-blip, '
+    'your entries stay in the form: reconnect and press the button again.')
 
-PHONE_LAYOUT = Paragraph('On a phone, every list shows as a stack of <b>cards</b>: the equipment name comes '
-    'first, its details underneath, and the action button at the bottom of the card. Filters sit in neat '
-    'pairs above the list. Nothing scrolls sideways.', st_body)
-
-
-# ======================================================================
-# ENGINEER GUIDE
-# ======================================================================
-E = []
-E += cover('Field Engineer Guide',
-           'Your phone is the tool - here is your day in it',
-           'It shows you what maintenance is due at your plants, records the work you do, and turns your '
-           'completed jobs into signed visit reports - all from your phone.',
-           [['Getting set up', 'Signing in, installing the app on your phone, what you can see.'],
-            ['Your daily flow', 'Pick up a task, do the work, close it out, report a breakdown.'],
-            ['Visit reports', 'Turning a day of completed work into a signed PDF.'],
-            ['Quick reference', 'A cheat sheet and answers to common questions.']])
-
-E += section('1. Getting set up', 'Five minutes, once.')
-
-E.append(Paragraph('Signing in', st_h2))
-E.append(steps([
-    'You will receive an <b>email invitation</b>. Open it and choose your own password.',
-    'After that, sign in at <b>' + SITE + '</b> with your email and password.',
-    'Forgot the password? Type your email on the sign-in screen and press <b>Forgot password?</b> - '
-    'a reset link arrives by email.',
-]))
-
-E.append(Paragraph('Install it on your phone', st_h2))
-E.append(PHONE_INSTALL)
-E.append(Spacer(1, 4))
-E.append(PHONE_LAYOUT)
-E.append(Spacer(1, 3))
-E.append(OFFLINE)
-
-E.append(Paragraph('What you can see', st_h2))
-E.append(Paragraph('You see three tabs - <b>Equipment</b>, <b>Maintenance Log</b> and <b>Engineering '
-    'Corner</b> - covering the plants assigned to you. If a plant or machine is missing, it has not been '
-    'assigned to you yet: ask your administrator.', st_body))
-E.append(Spacer(1, 3))
-E.append(Paragraph('The <b>bell</b> at the top right is your to-do list: overdue work and jobs due today. '
-    'Every notification is a link - tap it and you land on that exact equipment.', st_body))
-
-E += section('2. Your daily flow', 'Everything starts in the Engineering Corner.')
-
-E.append(Paragraph('The Engineering Corner', st_h2))
-E.append(table(['Tab', 'What it shows'],
-    [['Pending', '<b>Scheduled tasks ready to start</b> (created automatically from the maintenance plan), '
-                 '<b>ongoing work</b> you have already started, and anything <b>overdue</b>.'],
-     ['Upcoming PPM', 'Planned maintenance for the next 30 days, so you can plan your visits.'],
-     ['Visit Reports', 'Everything you completed, grouped by day, ready to become a signed report.']],
-    [30 * mm, None]))
-
-E.append(Paragraph('Doing a scheduled job', st_h2))
-E.append(steps([
-    'Open <b>Engineering Corner</b>, stay on the <b>Pending</b> tab, and find the equipment.',
-    'If the work takes a while: press <b>Start Work</b> so everyone can see the machine is being worked '
-    'on, do the job, then press <b>Mark Complete</b>.',
-    'If you did the job on the spot: press <b>Complete now</b> instead - it records the start and the '
-    'finish in one go.',
-]))
-E.append(Spacer(1, 3))
-E.append(Paragraph('The form does the boring parts for you: your name is already filled in as the '
-    'technician (change it if someone else did the work - new names are remembered and suggested next '
-    'time), and dates start at today.', st_small))
-
-E.append(Paragraph('Closing out a job', st_h3))
-E.append(bullets([
-    '<b>Service guide</b> - a collapsed reference list of the usual service steps for that equipment '
-    'type. Open it if you want a reminder; there is nothing to tick.',
-    '<b>Completion notes</b> - optional for scheduled work: tap a ready-made phrase ("No abnormalities", '
-    '"Tested OK") or write your own. For breakdowns, notes are required.',
-    'Press <b>Confirm</b>, or <b>Confirm &amp; Generate Service Report</b> for a signed PDF of this '
-    'single job straight away.',
-]))
-
-E.append(Paragraph('Reporting a breakdown', st_h2))
-E.append(steps([
-    'Find the equipment. Quickest in the plant: <b>scan the QR sticker</b> on the machine with your '
-    'phone camera - it opens that exact equipment.',
-    'Press <b>Put in Maintenance</b> and set <b>Reason</b> to <b>Breakdown</b>.',
-    'Set the priority and the expected completion date.',
-    'Describe what happened - required for breakdowns, because it is the story the next person needs.',
-    'Press <b>Confirm</b>. The machine is flagged as broken down and your administrator is alerted.',
-]))
-
-E.append(Paragraph('Replacing a valve or NRV', st_h2))
-E.append(Paragraph('Valves are replaced, not repaired. Open the valve and press <b>Replace Valve</b> '
-    '(or <b>Replace NRV</b>), then enter the new valve\'s tag and details. The old valve is retired but '
-    'its full history is kept, and the new one takes over the same position.', st_body))
-
-E += section('3. Visit reports', 'A day of work becomes a signed PDF in four taps.')
-E.append(steps([
-    'Go to <b>Engineering Corner</b>, then the <b>Visit Reports</b> tab.',
-    'Pick a date range with the quick filters (Today, Last 7 days, and so on).',
-    'Find your visit day and press <b>Generate Report</b> - the report window opens already set to that day.',
-    'Enter who prepared and who approved the work, then <b>Preview</b> or <b>Download</b>. On a phone '
-    'the PDF opens in your phone\'s own viewer or share sheet.',
-]))
-
-E.append(PageBreak())
-E += section('4. Quick reference', 'The short version - worth saving to your phone.')
-
-E.append(Paragraph('I want to...', st_h2))
-E.append(table(['Task', 'Where to go'],
-    [['Start a scheduled job', 'Engineering Corner, Pending tab, then <b>Start Work</b>'],
-     ['Record a job done on the spot', '<b>Complete now</b> next to the task - one step'],
-     ['Finish a started job', '<b>Mark Complete</b> on the task, or <b>Mark Operational</b> on the equipment'],
-     ['Report a breakdown', 'Scan the QR sticker, then <b>Put in Maintenance</b>, reason <b>Breakdown</b>'],
-     ['Replace a valve', 'Open the valve, then <b>Replace Valve</b>'],
-     ['See what is coming up', 'Engineering Corner, <b>Upcoming PPM</b> tab'],
-     ['Produce a visit report', 'Engineering Corner, <b>Visit Reports</b>, then <b>Generate Report</b>'],
-     ['Look up a machine\'s history', 'Tap its name anywhere - the equipment page lists every job ever done']],
-    [52 * mm, None]))
-
-E.append(Paragraph('Common questions', st_h2))
-for q, a in [
-    ('Why can I not see a plant or machine?',
-     'You only see the plants assigned to you. Ask your administrator to assign the plant.'),
-    ('It says the equipment already has an open work-order.',
-     'Somebody already started a job on that machine. Finish that one before starting another.'),
-    ('The breakdown form will not submit.',
-     'For breakdowns, describing what happened is required. For scheduled work, notes are optional.'),
-    ('Can I use it without internet?',
-     'Yes, for looking things up - the app opens with everything from your last sync and a banner '
-     'showing how old the data is. Saving a job needs a connection; your entries stay in the form '
-     'while you retry.'),
-    ('I did the work but forgot to record it.',
-     'Record it the same way when you remember - the completion date is editable, so the record can '
-     'show the day the work was actually done.'),
-]:
-    E.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
-
-E.append(Spacer(1, 6))
-E.append(callout('Need help?', 'Contact your administrator for anything to do with access, plants and '
-                 'equipment. The tool improves regularly; small on-screen differences from this guide '
-                 'are normal.'))
-
-build('DigitalPaani-Maintenance-Ops-Engineer-Guide.pdf', 'Engineer Guide', E)
-
-
-# ======================================================================
-# ADMIN GUIDE
-# ======================================================================
-A = []
-A += cover('Administrator Guide',
-           'Running the fleet: setup, team, records and reports',
-           'It keeps track of every pump, blower, valve and other equipment across your plants, tells '
-           'everyone what maintenance is due, records what work was done, and turns that into sign-off '
-           'reports you can share with clients.',
-           [['Getting started', 'Signing in, roles, notifications and the daily email summary.'],
-            ['Your daily overview', 'The Dashboard: fleet status at a glance, and what is out of service.'],
-            ['Setting things up', 'Plants, equipment, PPM imports, QR stickers, checklists.'],
-            ['Your team', 'Inviting engineers, assigning plants, schedules, deactivation.'],
-            ['Records and reports', 'The maintenance log, filters, sign-off reports, exports.'],
-            ['Quick reference', 'A cheat sheet and answers to common questions.']])
-
-A += section('1. Getting started', 'Access, roles, and how the tool keeps you informed.')
-
-A.append(Paragraph('Signing in', st_h2))
-A.append(steps([
-    'Open <b>' + SITE + '</b> and sign in with your email and password.',
-    'Forgot the password? Type your email on the sign-in screen and press <b>Forgot password?</b>.',
-]))
-A.append(Spacer(1, 3))
-A.append(PHONE_INSTALL)
-A.append(Spacer(1, 4))
-A.append(PHONE_LAYOUT)
-A.append(Spacer(1, 3))
-A.append(OFFLINE)
-
-A.append(Paragraph('Roles', st_h2))
-A.append(table(['Role', 'What they can do'],
-    [['Engineer', 'See <b>Equipment</b>, <b>Maintenance Log</b> and <b>Engineering Corner</b> for the '
-                  'plants assigned to them. Start and complete maintenance, report breakdowns, generate '
-                  'visit reports.'],
-     ['Admin', 'Everything an engineer can do, across <b>all</b> plants, plus the <b>Dashboard</b>, '
-               '<b>Plants</b> and <b>Team</b> tabs: add equipment and plants, import schedules, invite '
-               'engineers, assign plants.'],
-     ['Superadmin', 'Everything an admin can do, and is the only role that can make someone an Admin '
-                    'or remove one.']],
-    [26 * mm, None]))
-
-A.append(Paragraph('How the tool keeps you informed', st_h2))
-A.append(bullets([
-    '<b>The bell</b> (top right) - overdue work, jobs due today, and recent activity such as breakdowns '
-    'and completions. Every notification is a link to the exact equipment.',
-    '<b>The daily email summary</b> - one email each morning around 7:00 listing what is overdue, due '
-    'today and scheduled across your plants. On a day with nothing outstanding, no email is sent.',
-    '<b>Breakdown alerts</b> - emailed the moment a machine is reported broken down.',
-]))
-A.append(Spacer(1, 3))
-A.append(Paragraph('Both email types can be switched on or off per person: <b>Team &rarr; Edit</b> on '
-    'that person. An engineer\'s emails only cover the plants assigned to them.', st_small))
-
-A += section('2. Your daily overview', 'The Dashboard answers "is anything wrong?" in one look.')
-A.append(Paragraph('The four cards at the top count all equipment, and how much is operational, in '
-    'maintenance, or broken down. <b>Tap any card</b> to open the Equipment list already filtered to '
-    'that status. Below them, <b>Currently out of service</b> lists every machine that is down, with '
-    'the reason, who is on it, and whether it is running late.', st_body))
-A.append(Spacer(1, 3))
-A.append(callout('How "overdue" is counted',
-    'Overdue starts from the day a machine entered the tool - a freshly imported plant starts with a '
-    'clean slate rather than a fabricated backlog of dates that passed before the tool knew the '
-    'machine existed.'))
-
-A += section('3. Setting things up', 'Plants first, then equipment - or both at once with an import.')
-
-A.append(Paragraph('Plants', st_h2))
-A.append(bullets([
-    '<b>Add Plant</b> - create a new site, then add its equipment.',
-    '<b>Import PPM</b> - upload a planned maintenance spreadsheet to load a whole site\'s equipment and '
-    'schedule at once. You see a preview first, imported machines are named from their make and model, '
-    'and the tool warns you if the same file looks like it was imported before.',
-    '<b>QR Codes</b> - a printable sheet of QR stickers for every machine at that plant. Print, cut, '
-    'stick them on the equipment: engineers scan them to open the right machine instantly.',
-    '<b>PPM Checklists</b> - edit the service-guide steps engineers see when they close a job on each '
-    'equipment type.',
-]))
-
-A.append(Paragraph('Adding a single machine', st_h2))
-A.append(steps([
-    'Go to <b>Equipment</b> and press <b>Add Equipment</b>.',
-    'Enter the make, model, type and plant - the equipment\'s <b>name is written for you</b> from '
-    'Make + Model (a #2 is added if the same model already exists at that plant).',
-    'Save. The machine appears on the list, ready for maintenance records.',
-]))
-
-A += section('4. Your team', 'People, access, and their work schedules.')
-A.append(Paragraph('The <b>Team</b> tab lists everyone with access. For each person:', st_body))
-A.append(bullets([
-    '<b>Invite User</b> - send an email invitation. They set their own password and join with the role '
-    'you chose.',
-    '<b>Assign plants</b> - choose which sites an engineer can see. <b>An engineer with no plants '
-    'assigned sees nothing</b> - this is the first thing to do after they join, and their email '
-    'summaries stay empty until it is done.',
-    '<b>Edit</b> - update someone\'s name, phone number and <b>email notification settings</b> (daily '
-    'summary and breakdown alerts, per person). Include the country code on phone numbers, for example '
-    '+919000010000.',
-    '<b>Generate Schedule</b> - a PDF of an engineer\'s upcoming and outstanding work for a day, week, '
-    'month or custom range, with the plant named on every line - send it to them at the start of the '
-    'period.',
-    '<b>Deactivate</b> - switch someone\'s access off. Reversible: their records stay, and Reactivate '
-    'restores them. Only the Superadmin can deactivate an Admin.',
-]))
-A.append(Spacer(1, 3))
-A.append(Paragraph('Below the users sits the <b>Technicians</b> list: every field technician ever named '
-    'on a work-order, with how many jobs they have on record. New names typed on a job are added '
-    'automatically and suggested next time; removing one never changes past records.', st_body))
-
-A += section('5. Records and reports', 'Everything ever recorded, and the documents it becomes.')
-A.append(Paragraph('The <b>Maintenance Log</b> holds every job. Filter by plant, equipment type, reason, '
-    'status, technician, date range, or the search box that suggests real names as you type. One '
-    '<b>Report</b> button covers every sign-off document, with three scopes:', st_body))
-A.append(bullets([
-    '<b>Current filters</b> - a report over exactly what the log is showing right now.',
-    '<b>All equipment</b> - everything you have access to.',
-    '<b>Single visit</b> - one day\'s completed work grouped by plant; the same report engineers reach '
-    'from Visit Reports.',
-]))
-A.append(Spacer(1, 3))
-A.append(Paragraph('<b>Export</b> downloads the log as Excel or PDF, and each equipment page has its own '
-    'Export for just that machine\'s history.', st_body))
-
-A.append(PageBreak())
-A += section('6. Quick reference', 'The short version - worth printing and pinning up.')
-
-A.append(Paragraph('I want to...', st_h2))
-A.append(table(['Task', 'Where to go'],
-    [['See fleet status at a glance', '<b>Dashboard</b> - tap a card to open that list'],
-     ['Add a machine', 'Equipment, then <b>Add Equipment</b>'],
-     ['Load a whole plant at once', 'Plants, then <b>Import PPM</b>'],
-     ['Print QR stickers', 'Plants, then <b>QR Codes</b>'],
-     ['Edit service-guide steps', 'Plants, then <b>PPM Checklists</b>'],
-     ['Invite an engineer', 'Team, then <b>Invite User</b>'],
-     ['Give an engineer access to a site', 'Team, then <b>Assign plants</b>'],
-     ['Send an engineer their week\'s work', 'Team, then <b>Generate Schedule</b>'],
-     ['Turn someone\'s emails on or off', 'Team, then <b>Edit</b> on that person'],
-     ['Remove someone\'s access', 'Team, then <b>Deactivate</b>'],
-     ['Export records or reports', 'Maintenance Log, then <b>Export</b> or <b>Report</b>']],
-    [58 * mm, None]))
-
-A.append(Paragraph('Common questions', st_h2))
-for q, a in [
-    ('An engineer says they cannot see their plant.',
-     'Open Team and press Assign plants on their row - an engineer with no plants assigned sees nothing.'),
-    ('Why did no summary email arrive this morning?',
-     'On a day with nothing overdue, due or scheduled, no email is sent - silence means all clear. '
-     'Emails also only cover plants the person can see.'),
-    ('A machine shows overdue but we only just added it.',
-     'Overdue only counts from the day the machine entered the tool, so this should not happen - if it '
-     'does, check whether the maintenance date on the imported schedule was already in the past.'),
-    ('Can I undo a deactivation?',
-     'Yes - Deactivate is reversible. The person\'s records stay, and Reactivate restores their access.'),
-    ('Does anything get sent to the customer automatically?',
-     'No. Reports are generated as PDFs for you to check and share yourself.'),
-    ('I have heard about health scores and parts lists. Where are they?',
-     'They exist, switched off for a simpler tool. Everything recorded today feeds them - if they are '
-     'switched on later, your history counts from day one.'),
-]:
-    A.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
-
-A.append(Spacer(1, 6))
-A.append(callout('Need help?', 'Contact Mihir Sethi for anything to do with accounts, email notifications '
-                 'or the tool itself. The tool improves regularly; small on-screen differences from this '
-                 'guide are normal.'))
-
-build('DigitalPaani-Maintenance-Ops-Admin-Guide.pdf', 'Administrator Guide', A)
+WO_NUMBER = Paragraph('Every job created since late August carries a <b>number like WO-2026-0147</b>. '
+    'It shows on the job, in the log, and on service reports — use it when you talk about a job on '
+    'the phone. Older jobs from before numbering have none.', st_body)
 
 
 # ======================================================================
 # TECHNICIAN GUIDE
-# Written for a phone screen and for someone who may not read English
-# comfortably: short sentences, one instruction at a time, no jargon.
 # ======================================================================
 T = []
 T += cover('Technician Guide',
@@ -536,7 +219,6 @@ T += cover('Technician Guide',
             ['Quick reference', 'One page to keep on your phone.']])
 
 T += section('1. Getting started', 'Do this once.')
-
 T.append(Paragraph('Signing in', st_h2))
 T.append(steps([
     'You get an <b>email invitation</b>. Open it and choose your own password.',
@@ -544,7 +226,6 @@ T.append(steps([
     'Forgot your password? Type your email on the sign-in screen and press <b>Forgot password?</b>. '
     'A new link comes to your email.',
 ]))
-
 T.append(Paragraph('Put the app on your phone', st_h2))
 T.append(PHONE_INSTALL)
 T.append(Spacer(1, 4))
@@ -570,6 +251,11 @@ T.append(table(['Tab', 'What is in it'],
 T.append(Spacer(1, 4))
 T.append(Paragraph('The <b>bell</b> at the top shows a red number when something needs you — a new job, '
                    'or a job sent back. Tap it to go straight there.', st_body))
+T.append(Spacer(1, 3))
+T.append(Paragraph('If a job shows <b>"Check back &lt;date&gt;"</b>, your engineer has put it on hold — '
+                   'usually waiting for a part. Nothing for you to do until then.', st_body))
+T.append(Spacer(1, 3))
+T.append(WO_NUMBER)
 
 T += section('3. Doing a job', 'Start it, do it, close it.')
 T.append(steps([
@@ -581,7 +267,6 @@ T.append(steps([
 T.append(Spacer(1, 3))
 T.append(Paragraph('Small job, finished in a few minutes? Press <b>Complete now</b> instead of Start Work. '
                    'It records the start and the finish together.', st_small))
-
 T.append(Paragraph('The closing form', st_h3))
 T.append(bullets([
     '<b>Service guide</b> — tap to open it if you want a reminder of the usual steps for that machine. '
@@ -593,10 +278,9 @@ T.append(bullets([
 ]))
 T.append(Spacer(1, 3))
 T.append(callout('What photos to take',
-                 'Take the machine before you start, the part you worked on, and the machine working again '
-                 'at the end. Also photograph the nameplate if the make or model is not in the tool. '
-                 'Up to 8 photos per job — they go into the report the client sees.'))
-
+                 'The machine before you start, the part you worked on, and the machine working again at '
+                 'the end. Also photograph the nameplate if the make or model is not in the tool. Up to 8 '
+                 'photos per job — they go into the report the client sees.'))
 T.append(Paragraph('If your engineer sends a job back', st_h2))
 T.append(Paragraph('It appears at the top of your <b>Open</b> tab with a red <b>Returned</b> label and his '
                    'note — for example "add a photo of the new seal". The machine stays in service; only '
@@ -642,6 +326,14 @@ T.append(table(['Who signs', 'How'],
                        'screen with a finger and type their name and job title.']],
     [30 * mm, None]))
 T.append(Spacer(1, 4))
+T.append(callout('Sometimes your engineer makes the report for you',
+                 'If he approves your last job of the day, he can prepare and sign the report himself. '
+                 'Then your Reports tab shows <b>"Report prepared by your engineer"</b> and only one thing '
+                 'is left: press <b>Client sign-off</b> and hand the client your phone.'))
+T.append(Spacer(1, 3))
+T.append(Paragraph('The line <b>"Waiting on review"</b> means a job from that day is still with your '
+                   'engineer — the report can only be made once every job is approved.', st_body))
+T.append(Spacer(1, 3))
 T.append(Paragraph('After the client signs, the report is <b>locked</b>. Nobody can change it — not you, '
                    'not your engineer. That is what makes it proof of the work.', st_body))
 T.append(Spacer(1, 3))
@@ -651,7 +343,6 @@ T.append(callout('Client not there?',
 
 T.append(PageBreak())
 T += section('6. Quick reference', 'Keep this page on your phone.')
-
 T.append(Paragraph('I want to...', st_h2))
 T.append(table(['I want to', 'Where'],
     [['See my jobs', '<b>My Work</b> → Open'],
@@ -666,30 +357,364 @@ T.append(table(['I want to', 'Where'],
      ['Get the client to sign', '<b>Client sign-off</b> — hand them the phone'],
      ['See a machine\'s past work', 'Tap the machine name anywhere']],
     [58 * mm, None]))
-
 T.append(Paragraph('Questions', st_h2))
 for q, a in [
     ('I cannot close the job — it asks for photos.',
-     'That job needs at least one photo. Press Add photos and use your camera. Breakdowns always need '
-     'photos.'),
+     'That job needs at least one photo. Press Add photos and use your camera. Breakdowns always need photos.'),
     ('The job is not in my list.',
      'It has not been given to you yet. Call your engineer — he assigns the work.'),
+    ('My job says "Check back" with a date.',
+     'Your engineer put it on hold — usually a part is on order. It comes back on that date; nothing for '
+     'you to do until then.'),
     ('There is no signal at the plant.',
      'You can still open the app and read everything. Saving needs signal. Do the work, then close the '
-     'job when you have signal again — you can change the completion date to the day you actually '
-     'did it.'),
-    ('I did the work but forgot to record it.',
-     'Record it when you remember. Change the completion date to the real day.'),
+     'job when you have signal again — you can change the completion date to the day you actually did it.'),
     ('The client signed but the report looks wrong.',
      'A signed report cannot be changed. Tell your engineer — he will make a correction report.'),
     ('Can I put a machine into maintenance myself?',
-     'No. Engineers create the jobs; you do them and close them. If a machine needs work, use '
-     'Report issue.'),
+     'No. Engineers create the jobs; you do them and close them. If a machine needs work, use Report issue.'),
 ]:
     T.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
-
 T.append(Spacer(1, 6))
 T.append(callout('Need help?', 'Call your service engineer. For sign-in problems, contact your '
                  'administrator. The tool is improved often — small differences from this guide are normal.'))
 
 build('DigitalPaani-Maintenance-Ops-Technician-Guide.pdf', 'Technician Guide', T)
+
+
+# ======================================================================
+# ENGINEER GUIDE
+# ======================================================================
+E = []
+E += cover('Service Engineer Guide',
+           'Your sites, your team, your sign-off',
+           'You own your plants in it: the equipment register, the work orders you assign to '
+           'technicians, the review of what they did, the issues they report, and the service reports '
+           'you and the client co-sign.',
+           [['Getting set up', 'Signing in, the app on your phone, what you own.'],
+            ['Running the work', 'Creating work orders, assigning technicians, photos.'],
+            ['The review loop', 'Approving, sending back, reassigning, closing as-is.'],
+            ['Issues and holds', 'Triaging what technicians find; pausing blocked jobs honestly.'],
+            ['Service reports', 'Co-signing, or preparing the report yourself.'],
+            ['Quick reference', 'A cheat sheet and answers to common questions.']])
+
+E += section('1. Getting set up', 'Five minutes, once.')
+E.append(Paragraph('Signing in', st_h2))
+E.append(steps([
+    'You will receive an <b>email invitation</b>. Open it and choose your own password.',
+    'After that, sign in at <b>' + SITE + '</b> with your email and password.',
+    'Forgot the password? Type your email on the sign-in screen and press <b>Forgot password?</b>.',
+]))
+E.append(Paragraph('Install it on your phone', st_h2))
+E.append(PHONE_INSTALL)
+E.append(Spacer(1, 4))
+E.append(OFFLINE)
+E.append(Paragraph('What you own', st_h2))
+E.append(Paragraph('You see the plants assigned to you, across four tabs: <b>Equipment</b>, '
+                   '<b>Maintenance Log</b>, <b>Engineering Corner</b> and <b>Team</b>. At your plants you '
+                   'can <b>add and edit equipment</b> (press <b>Add Equipment</b> — the machine\'s name is '
+                   'written for you from Make + Model). On Team you see the technicians and can '
+                   '<b>Invite Technician</b> when you take on new field staff.', st_body))
+E.append(Spacer(1, 3))
+E.append(WO_NUMBER)
+
+E += section('2. Running the work', 'You create the jobs; technicians execute them.')
+E.append(Paragraph('Creating and assigning a work order', st_h2))
+E.append(steps([
+    'Find the machine and press <b>Put in Maintenance</b> (or start from the schedule in Engineering '
+    'Corner — PPM jobs create themselves).',
+    'Pick the technician in <b>Assign to</b> — the list shows each one\'s current open jobs, so you '
+    'don\'t overload someone blind. The job lands in their <b>My Work</b> the moment you save.',
+    'Tick <b>Require photos on completion</b> if you want evidence before you approve. '
+    '<b>Breakdowns require photos regardless.</b>',
+    'No account for the person doing the work? Type any name — the job follows the old flow and '
+    'closes without review.',
+]))
+E.append(Spacer(1, 3))
+E.append(callout('A note, not a job?',
+                 'If a machine needs attention <b>later</b> but keeps running, do not put it in '
+                 'maintenance — use <b>Report issue</b> on the machine instead. Put in Maintenance takes '
+                 'it out of service and starts the overdue clock; Report issue just gets it on your list.'))
+E.append(Paragraph('Doing a job yourself', st_h2))
+E.append(Paragraph('Work you complete yourself closes directly — the review ceremony exists for '
+                   'delegation, not for its own sake. Your Visit Reports tab still builds your own '
+                   'sign-off PDFs as before.', st_body))
+
+E += section('3. The review loop', 'A technician\'s completed job lands with you before it counts.')
+E.append(Paragraph('When a technician completes a job it becomes <b>Awaiting review</b> in the '
+                   '<b>To review</b> tab of Engineering Corner. The machine is already back in service — '
+                   'your review is about the record, never about holding equipment hostage.', st_body))
+E.append(Spacer(1, 3))
+E.append(table(['You press', 'What happens'],
+    [['Approve', 'The job closes for good.'],
+     ['Send back', 'You write what is missing ("add a photo of the replaced seal"). The technician sees '
+                   'your note at the top of My Work, fixes the record, and resubmits to you.'],
+     ['Reassign', 'Hands an open or stuck job to a different technician — with their open-job counts '
+                  'shown. History stays intact.'],
+     ['Close as-is', 'On a returned job the technician never resubmitted: accept the record as it stands '
+                     'instead of waiting forever.']],
+    [26 * mm, None]))
+E.append(Spacer(1, 4))
+E.append(Paragraph('Each card shows the completion notes and the photos. Look at the photos — they are '
+                   'what the client will see in the report.', st_body))
+
+E += section('4. Issues and holds', 'What was found, and what is honestly blocked.')
+E.append(Paragraph('Issues: triaging what technicians report', st_h2))
+E.append(Paragraph('When anyone reports a part needing service, repair or replacement, it appears in '
+                   'your <b>To review</b> tab under <b>Reported issues</b>, and as an amber strip on the '
+                   'machine\'s page. Three verdicts:', st_body))
+E.append(bullets([
+    '<b>Schedule work</b> — opens the work-order form prefilled from the issue and links the job back '
+    'to it.',
+    '<b>Handled</b> — it was already dealt with; no follow-up needed.',
+    '<b>Dismiss</b> — nothing will be done, and you must say why. That reason is the record the next '
+    'person reads.',
+]))
+E.append(Paragraph('Holds: when a job is genuinely blocked', st_h2))
+E.append(Paragraph('A job waiting on a vendor, a shutdown window or an approval should not read as '
+                   'neglect. On the machine\'s page press <b>Put on hold</b>:', st_body))
+E.append(bullets([
+    'Say <b>what it is waiting on</b> (vendor / shutdown window / site access / approval) and the details.',
+    'Set the <b>Check back on</b> date. This is <b>not</b> a promise the work will be done — you do not '
+    'need to know when the vendor delivers, only when you will chase them. Presets: 3 days, a week, '
+    '2 weeks, a month.',
+    'The job\'s overdue clock pauses until that date. When it passes, the job counts as overdue again '
+    'and appears on the admin\'s Oversight page as a passed check-back — so extend it '
+    '(<b>Extend hold</b>) or release it (<b>Release hold</b>) before then.',
+]))
+E.append(Spacer(1, 3))
+E.append(callout('Extensions are counted',
+                 'A hold extended again and again is visible to your admin as a pattern — that is '
+                 'deliberate. A part that has been "on order" five times is an escalation, not a '
+                 'maintenance task.'))
+
+E += section('5. Service reports', 'Three signatures make the work official.')
+E.append(Paragraph('One report covers everything a technician finished at one plant on one day — jobs, '
+                   'notes, photos, and the issues they raised. The signature order is fixed: '
+                   '<b>technician → you → the client</b>.', st_body))
+E.append(Paragraph('The two ways a report gets made', st_h2))
+E.append(table(['Path', 'How it goes'],
+    [['Technician raises it', 'They press Create &amp; sign in My Work → Reports. It lands in your '
+                              '<b>To review</b> tab under <b>Service reports</b>: press <b>View</b> to '
+                              'read it, then <b>Approve &amp; sign</b> — or <b>Request changes</b> with a '
+                              'note, and they fix and resubmit.'],
+     ['You prepare it', 'When you approve the last job of a visit, the tool offers the report '
+                        'immediately — <b>Create &amp; sign report</b>. One press compiles and signs it. '
+                        'Any fully-approved visit without a report also waits in <b>Visits ready for a '
+                        'report</b>, so nothing is lost if you dismiss the prompt.']],
+    [30 * mm, None]))
+E.append(Spacer(1, 4))
+E.append(Paragraph('Either way, the last step is the client signing <b>on the technician\'s phone</b> at '
+                   'the plant. Once they sign, the report locks: no edits, ever — corrections are new '
+                   'reports. Every signature is stamped over a fingerprint (hash) of the content, which '
+                   'is what makes the PDF proof.', st_body))
+
+E.append(PageBreak())
+E += section('6. Quick reference', 'The short version.')
+E.append(Paragraph('I want to...', st_h2))
+E.append(table(['Task', 'Where'],
+    [['Create a job for a technician', 'The machine → <b>Put in Maintenance</b> → pick them in <b>Assign to</b>'],
+     ['Demand photo evidence', 'Tick <b>Require photos on completion</b> when creating the job'],
+     ['Review completed work', 'Engineering Corner → <b>To review</b>'],
+     ['Send work back for fixes', '<b>Send back</b> on the card, with a note'],
+     ['Hand a job to someone else', '<b>Reassign</b> — on the machine\'s page or the review tab'],
+     ['Pause a blocked job honestly', 'The machine → <b>Put on hold</b>, with a check-back date'],
+     ['Note a problem for later', 'The machine → <b>Report issue</b> (machine keeps running)'],
+     ['Deal with a reported issue', 'To review → <b>Schedule work / Handled / Dismiss</b>'],
+     ['Sign a technician\'s report', 'To review → Service reports → <b>Approve &amp; sign</b>'],
+     ['Prepare the report yourself', '<b>Create &amp; sign report</b> after approving the last job'],
+     ['Add a machine at your plant', 'Equipment → <b>Add Equipment</b>'],
+     ['Bring in a new technician', 'Team → <b>Invite Technician</b>']],
+    [62 * mm, None]))
+E.append(Paragraph('Common questions', st_h2))
+for q, a in [
+    ('The technician completed the job — why is the machine already "Operational"?',
+     'By design. The work is physically done at completion; your review is about the record. A machine '
+     'never waits on paperwork.'),
+    ('I sent a job back and nothing has happened for days.',
+     'It is waiting on the technician. You can Reassign it, or accept the record with Close as-is. Your '
+     'admin sees the wait on Oversight either way.'),
+    ('A job is blocked on a part with no delivery date.',
+     'Put it on hold with a check-back date. You are not promising the part arrives — only that you will '
+     'chase it on that date.'),
+    ('Can I make the service report without waiting for the technician?',
+     'Yes — once every job of the visit is approved. The tool offers it at the moment of the last '
+     'approval, and lists it under Visits ready for a report afterwards.'),
+    ('Why can\'t I edit a signed report?',
+     'The client\'s signature locks it — that is what makes it proof. Corrections are new reports.'),
+    ('Who sees the ageing clocks?',
+     'Your admin, on the Oversight page: unreviewed work, jobs sent back, untriaged issues, outstanding '
+     'signatures, and passed check-backs — each with how long it has waited.'),
+]:
+    E.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
+E.append(Spacer(1, 6))
+E.append(callout('Need help?', 'Contact your administrator for access and plants. The tool improves '
+                 'regularly; small on-screen differences from this guide are normal.'))
+
+build('DigitalPaani-Maintenance-Ops-Engineer-Guide.pdf', 'Engineer Guide', E)
+
+
+# ======================================================================
+# ADMIN GUIDE
+# ======================================================================
+A = []
+A += cover('Administrator Guide',
+           'Running the operation: sites, people, accountability',
+           'It keeps track of every machine across your plants, drives the work your engineers and '
+           'technicians do, records everything with photos and co-signed reports, and shows you who is '
+           'holding what up.',
+           [['Getting started', 'Access, the three roles, notifications and the daily email.'],
+            ['Your daily overview', 'The Dashboard, and the Oversight page that answers "who is late?".'],
+            ['How work flows', 'Work orders, review, issues, holds, and signed reports — in one page.'],
+            ['Setting things up', 'Plants, equipment, imports, QR stickers.'],
+            ['Your team', 'Inviting people, technician accounts, schedules, deactivation.'],
+            ['Quick reference', 'A cheat sheet and answers to common questions.']])
+
+A += section('1. Getting started', 'Access, roles, and how the tool keeps you informed.')
+A.append(Paragraph('Signing in', st_h2))
+A.append(steps([
+    'Open <b>' + SITE + '</b> and sign in with your email and password.',
+    'Forgot the password? Type your email on the sign-in screen and press <b>Forgot password?</b>.',
+]))
+A.append(Spacer(1, 3))
+A.append(PHONE_INSTALL)
+A.append(Spacer(1, 4))
+A.append(OFFLINE)
+A.append(Paragraph('The three roles', st_h2))
+A.append(table(['Role', 'What they do'],
+    [['Technician', 'Logs in to <b>My Work</b>: executes the jobs assigned to them, closes them with '
+                    'photos, reports bad parts, and collects the client\'s signature on reports. Can look '
+                    'up any plant; can only act on their own assignments. Cannot create work orders.'],
+     ['Engineer', 'Owns their assigned plants: creates and assigns work orders, adds equipment, reviews '
+                  'technician work, triages issues, places holds, co-signs service reports, invites '
+                  'technicians.'],
+     ['Admin', 'Everything, everywhere: all plants, the Dashboard and Oversight pages, imports, the '
+               'team, and the same review powers engineers have. Only the Superadmin grants Admin.']],
+    [24 * mm, None]))
+A.append(Paragraph('How the tool keeps you informed', st_h2))
+A.append(bullets([
+    '<b>The bell</b> — overdue work, jobs due today, work awaiting review, reported issues, and reports '
+    'awaiting signatures. Every notification is a link.',
+    '<b>The daily email summary</b> — one email around 7:00 with what is overdue, due and scheduled, '
+    'plus a <b>"Waiting on someone"</b> section: the same stuck items Oversight shows, using <b>your</b> '
+    'clocks. Days with nothing outstanding send nothing.',
+    '<b>Breakdown alerts</b> — emailed the moment a machine is reported broken down.',
+]))
+A.append(Spacer(1, 3))
+A.append(Paragraph('Email on/off is per person: <b>Team → Edit</b>. A person\'s emails only cover plants '
+                   'they can see.', st_small))
+
+A += section('2. Your daily overview', 'Two pages answer two questions.')
+A.append(Paragraph('Dashboard — "is anything broken?"', st_h2))
+A.append(Paragraph('The four cards count the fleet: total, operational, in maintenance, broken down. Tap '
+                   'a card to open that list. Below them, everything currently out of service with who is '
+                   'on it and whether it is late.', st_body))
+A.append(Paragraph('Oversight — "who is holding what up?"', st_h2))
+A.append(Paragraph('The accountability page. Top: four counters for things that have waited too long — '
+                   'unreviewed work, jobs sent back and untouched, untriaged issues, outstanding client '
+                   'signatures, passed check-backs. Middle: the <b>specific stuck items</b>, oldest '
+                   'first, each with a link. Bottom: per-engineer and per-technician load, including what '
+                   'each technician closed in the last 30 days.', st_body))
+A.append(Spacer(1, 3))
+A.append(bullets([
+    '<b>Adjust the clocks</b> sets how many days each thing may wait before it is flagged — for this '
+    'page <b>and for your daily email</b>. They are your clocks; another admin can set different ones.',
+    'Jobs <b>on hold</b> are shown separately and do not count as overdue: a hold means an engineer has '
+    'named what the job is waiting on and when they will chase it. A hold extended three or more times '
+    'is flagged — that is a vendor problem, not a maintenance problem.',
+]))
+
+A += section('3. How work flows', 'The whole machine on one page.')
+A.append(steps([
+    '<b>A job is created</b> — by an engineer, or automatically from the PPM schedule — and assigned to '
+    'a technician. It carries a number (WO-2026-0147) and can require photos; breakdowns always do.',
+    '<b>The technician does the work</b> and completes it with notes and photos. The machine returns to '
+    'service immediately; the record becomes <b>Awaiting review</b>.',
+    '<b>The engineer reviews</b> — approves, or sends it back with a note; the technician fixes and '
+    'resubmits. Stuck jobs can be reassigned or closed as-is.',
+    '<b>Issues</b> found along the way (a part needing service, repair or replacement) go to the '
+    'engineer to schedule, mark handled, or dismiss with a reason. Open issues stay pinned to the '
+    'machine.',
+    '<b>The service report</b> — one per technician per plant per day — is signed in order: technician, '
+    'engineer, then the client, drawing on the technician\'s phone. Every signature stamps a fingerprint '
+    'of the content, and the client\'s signature <b>locks the report forever</b>. Corrections are new '
+    'reports. Engineers can also prepare and sign the report themselves at the moment they approve the '
+    'last job of a visit.',
+]))
+A.append(Spacer(1, 3))
+A.append(callout('Why a running machine can be "overdue"',
+                 'Overdue clocks measure the record, not the machine. And a job honestly blocked on the '
+                 'world — a vendor, a shutdown window — should be <b>on hold</b> with a check-back date, '
+                 'which pauses its clock and shows on Oversight as "waiting on vendor" instead of '
+                 'looking like neglect.'))
+
+A += section('4. Setting things up', 'Plants first, then equipment — or both at once with an import.')
+A.append(bullets([
+    '<b>Plants → Add Plant</b> — create a site; <b>Import PPM</b> — load a whole site\'s equipment and '
+    'schedule from a spreadsheet, with a preview and duplicate warning.',
+    '<b>Plants → QR Codes</b> — printable stickers for every machine; technicians scan them to open the '
+    'right machine instantly.',
+    '<b>Plants → PPM Checklists</b> — the service-guide steps people see when closing a job.',
+    '<b>Equipment → Add Equipment</b> — single machines; the name writes itself from Make + Model. '
+    'Engineers can do this too, at their own plants.',
+]))
+
+A += section('5. Your team', 'People, access, accountability.')
+A.append(bullets([
+    '<b>Invite User</b> — you can invite Engineers and Technicians; only the Superadmin grants Admin. '
+    'Engineers can invite Technicians themselves.',
+    '<b>Assign plants</b> — engineers see only their plants. <b>Technicians need no plants</b> — they '
+    'roam; their access comes from the jobs assigned to them.',
+    '<b>Edit</b> — name, phone (with country code), and email notification settings per person.',
+    '<b>Generate Schedule</b> — a PDF of someone\'s upcoming and outstanding work for any period.',
+    '<b>Deactivate</b> — reversible; their records stay. Enforced in the database, not just the screen.',
+]))
+A.append(Spacer(1, 3))
+A.append(Paragraph('Below the users sits the <b>Technicians</b> registry — every field name ever used on '
+                   'a job. Inviting a technician whose name is already there links their history to the '
+                   'new login automatically.', st_body))
+
+A.append(PageBreak())
+A += section('6. Quick reference', 'The short version — worth printing.')
+A.append(Paragraph('I want to...', st_h2))
+A.append(table(['Task', 'Where'],
+    [['See fleet status', '<b>Dashboard</b> — tap a card to open that list'],
+     ['See who is holding what up', '<b>Oversight</b>'],
+     ['Change what counts as "too long"', 'Oversight → <b>Adjust the clocks</b>'],
+     ['Review completed work myself', 'Engineering Corner → <b>To review</b>'],
+     ['Load a whole plant at once', 'Plants → <b>Import PPM</b>'],
+     ['Print QR stickers', 'Plants → <b>QR Codes</b>'],
+     ['Invite an engineer or technician', 'Team → <b>Invite User</b>'],
+     ['Give an engineer their sites', 'Team → <b>Assign plants</b>'],
+     ['Turn someone\'s emails on or off', 'Team → <b>Edit</b> on that person'],
+     ['Remove someone\'s access', 'Team → <b>Deactivate</b>'],
+     ['Export records or reports', 'Maintenance Log → <b>Export</b> or <b>Report</b>']],
+    [62 * mm, None]))
+A.append(Paragraph('Common questions', st_h2))
+for q, a in [
+    ('An engineer says they cannot see their plant.',
+     'Team → Assign plants on their row. (Technicians are different: they see everything and need no '
+     'assignment.)'),
+    ('Why did no summary email arrive this morning?',
+     'Nothing was outstanding — silence means all clear. Emails also use your own Oversight clocks, so '
+     'loosening them quiets the "Waiting on someone" section.'),
+    ('Oversight says a job has waited 12 days but a part is on order.',
+     'The engineer should put it on hold with a check-back date — then it shows as "waiting on vendor" '
+     'instead of ageing. If they keep extending the hold, that pattern is flagged too.'),
+    ('Can a signed service report be edited or deleted?',
+     'No — by anyone, ever. That is what makes it proof. Corrections are issued as new reports.'),
+    ('A technician left. What happens to their open jobs?',
+     'Reassign them (on the job or in the review tab). Deactivating the account keeps all their history.'),
+    ('Does anything get sent to the customer automatically?',
+     'No. Reports are generated and signed in the tool; sharing them is your choice. (A push to the '
+     'Customer Hub is planned but not built.)'),
+    ('I have heard about health scores and parts lists. Where are they?',
+     'They exist, switched off for a simpler tool. Everything recorded today feeds them — if they are '
+     'switched on later, your history counts from day one.'),
+]:
+    A.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
+A.append(Spacer(1, 6))
+A.append(callout('Need help?', 'Contact Mihir Sethi for accounts, email notifications or the tool itself. '
+                 'The tool improves regularly; small on-screen differences from this guide are normal.'))
+
+build('DigitalPaani-Maintenance-Ops-Admin-Guide.pdf', 'Administrator Guide', A)
