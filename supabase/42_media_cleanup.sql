@@ -30,7 +30,11 @@ create or replace function public.purge_orphan_wo_media()
 returns int language plpgsql security definer set search_path = public as $$
 declare n int;
 begin
-  if not public.is_admin() then
+  -- auth.uid() is NULL in the SQL editor and in service-role contexts, where
+  -- is_admin() is therefore false. The guard is for CLIENT calls; without this
+  -- bypass the function locks out the very place it is meant to be run from.
+  -- (Same trap as guard_profiles() in 20/22 — see the service-context note there.)
+  if auth.uid() is not null and not public.is_admin() then
     raise exception 'Admins only.';
   end if;
   with gone as (
