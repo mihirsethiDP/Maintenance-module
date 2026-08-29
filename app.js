@@ -1713,7 +1713,7 @@ function renderEquipmentDetail(id) {
     : [];
   const lineagePanel = lineage.length > 1 ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Position history <span class="text-slate-400 font-normal">(${lineage.length} generation${lineage.length===1?'':'s'})</span></div>
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Position history <span class="text-slate-500 font-normal">(${lineage.length} generation${lineage.length===1?'':'s'})</span></div>
       <div class="overflow-x-auto"><table class="list-table">
         <thead><tr><th>Tag</th><th>Make / Model</th><th>Installed</th><th>Retired</th><th>Status</th></tr></thead>
         <tbody>${lineage.map(g => `<tr class="${g.id === e.id ? 'bg-brand-50/40' : ''}">
@@ -2305,7 +2305,7 @@ function openReportCompose(plantId, date, existingId) {
       ${r && r.review_note ? `<div class="p-3 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900"><b>Engineer asked:</b> ${esc(r.review_note)}</div>` : ''}
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[38vh] overflow-y-auto">
         ${content.jobs.map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${content.issues.length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -2423,7 +2423,7 @@ function openReportView(reportId) {
     <div class="space-y-3 text-sm">
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
         ${(c.jobs || []).map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${(c.issues || []).length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -2667,7 +2667,7 @@ function renderOversight() {
 
   const kpi = (label, value, tone) => `<div class="bg-white rounded-xl border border-slate-200 p-4">
     <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
-    <div class="text-2xl font-semibold mt-0.5 ${value ? tone : 'text-slate-300'}">${value}</div>
+    <div class="text-2xl font-semibold mt-0.5 ${value ? tone : 'text-slate-400'}">${value}</div>
   </div>`;
 
   const engRows = engineers.map(r => `<tr>
@@ -2784,7 +2784,7 @@ function renderLog() {
         <input type="date" id="fFrom" class="text-xs outline-none" onchange="renderLogRows()" />
         <span>To</span>
         <input type="date" id="fTo"   class="text-xs outline-none" onchange="renderLogRows()" />
-        <button type="button" onclick="document.getElementById('fFrom').value=''; document.getElementById('fTo').value=''; renderLogRows()" class="text-slate-400 hover:text-slate-700 ml-1" title="Clear">&times;</button>
+        <button type="button" onclick="document.getElementById('fFrom').value=''; document.getElementById('fTo').value=''; renderLogRows()" class="text-slate-500 hover:text-slate-800 ml-1 px-2 py-1 -my-1 rounded" title="Clear dates" aria-label="Clear date range">&times;</button>
       </div>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -3068,7 +3068,7 @@ function renderTeam() {
   const pendingSection = pending.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
-        <span>Pending invites <span class="text-slate-400 font-normal">(${pending.length})</span></span>
+        <span>Pending invites <span class="text-slate-500 font-normal">(${pending.length})</span></span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Share the invite link — the person sets their own password to join.</span>
       </div>
       <div class="overflow-x-auto"><table class="list-table">
@@ -3099,7 +3099,7 @@ function renderTeam() {
     </div>
     ${SUPA ? `<div class="mt-3 p-2.5 rounded-md bg-brand-50 border border-brand-100 text-xs text-brand">Invite users by email — they receive a link to set their own password and join with the role you pick. Assign plants below once they appear.</div>` : ''}
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">${engView ? 'Technicians with logins' : 'Users'} <span class="text-slate-400 font-normal">(${visibleUsers.length})</span></div>
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">${engView ? 'Technicians with logins' : 'Users'} <span class="text-slate-500 font-normal">(${visibleUsers.length})</span></div>
       <div class="overflow-x-auto">
         <table class="list-table" id="usersTable">
           <thead><tr><th>User</th><th>Role</th><th>Assigned plants</th><th>Phone</th><th class="col-center">Actions</th></tr></thead>
@@ -3120,7 +3120,7 @@ function techniciansSection() {
   return `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
       <div class="px-5 py-3 border-b border-slate-200 flex items-center gap-2 flex-wrap">
-        <span class="font-semibold text-sm">Technicians <span class="text-slate-400 font-normal">(${techs.length})</span></span>
+        <span class="font-semibold text-sm">Technicians <span class="text-slate-500 font-normal">(${techs.length})</span></span>
         <span class="text-xs text-slate-400 hidden sm:inline">field workers named on work-orders — new names are recorded automatically</span>
         <button onclick="openAddTechModal()" class="ml-auto text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">Add technician</button>
       </div>
@@ -4246,7 +4246,7 @@ function renderWoReviewTab(items) {
     <div class="bg-white rounded-xl border border-slate-200 p-4" data-review-log="${l.id}">
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
-          <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-400 font-normal">· ${esc(plantName(e.plantId))}</span></div>
+          <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-500 font-normal">· ${esc(plantName(e.plantId))}</span></div>
           <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b></div>
         </div>
         <span class="badge badge-mt">Awaiting review</span>
@@ -4262,7 +4262,7 @@ function renderWoReviewTab(items) {
     <div class="bg-white rounded-xl border border-slate-200 p-4">
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
-          <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-400 font-normal">· ${esc(plantName(e.plantId))}</span></div>
+          <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-500 font-normal">· ${esc(plantName(e.plantId))}</span></div>
           <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}Returned to <b>${esc(l.technician) || 'unknown'}</b> — your note: ${esc(l.reviewNote || '')}</div>
         </div>
         <span class="badge badge-bd">Waiting on technician</span>
@@ -4278,7 +4278,7 @@ function renderWoReviewTab(items) {
     <div class="bg-white rounded-xl border border-slate-200 p-4">
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
-          <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-400 font-normal">· ${esc(plantName(e.plantId))}</span></div>
+          <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-500 font-normal">· ${esc(plantName(e.plantId))}</span></div>
           <div class="text-xs text-slate-500 mt-0.5">Reported by <b>${esc(i.raised_name) || 'unknown'}</b> · ${new Date(i.created_at).toLocaleDateString()}</div>
         </div>
         <span class="badge badge-mt">${needLabel[i.need] || i.need}</span>
@@ -4413,7 +4413,7 @@ function openCompileReportModal(plantId, date, techId) {
     <form onsubmit="event.preventDefault(); engineerCompileReport('${plantId}', '${date}', '${techId}')" class="space-y-3 text-sm">
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
         ${content.jobs.map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-400 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${content.issues.length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -4491,7 +4491,7 @@ function renderPendingTab(pending, overdue) {
   const openSection = fOpen.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
-        <span>Scheduled tasks — ready to start <span class="text-slate-400 font-normal">(${fOpen.length})</span></span>
+        <span>Scheduled tasks — ready to start <span class="text-slate-500 font-normal">(${fOpen.length})</span></span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Generated from the PPM schedule</span>
       </div>
       <div class="overflow-x-auto"><table class="list-table">
@@ -4528,7 +4528,7 @@ function renderPendingTab(pending, overdue) {
 
   const ongoingSection = fOngoing.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-400 font-normal">(${fOngoing.length})</span></div>
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-500 font-normal">(${fOngoing.length})</span></div>
       <div class="overflow-x-auto"><table class="list-table">
         <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
         <tbody>${ongoingRows}</tbody>
@@ -4538,7 +4538,7 @@ function renderPendingTab(pending, overdue) {
   const overdueSection = fOverdue.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
-        <span>Overdue PPM <span class="text-slate-400 font-normal">(${fOverdue.length})</span></span>
+        <span>Overdue PPM <span class="text-slate-500 font-normal">(${fOverdue.length})</span></span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Scheduled service dates that have passed without completion</span>
       </div>
       <div class="overflow-x-auto"><table class="list-table">
@@ -5284,6 +5284,10 @@ async function uploadWoPhotos(logId) {
   if (mErr) return 'photo record failed: ' + mErr.message;
   staged.forEach(p => URL.revokeObjectURL(p.url));
   window._woPhotos = [];
+  // If the completion RPC fails AFTER this point, the photos exist server-side
+  // but the staged list is empty -- without this flag, retrying would be
+  // blocked by the "photos required" check for photos that are already there.
+  window._woUploadedFor = logId;
   return null;
 }
 async function mediaForLogs(logIds) {
@@ -5601,7 +5605,7 @@ function openCompleteModal(eqId) {
   const checklistSection = items.length ? `
       <details class="border border-slate-200 rounded-md bg-slate-50/60">
         <summary class="px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer select-none hover:text-brand">
-          Service guide — ${esc(e.type)} <span class="text-slate-400 font-normal">(${items.length} reference point${items.length === 1 ? '' : 's'})</span>
+          Service guide — ${esc(e.type)} <span class="text-slate-500 font-normal">(${items.length} reference point${items.length === 1 ? '' : 's'})</span>
         </summary>
         <ul class="px-4 pb-2.5 pt-0.5 space-y-1 max-h-[26vh] overflow-y-auto">
           ${items.map(it => `<li class="text-xs text-slate-600 flex gap-1.5"><span class="text-brand">&bull;</span><span>${esc(it.text)}</span></li>`).join('')}
@@ -5695,7 +5699,7 @@ async function submitComplete(ev, eqId) {
       toast(`${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
       return;
     }
-    if (log.photosRequired && !(window._woPhotos || []).length) {
+    if (log.photosRequired && !(window._woPhotos || []).length && window._woUploadedFor !== log.id) {
       appAlert('This job requires photos — add at least one before completing.');
       return;
     }
