@@ -2329,9 +2329,23 @@ function myTechVisits(mine) {
     pending: v.jobs.filter(l => ['submitted', 'returned'].includes(woStateOf(l))).length,
   })).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 60);
 }
-function reportForVisit(plantId, date) {
-  return (cloudReports || []).find(r =>
-    r.plant_id === plantId && r.visit_date === date && r.technician_id === currentUser()?.id);
+// All of a visit's reports, split into the one in flight (at most one, by
+// unique index) and the signed pile an amendment would add to.
+function visitReports(plantId, date, techId) {
+  const reps = (cloudReports || []).filter(r =>
+    r.plant_id === plantId && r.visit_date === date && r.technician_id === techId);
+  return {
+    active: reps.find(r => r.status !== 'signed') || null,
+    signed: reps.filter(r => r.status === 'signed'),
+  };
+}
+// Job ids already inside SIGNED reports for a visit — an amendment carries
+// only what is missing.
+function coveredJobIds(plantId, date, techId) {
+  const ids = new Set();
+  visitReports(plantId, date, techId).signed.forEach(r =>
+    (r.content?.jobs || []).forEach(j => j.id && ids.add(j.id)));
+  return ids;
 }
 function renderMyReportsTab(visits) {
   if (!visits.length) return `<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500">Complete some jobs first — each visit day becomes a report here, signed by you, your engineer, and the client.</div>`;
@@ -2342,11 +2356,26 @@ function renderMyReportsTab(visits) {
     signed:     '<span class="badge badge-op">Signed &amp; locked</span>',
   };
   const rows = visits.map(v => {
-    const r = reportForVisit(v.plantId, v.date);
+    const { active, signed } = visitReports(v.plantId, v.date, currentUser()?.id);
+    const covered = coveredJobIds(v.plantId, v.date, currentUser()?.id);
+    const newJobs = v.jobs.filter(l => !covered.has(l.id)).length;
+    const r = active || (signed.length ? signed[signed.length - 1] : null);
     const chip = r ? (CHIP[r.status] || '')
       : v.pending ? `<span class="badge badge-mt">${v.pending} job${v.pending === 1 ? '' : 's'} with your engineer</span>`
       : '<span class="badge badge-neutral">Not raised</span>';
     let act;
+    if (!active && signed.length && newJobs > 0) {
+      // The day is signed, but work finished afterwards — it gets its own report.
+      act = v.pending
+        ? `<span class="text-[11px] text-slate-400">Waiting on review</span>`
+        : `<button onclick="openReportCompose('${v.plantId}', '${v.date}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Report new work</button>`;
+      return `<tr>
+        <td><div class="cell-primary">${esc(plantName(v.plantId))}</div><div class="cell-secondary">${v.date}</div></td>
+        <td><div class="cell-primary">${v.jobs.length} job${v.jobs.length === 1 ? '' : 's'}</div><div class="cell-muted">${newJobs} finished after the signed report</div></td>
+        <td class="col-center"><span class="badge badge-op">Signed</span> <span class="badge badge-mt">${newJobs} new</span></td>
+        <td class="col-center">${act}</td>
+      </tr>`;
+    }
     if (r && r.status === 'eng_signed' && r.eng_sign?.compiled) {
       // The engineer compiled it — all that is left is the client.
       act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
@@ -2378,16 +2407,24 @@ function renderMyReportsTab(visits) {
 function buildReportContent(plantId, date, techId) {
   const tid = techId || currentUser()?.id;
   const tech = (state.users || []).find(u => u.id === tid);
+  const { signed } = visitReports(plantId, date, tid);
+  const covered = coveredJobIds(plantId, date, tid);
+  // Issues already told to the client in a signed report are not re-told:
+  // anything raised after the last signature is new information.
+  const lastSigned = signed.map(r => r.updated_at).sort().pop() || null;
   const jobs = state.logs
     .filter(l => l.assignedTo === tid && l.endDate === date && eqById(l.equipmentId)?.plantId === plantId)
+    .filter(l => !covered.has(l.id))
     .map(l => ({ id: l.id, wo_no: l.woNo || null, tag: eqById(l.equipmentId)?.tag || l.equipmentId,
                  reason: l.reason, scope: l.notes || '', done: l.completionNotes || '', state: woStateOf(l) }));
   const issues = (cloudIssues || [])
     .filter(i => i.equipment_id && i.raised_by === tid && String(i.created_at).slice(0, 10) === date
                  && eqById(i.equipment_id)?.plantId === plantId)
+    .filter(i => !lastSigned || String(i.created_at) > String(lastSigned))
     .map(i => ({ tag: eqById(i.equipment_id)?.tag || '', description: i.description, need: i.need }));
   return { plant_id: plantId, plant: plantName(plantId), visit_date: date,
-           technician: tech?.name || '', jobs, issues };
+           technician: tech?.name || '', jobs, issues,
+           amends: signed.length ? signed[signed.length - 1].id : null };
 }
 function openReportCompose(plantId, date, existingId) {
   const content = buildReportContent(plantId, date, currentUser()?.id);
@@ -2406,7 +2443,9 @@ function openReportCompose(plantId, date, existingId) {
           ${content.issues.map(i => `<div class="text-[11px] text-amber-800">• ${esc(i.tag)}: ${esc(i.description)} (${ISSUE_NEED_LABEL[i.need] || i.need})</div>`).join('')}
         </div>` : ''}
       </div>
-      <p class="text-xs text-slate-500">This covers <b>every job you finished at ${esc(plantName(plantId))} on ${date}</b> — ${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}, listed above. One report per plant per day.</p>
+      <p class="text-xs text-slate-500">${content.amends
+        ? `This is an <b>additional report</b> — it covers only the ${content.jobs.length} job${content.jobs.length === 1 ? '' : 's'} finished after the earlier report was signed. The signed report is untouched.`
+        : `This covers <b>every job you finished at ${esc(plantName(plantId))} on ${date}</b> — ${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}, listed above. One report per plant per day.`}</p>
       <p class="text-xs text-slate-500">Submitting <b>signs this report as you</b> (${esc(currentUser()?.name || '')}) and sends it to your engineer. The client signs last, on your phone.</p>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -2512,8 +2551,12 @@ function openReportView(reportId) {
   const c = r.content || {};
   const sig = (label, obj, extra) => obj ? `<div class="text-xs"><span class="text-slate-500">${label}:</span> <b>${esc(obj.name || '')}</b>${extra || ''} <span class="text-slate-400">· ${String(obj.ts || '').slice(0, 16).replace('T', ' ')}</span></div>` : '';
   document.getElementById('modalTitle').textContent = `Service report — ${esc(c.plant || r.plant_id)}, ${r.visit_date}`;
+  const amendNote = r.amendment_of
+    ? `<div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600">This is an <b>additional report</b>: it covers work finished after report ${esc(r.amendment_of)} was signed. That report is unchanged.</div>`
+    : '';
   document.getElementById('modalBody').innerHTML = `
     <div class="space-y-3 text-sm">
+      ${amendNote}
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
         ${(c.jobs || []).map(j => `<div class="px-3 py-2">
           <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
@@ -4542,7 +4585,7 @@ function renderWoReviewTab(items) {
           <div class="font-semibold text-sm">${esc(plantName(r.plant_id))} — ${r.visit_date}</div>
           <div class="text-xs text-slate-500 mt-0.5">Signed &amp; submitted by <b>${esc(r.technician_name)}</b> · ${(r.content?.jobs || []).length} job${(r.content?.jobs || []).length === 1 ? '' : 's'}</div>
         </div>
-        <span class="badge badge-mt">Awaiting your signature</span>
+        <span class="badge badge-mt">Awaiting your signature</span>${r.amendment_of ? ' <span class="badge badge-neutral">additional report</span>' : ''}
       </div>
       <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
         <button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">View</button>
@@ -4557,7 +4600,7 @@ function renderWoReviewTab(items) {
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
           <div class="font-semibold text-sm">${esc(plantName(v.plantId))} — ${v.date}</div>
-          <div class="text-xs text-slate-500 mt-0.5">${v.jobs.length} approved job${v.jobs.length === 1 ? '' : 's'} by <b>${esc(v.techName)}</b> · no report yet</div>
+          <div class="text-xs text-slate-500 mt-0.5">${v.newJobs} approved job${v.newJobs === 1 ? '' : 's'} by <b>${esc(v.techName)}</b> · ${v.newJobs < v.jobs.length ? 'finished after the signed report' : 'no report yet'}</div>
         </div>
         <span class="badge badge-neutral">Report not raised</span>
       </div>
@@ -4633,9 +4676,17 @@ function visitsReadyForReport() {
   });
   return [...byKey.values()]
     .filter(v => v.jobs.every(l => woStateOf(l) === 'done'))
-    .filter(v => !(cloudReports || []).some(r =>
-      r.plant_id === v.plantId && r.visit_date === v.date && r.technician_id === v.techId))
-    .map(v => ({ ...v, techName: (state.users || []).find(u => u.id === v.techId)?.name || 'technician' }))
+    .map(v => {
+      const { active } = visitReports(v.plantId, v.date, v.techId);
+      const covered = coveredJobIds(v.plantId, v.date, v.techId);
+      return { ...v,
+        newJobs: v.jobs.filter(l => !covered.has(l.id)).length,
+        blocked: !!active,
+        techName: (state.users || []).find(u => u.id === v.techId)?.name || 'technician' };
+    })
+    // A report in flight owns the visit; a signed day qualifies again only
+    // when it has approved work the signature does not cover.
+    .filter(v => !v.blocked && v.newJobs > 0)
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 30);
 }

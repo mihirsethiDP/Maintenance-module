@@ -8,9 +8,8 @@ bottom table with its version.
 
 | # | Item | Why it matters | Size |
 |---|------|----------------|------|
-| 1 | Amendment reports — a second report for a visit day whose report is already client-signed | Today the engineer gets a plain refusal (49); a late job on a signed day currently has no reportable home | Medium |
-| 2 | Bell refresh on scoped saves | The bell can lag one action behind after a hot-path save; self-heals on full sync | Small |
-| 3 | Sweep for orphaned `SR-*` signature images | The storage clean-up deliberately excludes them; a failed client-sign RPC after upload leaves a tiny PNG forever | Small |
+| 1 | Bell refresh on scoped saves | The bell can lag one action behind after a hot-path save; self-heals on full sync | Small |
+| 2 | Sweep for orphaned `SR-*` signature images | The storage clean-up deliberately excludes them; a failed client-sign RPC after upload leaves a tiny PNG forever | Small |
 
 ## Waiting on the world (not on code)
 
@@ -27,6 +26,7 @@ bottom table with its version.
 
 | Version | What |
 |---------|------|
+| v=106 / SQL 50 | Amendment reports: a signed visit day accepts an additional report covering only the uncovered jobs; delta content, chained coverage, amendment chips at review and in the report view |
 | v=105 / SQL 49 | Silent no-op fixed: compiling over a client-signed report now refuses in plain words; mid-session deactivation signs out politely; outbox survives IndexedDB being unavailable (form stays open, entries intact) |
 | v=104 / SQL 48 | Photo requirement toggleable on open jobs by engineers/admins; waivers recorded and shown at review |
 | v=103 / SQL 47 | Storage meter + one-tap orphan clean-up on Oversight (free-tier visibility) |
