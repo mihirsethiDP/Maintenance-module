@@ -38,10 +38,12 @@ begin
       and not exists (select 1 from public.work_order_media m where m.path = ob.name)
   )
   select
-    (select coalesce(sum(objs.bytes), 0) from objs),
+    -- sum(bigint) yields numeric in Postgres; the declared return type is
+    -- bigint, so cast — otherwise the function errors on its first call.
+    (select coalesce(sum(objs.bytes), 0)::bigint from objs),
     (select count(*) from objs),
     (select count(*) from orphans),
-    (select coalesce(sum(orphans.bytes), 0) from orphans);
+    (select coalesce(sum(orphans.bytes), 0)::bigint from orphans);
 end;
 $$;
 revoke all on function public.wo_storage_usage() from public, anon;
