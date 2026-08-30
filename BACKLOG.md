@@ -25,6 +25,7 @@ bottom table with its version.
 
 | Version | What |
 |---------|------|
+| cleanup run | Live-test leftovers removed (executed by Mihir 2026-08-30, verified 0/0/0): test WO L-1787824767113, report SR-45328580, issue "Bearing not OK"; PL-01-E001 back to Operational. Orphaned test photos to be swept via Oversight → Clean up after the 24h guard |
 | readiness check | `supabase/CHECK_monday_readiness.sql` — read-only pre-flight for Devid's first field week (account state, his Monday work list, live-test leftovers, storage) |
 | guides r3 | All three role guides regenerated to cover SQL 46–51: honest-date bounds + late-entry label, the photo waiver and its review trail, the Oversight Photo storage card, the deactivation handover, and amendment reports ("Report new work"). Every button label in the PDFs verified verbatim against app.js |
 | SQL 51 | Signature images join the storage sweep: an SR-* file is an orphan when no report's client_sign references it (24h guard kept). And the "bell lag" backlog item was VERIFIED NON-EXISTENT — route() re-renders the header after every scoped save and activity entries echo locally at insert; closed without shipping a phantom fix |
