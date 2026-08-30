@@ -694,6 +694,17 @@ async function hydrateCloud(only) {
   await Promise.all(names.map(k => CLOUD_FETCHERS[k](fail)));
   window._lastRefresh = { what: full ? 'full' : names.join('+'), ms: Math.round(performance.now() - t0) };
   if (!full) return;
+  // A deactivated account's session may outlive the flip. The database is
+  // already refusing it; sign out politely instead of storming errors.
+  const meNow = (cloudUsers || []).find(u => u.id === authUser?.id);
+  if (meNow && meNow.status !== 'active') {
+    try { await SUPA.auth.signOut(); } catch {}
+    authUser = null;
+    location.hash = '';
+    route();
+    appAlert('Your account has been deactivated. Contact your administrator if this is unexpected.');
+    return;
+  }
   // Leave offline mode as soon as the core data is back — but only persist
   // the snapshot on a FULLY clean sync: a partial hydrate (logs failed, say)
   // would overwrite a complete snapshot with nulls.
@@ -2570,8 +2581,10 @@ async function submitResubmit(ev, logId) {
   ev.preventDefault();
   const notes = new FormData(ev.target).get('notes') || '';
   const queueIt = async () => {
-    await outboxAdd('resubmit', logId, { notes, photosDone: false },
-      (window._woPhotos || []).map(x => x.blob));
+    try {
+      await outboxAdd('resubmit', logId, { notes, photosDone: false },
+        (window._woPhotos || []).map(x => x.blob));
+    } catch { return; }   // alerted inside outboxAdd; the form stays open
     (window._woPhotos || []).forEach(x => URL.revokeObjectURL(x.url));
     window._woPhotos = [];
     closeModal(); route();
@@ -4795,7 +4808,7 @@ async function _startWorkOrderInner(logId) {
   const eq = eqById(log.equipmentId);
   if (SUPA) {
     if (!navigator.onLine) {
-      await outboxAdd('start', logId, { eqId: log.equipmentId });
+      try { await outboxAdd('start', logId, { eqId: log.equipmentId }); } catch { return; }
       route();
       toast('No signal — saved on this phone. It sends itself when you are back online.');
       return;
@@ -4803,7 +4816,7 @@ async function _startWorkOrderInner(logId) {
     const { error } = await SUPA.rpc('start_work_order', { p_log: logId });
     if (error) {
       if (isNetworkError(error)) {
-        await outboxAdd('start', logId, { eqId: log.equipmentId });
+        try { await outboxAdd('start', logId, { eqId: log.equipmentId }); } catch { return; }
         route(); toast('No signal — saved on this phone. It sends itself when you are back online.');
         return;
       }
@@ -5551,7 +5564,14 @@ async function outboxAdd(kind, logId, payload, photos) {
     photos: photos || [],           // compressed JPEG blobs — IDB stores them natively
     createdAt: new Date().toISOString(), failed: null,
   };
-  await outboxPut(item);
+  try {
+    await outboxPut(item);
+  } catch (e) {
+    // Private browsing or a full disk: the phone cannot keep work. Say so —
+    // the entries are still in the form, so nothing is lost yet.
+    appAlert('This phone cannot save work for later (private browsing, or storage is full). Stay on this screen and try again when you have signal — your entries are still in the form.');
+    throw e;
+  }
   return item;
 }
 
@@ -5974,7 +5994,7 @@ async function submitIssue(ev, eqId) {
   const payload = { eqId, desc: (f.get('desc') || '').trim(), need: f.get('need') || 'repair',
                     raisedName: currentUser()?.name || '' };
   const queueIt = async () => {
-    await outboxAdd('issue', null, payload);
+    try { await outboxAdd('issue', null, payload); } catch { return; }
     closeModal(); route();
     toast('No signal — saved on this phone. The engineers see it when you are back online.');
   };
@@ -6232,12 +6252,14 @@ async function submitComplete(ev, eqId) {
     // No signal: keep everything on the phone — photos, notes, part actions,
     // any issue found — and send it all when the connection returns.
     const queueCompletion = async () => {
-      await outboxAdd('complete', log.id, {
+      try {
+        await outboxAdd('complete', log.id, {
         eqId, endDate, notes: completionNotes, partActions,
         issueDesc: (f.get('issueDesc') || '').trim(), issueNeed: f.get('issueNeed') || 'repair',
         raisedName: currentUser()?.name || '',
         photosDone: window._woUploadedFor === log.id,
-      }, (window._woPhotos || []).map(x => x.blob));
+        }, (window._woPhotos || []).map(x => x.blob));
+      } catch { return; }   // alerted inside outboxAdd; the form stays open
       (window._woPhotos || []).forEach(x => URL.revokeObjectURL(x.url));
       window._woPhotos = [];
       closeModal(); route();
