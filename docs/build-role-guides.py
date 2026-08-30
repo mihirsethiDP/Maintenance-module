@@ -288,8 +288,8 @@ T.append(Paragraph('It appears at the top of your <b>Open</b> tab with a red <b>
 T.append(Spacer(1, 3))
 T.append(steps([
     'Read his note.',
-    'Press <b>Fix &amp; resubmit</b>.',
-    'Change the notes, add the photos he asked for, and press <b>Resubmit for review</b>.',
+    'Press <b>Fix &amp; send again</b>.',
+    'Change the notes, add the photos he asked for, and press <b>Send again for review</b>.',
 ]))
 
 T += section('4. Found a problem?', 'Tell your engineer. He decides what happens next.')
@@ -352,7 +352,7 @@ T.append(table(['I want to', 'Where'],
      ['Add photos', '<b>Add photos</b> in the closing form'],
      ['Report a bad part', '<b>Report issue</b> on the machine, or in the closing form'],
      ['Find a machine fast', 'Scan its <b>QR sticker</b> with your phone camera'],
-     ['Fix a job sent back to me', '<b>Fix &amp; resubmit</b> on the red Returned job'],
+     ['Fix a job sent back to me', '<b>Fix &amp; send again</b> on the red Returned job'],
      ['Make the service report', '<b>My Work</b> → Reports → <b>Create &amp; sign</b>'],
      ['Get the client to sign', '<b>Client sign-off</b> — hand them the phone'],
      ['See a machine\'s past work', 'Tap the machine name anywhere']],
@@ -394,7 +394,7 @@ E += cover('Service Engineer Guide',
            [['Getting set up', 'Signing in, the app on your phone, what you own.'],
             ['Running the work', 'Creating work orders, assigning technicians, photos.'],
             ['The review loop', 'Approving, sending back, reassigning, closing as-is.'],
-            ['Issues and holds', 'Triaging what technicians find; pausing blocked jobs honestly.'],
+            ['Issues and holds', 'Deciding on what technicians find; pausing blocked jobs honestly.'],
             ['Service reports', 'Co-signing, or preparing the report yourself.'],
             ['Quick reference', 'A cheat sheet and answers to common questions.']])
 
@@ -448,10 +448,10 @@ E.append(Spacer(1, 3))
 E.append(table(['You press', 'What happens'],
     [['Approve', 'The job closes for good.'],
      ['Send back', 'You write what is missing ("add a photo of the replaced seal"). The technician sees '
-                   'your note at the top of My Work, fixes the record, and resubmits to you.'],
+                   'your note at the top of My Work, fixes the record, and sends it back to you.'],
      ['Reassign', 'Hands an open or stuck job to a different technician — with their open-job counts '
                   'shown. History stays intact.'],
-     ['Close as-is', 'On a returned job the technician never resubmitted: accept the record as it stands '
+     ['Close as-is', 'On a returned job the technician never fixed: accept the record as it stands '
                      'instead of waiting forever.']],
     [26 * mm, None]))
 E.append(Spacer(1, 4))
@@ -459,7 +459,7 @@ E.append(Paragraph('Each card shows the completion notes and the photos. Look at
                    'what the client will see in the report.', st_body))
 
 E += section('4. Issues and holds', 'What was found, and what is honestly blocked.')
-E.append(Paragraph('Issues: triaging what technicians report', st_h2))
+E.append(Paragraph('Issues: deciding on what technicians report', st_h2))
 E.append(Paragraph('When anyone reports a part needing service, repair or replacement, it appears in '
                    'your <b>To review</b> tab under <b>Reported issues</b>, and as an amber strip on the '
                    'machine\'s page. Three verdicts:', st_body))
@@ -497,7 +497,7 @@ E.append(table(['Path', 'How it goes'],
     [['Technician raises it', 'They press Create &amp; sign in My Work → Reports. It lands in your '
                               '<b>To review</b> tab under <b>Service reports</b>: press <b>View</b> to '
                               'read it, then <b>Approve &amp; sign</b> — or <b>Request changes</b> with a '
-                              'note, and they fix and resubmit.'],
+                              'note, and they fix it and send it again.'],
      ['You prepare it', 'When you approve the last job of a visit, the tool offers the report '
                         'immediately — <b>Create &amp; sign report</b>. One press compiles and signs it. '
                         'Any fully-approved visit without a report also waits in <b>Visits ready for a '
@@ -543,7 +543,7 @@ for q, a in [
     ('Why can\'t I edit a signed report?',
      'The client\'s signature locks it — that is what makes it proof. Corrections are new reports.'),
     ('Who sees the ageing clocks?',
-     'Your admin, on the Oversight page: unreviewed work, jobs sent back, untriaged issues, outstanding '
+     'Your admin, on the Oversight page: unreviewed work, jobs sent back, issues with no decision, outstanding '
      'signatures, and passed check-backs — each with how long it has waited.'),
 ]:
     E.append(KeepTogether([Paragraph(q, st_h3), Paragraph(a, st_body)]))
@@ -586,7 +586,7 @@ A.append(table(['Role', 'What they do'],
                     'photos, reports bad parts, and collects the client\'s signature on reports. Can look '
                     'up any plant; can only act on their own assignments. Cannot create work orders.'],
      ['Engineer', 'Owns their assigned plants: creates and assigns work orders, adds equipment, reviews '
-                  'technician work, triages issues, places holds, co-signs service reports, invites '
+                  'technician work, decides on reported issues, places holds, co-signs service reports, invites '
                   'technicians.'],
      ['Admin', 'Everything, everywhere: all plants, the Dashboard and Oversight pages, imports, the '
                'team, and the same review powers engineers have. Only the Superadmin grants Admin.']],
@@ -611,7 +611,7 @@ A.append(Paragraph('The four cards count the fleet: total, operational, in maint
                    'on it and whether it is late.', st_body))
 A.append(Paragraph('Oversight — "who is holding what up?"', st_h2))
 A.append(Paragraph('The accountability page. Top: four counters for things that have waited too long — '
-                   'unreviewed work, jobs sent back and untouched, untriaged issues, outstanding client '
+                   'unreviewed work, jobs sent back and untouched, issues with no decision, outstanding client '
                    'signatures, passed check-backs. Middle: the <b>specific stuck items</b>, oldest '
                    'first, each with a link. Bottom: per-engineer and per-technician load, including what '
                    'each technician closed in the last 30 days.', st_body))
@@ -631,7 +631,7 @@ A.append(steps([
     '<b>The technician does the work</b> and completes it with notes and photos. The machine returns to '
     'service immediately; the record becomes <b>Awaiting review</b>.',
     '<b>The engineer reviews</b> — approves, or sends it back with a note; the technician fixes and '
-    'resubmits. Stuck jobs can be reassigned or closed as-is.',
+    'sends it again. Stuck jobs can be reassigned or closed as-is.',
     '<b>Issues</b> found along the way (a part needing service, repair or replacement) go to the '
     'engineer to schedule, mark handled, or dismiss with a reason. Open issues stay pinned to the '
     'machine.',
@@ -670,7 +670,7 @@ A.append(bullets([
     '<b>Deactivate</b> — reversible; their records stay. Enforced in the database, not just the screen.',
 ]))
 A.append(Spacer(1, 3))
-A.append(Paragraph('Below the users sits the <b>Technicians</b> registry — every field name ever used on '
+A.append(Paragraph('Below the users sits the <b>Technicians</b> list — every field name ever used on '
                    'a job. Inviting a technician whose name is already there links their history to the '
                    'new login automatically.', st_body))
 

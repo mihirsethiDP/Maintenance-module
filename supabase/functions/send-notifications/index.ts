@@ -314,7 +314,7 @@ Deno.serve(async (req) => {
       if (!e || !scope.includes(e.plant_id as string)) continue;
       const d = ageDays(i.created_at);
       if (d < AGE.issue) continue;
-      rows.push([`${e.tag} \u2014 ${String(i.description || "").slice(0, 40)}`, "issue not triaged", `${d}d`]);
+      rows.push([`${e.tag} \u2014 ${String(i.description || "").slice(0, 40)}`, "issue reported, no decision yet", `${d}d`]);
     }
     for (const r of liveReports || []) {
       if (!scope.includes(String(r.plant_id))) continue;

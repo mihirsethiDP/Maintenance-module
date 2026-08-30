@@ -2166,7 +2166,7 @@ function renderMyWork() {
         <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">Engineer's note: ${esc(l.reviewNote || '')}</div></td>
         <td><div class="cell-primary">${l.endDate}</div><div class="cell-muted">Completed, sent back</div></td>
         <td class="col-center"><span class="badge badge-bd">Returned</span></td>
-        <td class="col-center"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="openResubmitModal('${l.id}')">Fix &amp; resubmit</button></td>
+        <td class="col-center"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="openResubmitModal('${l.id}')">Fix &amp; send again</button></td>
       </tr>`;
     }
     const et = onHold(l) ? { cls: 'text-slate-500', label: 'On hold \u00b7 check back ' + l.holdUntil } : ecStatus(l.etr, null);
@@ -2343,7 +2343,7 @@ function openClientSignModal(reportId) {
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitClientSign(event, '${reportId}')" class="space-y-3 text-sm">
       <p class="text-xs text-slate-500">Hand the phone to the client. Their signature locks the report for
-        <b>${esc(plantName(r.plant_id))}, ${r.visit_date}</b> — no edits after this, only amendments.</p>
+        <b>${esc(plantName(r.plant_id))}, ${r.visit_date}</b> — no changes after this — a correction would need a new report.</p>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Sign here</label>
         <canvas id="signPad" class="w-full border-2 border-dashed border-slate-300 rounded-md bg-white touch-none" height="160"></canvas>
@@ -2403,7 +2403,7 @@ async function engineerSignReport(reportId) {
   const { error } = await SUPA.rpc('engineer_review_report', { p_id: reportId, p_approve: true });
   if (error) { appAlert('Could not sign: ' + error.message); return; }
   await hydrateCloud(); closeModal(); route();
-  toast('Co-signed — the technician can now collect the client signature.');
+  toast('Signed — the technician can now collect the client\'s signature.');
 }
 async function openReportChangesModal(reportId) {
   const note = await appPromptText('Request changes', 'What should the technician fix before you sign?', 'e.g. Job on Blower-2 is missing — add it and resubmit.');
@@ -2433,7 +2433,7 @@ function openReportView(reportId) {
       <div class="p-3 rounded-md bg-slate-50 border border-slate-200 space-y-1">
         <div class="text-xs"><span class="text-slate-500">Technician:</span> <b>${esc(r.technician_name)}</b>
           <span class="text-slate-400">· ${String(r.tech_signed_at || '').slice(0, 16).replace('T', ' ')}</span>
-          ${r.eng_sign?.compiled ? '<span class="text-slate-400">(attested by work-order submission)</span>' : ''}</div>
+          ${r.eng_sign?.compiled ? '<span class="text-slate-400">(confirmed by the jobs they submitted)</span>' : ''}</div>
         ${sig('Engineer', r.eng_sign)}
         ${sig('Client', r.client_sign, r.client_sign?.designation ? `, ${esc(r.client_sign.designation)}` : '')}
         <div id="clientSigImg"></div>
@@ -2459,7 +2459,7 @@ function openResubmitModal(logId) {
   window._woPhotos = [];
   const l = state.logs.find(x => x.id === logId); if (!l) return;
   const e = eqById(l.equipmentId);
-  document.getElementById('modalTitle').textContent = `Fix & resubmit — ${e ? e.tag : logId}`;
+  document.getElementById('modalTitle').textContent = `Fix & send again — ${e ? e.tag : logId}`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitResubmit(event, '${logId}')" class="space-y-3 text-sm">
       <div class="p-3 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900">
@@ -2478,7 +2478,7 @@ function openResubmitModal(logId) {
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Resubmit for review</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Send again for review</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
@@ -2493,7 +2493,7 @@ async function submitResubmit(ev, logId) {
   const { error } = await SUPA.rpc('resubmit_work_order', { p_log: logId, p_notes: notes });
   if (error) { unlock(); appAlert('Could not resubmit: ' + error.message); return; }
   await hydrateCloud(); closeModal(); route();
-  toast('Resubmitted — your engineer will take another look.');
+  toast('Sent again — your engineer will take another look.');
 }
 
 // ---------- Oversight (admins) ----------
@@ -2505,7 +2505,7 @@ async function submitResubmit(ev, logId) {
 // order ages exactly like a neglected one -- the on-hold state that would fix
 // that is not built yet, so read long waits as "ask why", not "blame".
 const AGE_DEFAULTS = { review: 2, returned: 2, issue: 7, clientSign: 14 };
-const AGE_LABELS = { review: 'Unreviewed work', returned: 'Sent back, unfixed', issue: 'Issue untriaged', clientSign: 'Client signature' };
+const AGE_LABELS = { review: 'Unreviewed work', returned: 'Sent back, unfixed', issue: 'Issue with no decision', clientSign: 'Client signature' };
 // The clocks that define "late" belong to the admin reading the page, not to
 // the developer -- two admins may legitimately disagree. Stored per admin,
 // clamped so a typo cannot make every job "late" or nothing ever late.
@@ -2617,22 +2617,22 @@ function oversightData() {
   });
   logs.filter(l => woStateOf(l) === 'returned').forEach(l => {
     const d = daysAgo(l.endDate);
-    if (d >= AGE.returned) stuck.push({ d, kind: 'Sent back, not resubmitted', who: l.technician || 'technician',
+    if (d >= AGE.returned) stuck.push({ d, kind: 'Sent back, not fixed yet', who: l.technician || 'technician',
       what: (eqById(l.equipmentId)?.tag || '') + (l.woNo ? ' \u00b7 ' + l.woNo : ''), href: '#/engineer' });
   });
   issues.forEach(i => {
     const d = daysAgo(i.created_at);
-    if (d >= AGE.issue) stuck.push({ d, kind: 'Issue not triaged', who: 'engineers for ' + plantName(eqPlant(i.equipment_id)),
+    if (d >= AGE.issue) stuck.push({ d, kind: 'Issue — no decision yet', who: 'engineers for ' + plantName(eqPlant(i.equipment_id)),
       what: (eqById(i.equipment_id)?.tag || '') + ' \u2014 ' + (i.description || '').slice(0, 40), href: '#/engineer' });
   });
   reports.filter(r => r.status === 'submitted').forEach(r => {
     const d = daysAgo(r.updated_at);
-    if (d >= AGE.review) stuck.push({ d, kind: 'Report unsigned by engineer', who: 'engineers for ' + plantName(r.plant_id),
+    if (d >= AGE.review) stuck.push({ d, kind: 'Report waiting for the engineer to sign', who: 'engineers for ' + plantName(r.plant_id),
       what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer' });
   });
   reports.filter(r => r.status === 'eng_signed').forEach(r => {
     const d = daysAgo(r.updated_at);
-    if (d >= AGE.clientSign) stuck.push({ d, kind: 'Client signature outstanding', who: r.technician_name || 'technician',
+    if (d >= AGE.clientSign) stuck.push({ d, kind: 'Client has not signed yet', who: r.technician_name || 'technician',
       what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer' });
   });
   // A passed check-back is the one hold state that IS a problem: the date the
@@ -2704,9 +2704,9 @@ function renderOversight() {
     </div>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 mb-6">
       ${kpi('Unreviewed &gt; ' + AGE.review + 'd', stuck.filter(x => x.kind === 'Unreviewed work').length, 'text-amber-600')}
-      ${kpi('Sent back &gt; ' + AGE.returned + 'd', stuck.filter(x => x.kind === 'Sent back, not resubmitted').length, 'text-amber-600')}
-      ${kpi('Issues &gt; ' + AGE.issue + 'd', stuck.filter(x => x.kind === 'Issue not triaged').length, 'text-red-600')}
-      ${kpi('Signatures &gt; ' + AGE.clientSign + 'd', stuck.filter(x => x.kind === 'Client signature outstanding').length, 'text-red-600')}
+      ${kpi('Sent back &gt; ' + AGE.returned + 'd', stuck.filter(x => x.kind === 'Sent back, not fixed yet').length, 'text-amber-600')}
+      ${kpi('Issues &gt; ' + AGE.issue + 'd', stuck.filter(x => x.kind === 'Issue — no decision yet').length, 'text-red-600')}
+      ${kpi('Signatures &gt; ' + AGE.clientSign + 'd', stuck.filter(x => x.kind === 'Client has not signed yet').length, 'text-red-600')}
       ${kpi('Check-backs passed', stuck.filter(x => x.kind === 'Check-back date passed').length, 'text-red-600')}
     </div>
     ${(() => {
@@ -4423,8 +4423,8 @@ function openCompileReportModal(plantId, date, techId) {
       <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
         Covers <b>${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}</b> ${esc(content.technician)} finished
         at ${esc(plantName(plantId))} on ${date} — all approved by you.
-        <br />Creating it <b>signs it as you</b>. ${esc(content.technician)}'s work-order submissions are
-        recorded as their attestation. The client signs last, on site.
+        <br />Creating it <b>signs it as you</b>. The jobs ${esc(content.technician)} submitted count as
+        their confirmation of the work. The client signs last, on site.
       </div>
       <div class="flex gap-2 justify-end pt-1">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Not now</button>
@@ -5347,8 +5347,8 @@ function openHoldModal(logId) {
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="submitHold(event, '${logId}')" class="space-y-3 text-sm">
       <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
-        A hold pauses this job's overdue clock, so a real blocker stops reading as neglect.
-        <b>You do not need to know when the blocker clears</b> \u2014 only when you will check on it again.
+        A hold pauses this job's overdue clock, so a job waiting on something real does not look forgotten.
+        <b>You do not need to know when the wait ends</b> \u2014 only when you will check on it again.
         ${l.holdReviews ? `<br />This hold has been set ${l.holdReviews}\u00d7 already.` : ''}
       </div>
       ${openIssues.length ? `<div>
@@ -5853,7 +5853,7 @@ function generateSingleServiceReport(eqId, log) {
 
   // Footer
   doc.setFontSize(7); doc.setTextColor(140,140,140);
-  doc.text('This is a system-generated service report. Signatures above attest to the work described.', 14, doc.internal.pageSize.getHeight() - 8);
+  doc.text('This report was generated by the maintenance tool. The signatures above confirm the work described.', 14, doc.internal.pageSize.getHeight() - 8);
 
   const filename = `service-report-${eq.tag.replace(/[^a-zA-Z0-9]+/g,'-')}-${log.endDate}.pdf`;
   openPdfPreview(doc, filename, `Service Report — ${eq.tag}`);
