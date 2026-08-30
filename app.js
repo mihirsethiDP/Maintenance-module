@@ -417,6 +417,15 @@ function woRef(log, cls) {
   if (!log || !log.woNo) return '';
   return `<span class="font-mono text-[11px] text-slate-500 ${cls || ''}">${esc(log.woNo)}</span>`;
 }
+// Days between when the work is CLAIMED to have happened (end_date) and when
+// it was actually RECORDED (server clock). More than a day apart is worth the
+// reviewer's eye — it is also simply true for offline work that synced later.
+function recordedGapChip(log) {
+  if (!log || !log.endDate || !log.recordedAt) return '';
+  const gap = daysBetween(log.endDate, String(log.recordedAt).slice(0, 10));
+  if (gap <= 1) return '';
+  return `<span class="badge badge-mt" title="Completion dated ${log.endDate}, saved to the system on ${String(log.recordedAt).slice(0, 10)}">recorded ${gap} days after the work</span>`;
+}
 function ongoingStatusPill(log) {
   if (woStateOf(log) === 'submitted') return `<span class="badge badge-mt">Awaiting review</span>`;
   if (onHold(log) || holdExpired(log)) return holdChip(log);
@@ -520,7 +529,8 @@ const eqFromDb  = r => ({ id: r.id, tag: r.tag, type: r.type, make: r.make || ''
 const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || '', model: e.model || '', plant_id: e.plantId, location: e.location || '', installed: e.installed || null, status: e.status, slot: e.slot || null });
 const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null, woNo: r.wo_no || null,
   holdUntil: r.hold_until || null, holdReason: r.hold_reason || '', holdKind: r.hold_kind || null,
-  holdAt: r.hold_at || null, holdReviews: r.hold_reviews || 0, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
+  holdAt: r.hold_at || null, holdReviews: r.hold_reviews || 0,
+  recordedAt: r.completed_recorded_at || null, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -1700,6 +1710,7 @@ function renderEquipmentDetail(id) {
           : `<span class="text-xs ${isOverdue(l)?'text-red-600 font-medium':'text-brand'}">Expected ${l.etr || '—'}</span>`}
       </div>
       ${holdChip(l) ? `<div class="mt-1">${holdChip(l)} <span class="text-xs text-slate-500">${esc(l.holdReason)}</span></div>` : ''}
+      ${recordedGapChip(l) ? `<div class="mt-1">${recordedGapChip(l)}</div>` : ''}
       <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${esc(l.notes) || '—'}</div>
       ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${esc(l.completionNotes)}</div>` : ''}
       ${(() => {
@@ -4401,7 +4412,7 @@ function renderWoReviewTab(items) {
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
           <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-500 font-normal">· ${esc(plantName(e.plantId))}</span></div>
-          <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b></div>
+          <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b> ${recordedGapChip(l)}</div>
         </div>
         <span class="badge badge-mt">Awaiting review</span>
       </div>
@@ -5357,7 +5368,7 @@ function openMaintModal(eqId, fromIssueId) {
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-slate-600 mb-1">Start date <span class="text-red-500">*</span></label>
-          <input type="date" name="startDate" value="${today()}" required class="w-full border border-slate-300 rounded-md px-2 py-1.5"
+          <input type="date" name="startDate" value="${today()}" required max="${today()}" class="w-full border border-slate-300 rounded-md px-2 py-1.5"
             onchange="const et = this.form.querySelector('[name=etr]'); if (et) { et.min = this.value; if (et.value && et.value < this.value) et.value = this.value; }" />
         </div>
         <div>
@@ -6078,7 +6089,8 @@ function openCompleteModal(eqId) {
       </div>` : ''}
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion date <span class="text-red-500">*</span></label>
-        <input type="date" name="endDate" value="${today()}" required ${log && woStateOf(log) !== 'open' && log.startDate ? `min="${log.startDate}"` : ''} class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+        <input type="date" name="endDate" value="${today()}" required max="${today()}" ${log && woStateOf(log) !== 'open' && log.startDate ? `min="${log.startDate}"` : ''} class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+        <div class="text-[10px] text-slate-400 mt-0.5">The day the work was actually done — today or earlier. The system also notes when it was saved.</div>
       </div>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Completion notes ${log?.reason === 'Breakdown' ? '<span class="text-red-500">*</span>' : '<span class="text-slate-400">(optional)</span>'}</label>
