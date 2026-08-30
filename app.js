@@ -2827,10 +2827,65 @@ function renderOversight() {
         <th class="col-center">Client signature</th><th class="col-center">Closed (30d)</th>
       </tr></thead><tbody>${techRows}</tbody></table>
     </div></div>
+    <div id="storageCard" class="bg-white rounded-xl border border-slate-200 p-4 mt-6">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Photo storage</div>
+      <div class="text-sm text-slate-400 mt-1">Checking…</div>
+    </div>
     <p class="text-[11px] text-slate-400 mt-4">Ages count calendar days. A job blocked on a vendor, a shutdown window or an approval should be
       <b>put on hold</b> from its equipment page. A hold's date is a <b>check-back</b>, not a promise the work will be done \u2014
       you need not know when a vendor will deliver, only when you will chase them. Once that date passes, or a hold has been
       extended three times, it appears above as its own problem.</p>`;
+  queueMicrotask(fillStorageCard);   // the card fills itself from the server
+}
+
+// ---------- Storage housekeeping (Oversight card) ----------
+// The free tier includes 1 GB of file storage; compressed photos run about
+// 200 KB each. The card shows where that stands, and cleans up files whose
+// records are gone (equipment deleted, tests) — the Storage API may delete
+// what SQL is forbidden to.
+const STORAGE_FREE_TIER = 1024 * 1024 * 1024;
+async function fillStorageCard() {
+  const el = document.getElementById('storageCard');
+  if (!el || !SUPA) return;
+  const { data, error } = await SUPA.rpc('wo_storage_usage');
+  const host = document.getElementById('storageCard');    // may have re-rendered
+  if (!host) return;
+  if (error || !data || !data.length) {
+    host.querySelector('.text-sm').textContent = 'Storage check unavailable (run supabase/47).';
+    return;
+  }
+  const u = data[0];
+  const mb = b => (b / 1048576).toFixed(b >= 104857600 ? 0 : 1);
+  const pct = Math.min(100, Math.round(u.total_bytes / STORAGE_FREE_TIER * 100));
+  host.innerHTML = `
+    <div class="flex items-center gap-3 flex-wrap">
+      <div class="min-w-0 flex-1">
+        <div class="text-xs uppercase tracking-wide text-slate-500">Photo storage</div>
+        <div class="text-sm text-slate-700 mt-1"><b>${mb(u.total_bytes)} MB</b> of 1 GB used · ${u.object_count} file${u.object_count === 1 ? '' : 's'}</div>
+        <div class="h-1.5 rounded-full bg-slate-100 mt-2 overflow-hidden"><div class="h-full ${pct > 80 ? 'bg-red-500' : 'bg-brand'}" style="width:${Math.max(1, pct)}%"></div></div>
+      </div>
+      ${u.orphan_count > 0 ? `<div class="text-right">
+        <div class="text-xs text-amber-700">${u.orphan_count} file${u.orphan_count === 1 ? '' : 's'} (${mb(u.orphan_bytes)} MB) belong to deleted records</div>
+        <button onclick="cleanupOrphanMedia()" class="mt-1.5 text-xs px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-medium">Clean up</button>
+      </div>` : `<span class="text-xs text-slate-400">Nothing to clean up.</span>`}
+    </div>`;
+}
+async function cleanupOrphanMedia() {
+  const { data, error } = await SUPA.rpc('list_orphan_wo_media');
+  if (error) { appAlert('Could not list the files: ' + error.message); return; }
+  const paths = (data || []).map(x => x.path);
+  if (!paths.length) { toast('Nothing to clean up.'); fillStorageCard(); return; }
+  if (!await appConfirm(
+    `Delete ${paths.length} photo file${paths.length === 1 ? '' : 's'} whose equipment or job no longer exists? They are not shown anywhere and cannot be restored.`,
+    'Clean up storage')) return;
+  // The Storage API deletes in batches; also sweep records whose file is gone.
+  for (let i = 0; i < paths.length; i += 100) {
+    const { error: rmErr } = await SUPA.storage.from('wo-media').remove(paths.slice(i, i + 100));
+    if (rmErr) { appAlert('Stopped part-way: ' + rmErr.message + ' — run Clean up again to continue.'); break; }
+  }
+  await SUPA.rpc('purge_orphan_wo_media').then(() => {}, () => {});
+  toast('Storage cleaned up.');
+  fillStorageCard();
 }
 
 // ---------- Maintenance Log ----------
