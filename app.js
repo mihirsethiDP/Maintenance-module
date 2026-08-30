@@ -2538,7 +2538,7 @@ async function engineerSignReport(reportId) {
   toast('Signed — the technician can now collect the client\'s signature.');
 }
 async function openReportChangesModal(reportId) {
-  const note = await appPromptText('Request changes', 'What should the technician fix before you sign?', 'e.g. Job on Blower-2 is missing — add it and resubmit.');
+  const note = await appPromptText('Request changes', 'What should the technician fix before you sign?', 'e.g. Job on Blower-2 is missing — add it and send it again.');
   if (note === null) return;
   if (!note.trim()) { appAlert('A note is required.'); return; }
   const { error } = await SUPA.rpc('engineer_review_report', { p_id: reportId, p_approve: false, p_note: note.trim() });
@@ -5750,7 +5750,7 @@ function renderOutboxChip() {
   el.id = 'outboxChip';
   el.onclick = openOutboxModal;
   el.className = 'fixed bottom-4 left-4 z-[60] px-3.5 py-2 rounded-full shadow-lg text-xs font-medium inline-flex items-center gap-2 '
-    + (failed ? 'bg-red-600 text-white' : 'bg-amber-500 text-white');
+    + (failed ? 'bg-red-600 text-white' : 'bg-amber-700 text-white');
   el.innerHTML = failed
     ? `${failed} saved action${failed === 1 ? '' : 's'} refused — tap to see why`
     : `${mine.length} saved on this phone — sends when back online`;

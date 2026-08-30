@@ -39,9 +39,14 @@ declare
   v_wono    text;
   v_eqstat  text;
   v_today   date := (now() at time zone 'Asia/Kolkata')::date;
-  -- Deliberately far from any real visit: submit_service_report keys on
-  -- (plant, date, technician), and this must not touch live records.
-  v_vdate   date := ((now() at time zone 'Asia/Kolkata')::date - 200);
+  -- Within 46's 30-day backdating bound, but far enough back to avoid any
+  -- real visit. Everything rolls back regardless.
+  v_vdate   date := ((now() at time zone 'Asia/Kolkata')::date - 20);
+  v_log3    text := 'L-TEST3-' || to_char(clock_timestamp(), 'HH24MISSMS');
+  v_rep2    text := 'SR-TESTB-' || to_char(clock_timestamp(), 'HH24MISSMS');
+  v_amends  text;
+  v_bool    boolean;
+  v_eq2     text;
 begin
   -- ---------- fixtures ----------
   select id into v_tech from public.profiles
@@ -66,6 +71,11 @@ begin
   if v_eq is null then
     raise exception 'TEST RESULTS%', E'\n  ABORT: no operational equipment without an open work order.';
   end if;
+  select e.id into v_eq2 from public.equipment e
+   where e.status = 'Operational' and e.id <> v_eq
+     and not exists (select 1 from public.maintenance_logs l
+                      where l.equipment_id = e.id and l.end_date is null)
+   limit 1;
 
   res := array_append(res, ('fixtures: technician=' || v_tech || ', admin=' || v_boss || ', equipment=' || v_eq));
 
@@ -74,7 +84,7 @@ begin
   -- =========================================================
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
-    perform public.log_maintenance_start(v_log, v_eq, 'Scheduled', v_today, v_today, 'x', 'test',
+    perform public.log_maintenance_start(v_log, v_eq, 'Scheduled', v_vdate, v_vdate, 'x', 'test',
                                          'Normal', null::bigint, null::text, v_tech, false);
     res := array_append(res, 'FAIL  a technician was allowed to CREATE a work order');
   exception when others then
@@ -83,7 +93,7 @@ begin
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
   begin
-    perform public.log_maintenance_start(v_log, v_eq, 'Scheduled', v_today, v_today, 'Test Tech', 'self-test',
+    perform public.log_maintenance_start(v_log, v_eq, 'Scheduled', v_vdate, v_vdate, 'Test Tech', 'self-test',
                                          'Normal', null::bigint, null::text, v_tech, true);
     res := array_append(res, 'PASS  admin created a work order, assigned, photos required');
   exception when others then
@@ -212,7 +222,7 @@ begin
   -- 5. Holds
   -- =========================================================
   perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
-  perform public.log_maintenance_start(v_log2, v_eq, 'Scheduled', v_today, v_today, 'Test Tech', 'hold test',
+  perform public.log_maintenance_start(v_log2, v_eq, 'Scheduled', v_vdate, v_vdate, 'Test Tech', 'hold test',
                                        'Normal', null::bigint, null::text, v_tech, false);
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
@@ -322,6 +332,115 @@ begin
     res := array_append(res, 'FAIL  compiled a report for a date with no completed work');
   exception when others then
     res := array_append(res, 'PASS  engineer cannot compile a report for a visit that did not happen');
+  end;
+
+  -- =========================================================
+  -- 8. Honest dates (46): the completion date is a bounded claim
+  -- =========================================================
+  perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
+  perform public.log_maintenance_start(v_log3, v_eq, 'Scheduled', v_vdate, v_vdate, 'Test Tech', 'bounds test',
+                                       'Normal', null::bigint, null::text, v_tech, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
+  begin
+    perform public.log_maintenance_complete(v_log3, v_today + 1, 'future', null, null);
+    res := array_append(res, 'FAIL  accepted a completion dated in the future');
+  exception when others then
+    res := array_append(res, 'PASS  completion cannot be dated in the future');
+  end;
+  begin
+    perform public.log_maintenance_complete(v_log3, v_vdate - 1, 'early', null, null);
+    res := array_append(res, 'FAIL  accepted a completion dated before the job started');
+  exception when others then
+    res := array_append(res, 'PASS  completion cannot predate the job''s start');
+  end;
+  begin
+    -- On a SECOND machine: v_eq has an open job here, whose duplicate guard
+    -- would fire before the date bound and test the wrong thing.
+    perform public.log_maintenance_start('L-FUT-' || v_log3, v_eq2, 'Scheduled', v_today + 1, v_today + 1, 'x', 'y',
+                                         'Normal', null::bigint, null::text, null::uuid, false);
+    res := array_append(res, 'FAIL  accepted a work order starting in the future');
+  exception when others then
+    res := array_append(res, 'PASS  work orders cannot start in the future');
+  end;
+
+  -- =========================================================
+  -- 9. Photo requirement toggle (48): engineer waives, visibly
+  -- =========================================================
+  begin
+    perform public.set_photo_requirement(v_log3, false);
+    res := array_append(res, 'FAIL  a technician changed the photo requirement');
+  exception when others then
+    res := array_append(res, 'PASS  technician cannot change the photo requirement');
+  end;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
+  begin
+    perform public.set_photo_requirement(v_log3, false);
+    select photos_waived_by = v_boss into v_bool from public.maintenance_logs where id = v_log3;
+    res := array_append(res, case when v_bool then 'PASS  waiver recorded with the waiver''s identity'
+                       else 'FAIL  waiver not recorded' end);
+  exception when others then
+    res := array_append(res, ('FAIL  engineer could not waive photos: ' || sqlerrm));
+  end;
+
+  -- =========================================================
+  -- 10. Deactivation handover guard (44): open assigned work blocks it
+  -- =========================================================
+  begin
+    update public.profiles set status = 'disabled' where id = v_tech;
+    res := array_append(res, 'FAIL  deactivated a technician who still has an open assigned job');
+    update public.profiles set status = 'active' where id = v_tech;
+  exception when others then
+    res := array_append(res, 'PASS  deactivation refused while open assigned work exists');
+  end;
+
+  -- Close v_log3 (photos were waived, so no media needed).
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
+  perform public.log_maintenance_complete(v_log3, v_vdate, 'Bounds-test job done.', null, null);
+  perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
+  perform public.review_work_order(v_log3, true, null);
+  begin
+    perform public.set_photo_requirement(v_log3, true);
+    res := array_append(res, 'FAIL  changed the photo requirement on a finished job');
+  exception when others then
+    res := array_append(res, 'PASS  photo requirement is untouchable once the job is finished');
+  end;
+
+  -- =========================================================
+  -- 11. Amendments (50): a signed day accepts an additional report
+  --     (also the first-ever execution of the partial-index ON CONFLICT)
+  -- =========================================================
+  begin
+    perform public.engineer_create_report(v_rep2, v_plant, v_vdate, v_tech,
+      json_build_object('jobs', json_build_array(
+        json_build_object('id', v_log), json_build_object('id', v_log2), json_build_object('id', v_log3)))::jsonb);
+    select amendment_of into v_amends from public.service_reports where id = v_rep2;
+    res := array_append(res, case when v_amends = v_rep
+      then 'PASS  amendment created over the signed day, linked to the original'
+      else 'FAIL  amendment link wrong: ' || coalesce(v_amends, '(null)') end);
+  exception when others then
+    res := array_append(res, ('FAIL  could not create an amendment: ' || sqlerrm));
+  end;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
+  begin
+    perform public.submit_service_report('SR-DUP-' || v_rep2, v_plant, v_vdate,
+      json_build_object('jobs', '[]'::json)::jsonb);
+    res := array_append(res, 'FAIL  a second in-flight report was allowed for the same visit');
+  exception when others then
+    res := array_append(res, 'PASS  one in-flight report per visit (the open amendment blocks another)');
+  end;
+  begin
+    perform public.client_sign_report(v_rep2, 'Test Client', 'Plant In-charge', v_rep2 || '/sig.png');
+    res := array_append(res, 'PASS  the amendment collected its own client signature');
+  exception when others then
+    res := array_append(res, ('FAIL  amendment client-sign failed: ' || sqlerrm));
+  end;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
+  begin
+    perform public.engineer_create_report('SR-3-' || v_rep2, v_plant, v_vdate, v_tech,
+      json_build_object('jobs', '[]'::json)::jsonb);
+    res := array_append(res, 'FAIL  compiled a report when every job was already covered');
+  exception when others then
+    res := array_append(res, 'PASS  nothing-new-to-report refusal once all jobs are covered');
   end;
 
   raise exception 'TEST RESULTS%', E'\n  ' || array_to_string(res, E'\n  ') ||

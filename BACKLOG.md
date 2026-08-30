@@ -38,6 +38,20 @@ bottom table with its version.
 | v=96–97 | Per-admin Oversight clocks + design-QA fixes (contrast, tap targets, photo-retry edge) |
 | ≤ v=95 | Phases 1–4: technician tier, photos+review, issues, signed reports, overrides, WO numbers, holds, Oversight |
 
+## QA sweep — 2026-08-30 (post-technician-tier, v77→v107)
+
+Layers run: extended SQL harness (Mihir to execute), escaping scan, jargon
+scan, render sweep incl. never-before-rendered branches, contrast math on new
+UI. Findings, all fixed: the harness itself had rotted (46's date bounds
+refused its 200-day-old fixtures); one "resubmit" survived the plain-language
+pass; the outbox chip was white-on-amber-500 at ~2.1:1. Verified clean:
+escaping across all 25 new render functions (two candidates were false
+positives), the amendment Reports-tab branch with delta content, zero JS
+errors across all pages/roles. The harness now also asserts: honest-date
+bounds, the photo waiver's identity trail, the deactivation guard, and the
+full amendment cycle — including the first-ever execution of the
+partial-index ON CONFLICT.
+
 ## Standing verification debts
 
 Claims made and never yet witnessed by a human:
