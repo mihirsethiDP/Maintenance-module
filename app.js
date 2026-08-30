@@ -3275,13 +3275,92 @@ async function setUserStatus(userId, status) {
   if (!isAdmin() || !SUPA) return;
   const u = state.users.find(x => x.id === userId); if (!u) return;
   const deactivating = status === 'disabled';
-  if (deactivating && !await appConfirm(
-    `Deactivate ${u.name}? They will lose access until reactivated — signed out on their next visit, and the database refuses their requests immediately. Everything they ever recorded stays untouched.`,
-    'Deactivate user')) return;
+
+  if (deactivating) {
+    // A technician's OPEN jobs would be assigned to a ghost — nobody's My Work
+    // shows them, and Oversight blames someone who cannot even sign in. Those
+    // must be handed over (or explicitly unassigned) first. Jobs already
+    // submitted or sent back are fine: engineers hold Approve / Close as-is.
+    const openJobs = state.logs.filter(l => l.assignedTo === userId && !l.endDate);
+    if (openJobs.length) { openDeactivateHandoverModal(userId, openJobs); return; }
+
+    const inReview = state.logs.filter(l => l.assignedTo === userId &&
+      ['submitted', 'returned'].includes(woStateOf(l))).length;
+    let msg = `Deactivate ${u.name}? They will lose access until reactivated — signed out on their next visit, and the database refuses their requests immediately. Everything they ever recorded stays untouched.`;
+    if (inReview) msg += `\n\nThey have ${inReview} completed job${inReview === 1 ? '' : 's'} still in review — engineers can approve or close those without them.`;
+    if (u.role === 'Engineer') {
+      const plants = assignmentsFor(userId).length;
+      if (plants) msg += `\n\nThey are the engineer for ${plants} plant${plants === 1 ? '' : 's'}. Until you assign another engineer there, completed work and reported issues at those plants wait for an admin to review.`;
+    }
+    if (!await appConfirm(msg, 'Deactivate user')) return;
+  }
+
   const { error } = await SUPA.from('profiles').update({ status }).eq('id', userId);
   if (error) { saveError(error); return; }
-  await hydrateCloud(); route();
+  await hydrateCloud(['users']); route();
   toast(deactivating ? `${esc(u.name)} deactivated.` : `${esc(u.name)} reactivated — they can sign in again.`);
+}
+
+// The handover: every open job goes to another technician, or is explicitly
+// left unassigned for the engineers — never silently orphaned.
+function openDeactivateHandoverModal(userId, openJobs) {
+  const u = state.users.find(x => x.id === userId);
+  const others = technicianAccounts().filter(t => t.id !== userId);
+  document.getElementById('modalTitle').textContent = `${esc(u.name)} still has open work`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitDeactivateHandover(event, '${userId}')" class="space-y-3 text-sm">
+      <p class="text-xs text-slate-500">Deactivating them now would leave ${openJobs.length === 1 ? 'this job' : 'these jobs'}
+        assigned to someone who cannot sign in. Hand the work over first.</p>
+      <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[30vh] overflow-y-auto">
+        ${openJobs.map(l => {
+          const e = eqById(l.equipmentId);
+          return `<div class="px-3 py-2">
+            <div class="text-xs font-medium text-slate-800">${e ? esc(e.tag) : l.equipmentId}
+              ${l.woNo ? `<span class="font-mono text-[10px] text-slate-400">${esc(l.woNo)}</span>` : ''}</div>
+            <div class="text-[11px] text-slate-500">${e ? esc(plantName(e.plantId)) : ''} \u00b7 ${esc(l.reason)}${onHold(l) ? ' \u00b7 on hold' : ''}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Hand ${openJobs.length === 1 ? 'it' : 'them'} to</label>
+        <select name="to" class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
+          ${others.map(t => `<option value="${t.id}">${esc(t.name)} \u2014 ${openCountFor(t.id)} open</option>`).join('')}
+          <option value="">No one \u2014 leave unassigned, engineers take it from here</option>
+        </select>
+        <div class="text-[10px] text-slate-400 mt-0.5">Unassigned jobs stay open on the equipment and in the engineers'
+          queues; they just sit in nobody's My Work.</div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white">Hand over &amp; deactivate</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
+}
+async function submitDeactivateHandover(ev, userId) {
+  ev.preventDefault();
+  const toId = new FormData(ev.target).get('to') || null;
+  const u = state.users.find(x => x.id === userId);
+  const openJobs = state.logs.filter(l => l.assignedTo === userId && !l.endDate);
+  const unlock = lockSubmit(ev, 'Handing over\u2026');
+  // Reassign through the RPC (keeps the name + audit trail); unassign is a
+  // plain update the admin's RLS already permits.
+  for (const l of openJobs) {
+    if (toId) {
+      const { error } = await SUPA.rpc('reassign_work_order', { p_log: l.id, p_to: toId });
+      if (error) { unlock(); appAlert(`Could not reassign ${l.woNo || l.id}: ` + error.message + '\n\nNothing was deactivated.'); return; }
+    } else {
+      const { error } = await SUPA.from('maintenance_logs').update({ assigned_to: null }).eq('id', l.id);
+      if (error) { unlock(); appAlert(`Could not unassign ${l.woNo || l.id}: ` + error.message + '\n\nNothing was deactivated.'); return; }
+    }
+  }
+  const { error } = await SUPA.from('profiles').update({ status: 'disabled' }).eq('id', userId);
+  if (error) { unlock(); appAlert('Jobs were handed over, but deactivation failed: ' + error.message); return; }
+  await Promise.all([refreshLogRows(openJobs.map(l => l.id)), hydrateCloud(['users'])]);
+  closeModal(); route();
+  const dest = toId ? (state.users.find(x => x.id === toId)?.name || 'their colleague') : 'the engineers';
+  toast(`${esc(u.name)} deactivated \u2014 ${openJobs.length} job${openJobs.length === 1 ? '' : 's'} handed to ${esc(dest)}.`);
 }
 
 // ---------- Edit user contact details (admin) ----------
