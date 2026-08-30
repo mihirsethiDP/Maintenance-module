@@ -8,8 +8,7 @@ bottom table with its version.
 
 | # | Item | Why it matters | Size |
 |---|------|----------------|------|
-| 1 | Bell refresh on scoped saves | The bell can lag one action behind after a hot-path save; self-heals on full sync | Small |
-| 2 | Sweep for orphaned `SR-*` signature images | The storage clean-up deliberately excludes them; a failed client-sign RPC after upload leaves a tiny PNG forever | Small |
+| — | (empty — next items come from the field, or from the next adversarial sweep) | | |
 
 ## Waiting on the world (not on code)
 
@@ -26,6 +25,7 @@ bottom table with its version.
 
 | Version | What |
 |---------|------|
+| SQL 51 | Signature images join the storage sweep: an SR-* file is an orphan when no report's client_sign references it (24h guard kept). And the "bell lag" backlog item was VERIFIED NON-EXISTENT — route() re-renders the header after every scoped save and activity entries echo locally at insert; closed without shipping a phantom fix |
 | v=106 / SQL 50 | Amendment reports: a signed visit day accepts an additional report covering only the uncovered jobs; delta content, chained coverage, amendment chips at review and in the report view |
 | v=105 / SQL 49 | Silent no-op fixed: compiling over a client-signed report now refuses in plain words; mid-session deactivation signs out politely; outbox survives IndexedDB being unavailable (form stays open, entries intact) |
 | v=104 / SQL 48 | Photo requirement toggleable on open jobs by engineers/admins; waivers recorded and shown at review |
