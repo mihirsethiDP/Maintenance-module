@@ -50,7 +50,7 @@ positives), the amendment Reports-tab branch with delta content, zero JS
 errors across all pages/roles. The harness now also asserts: honest-date
 bounds, the photo waiver's identity trail, the deactivation guard, and the
 full amendment cycle — including the first-ever execution of the
-partial-index ON CONFLICT.
+partial-index ON CONFLICT. **Executed by Mihir 2026-08-30: 37/37 PASS.**
 
 ## Standing verification debts
 
