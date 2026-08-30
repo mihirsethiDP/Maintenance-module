@@ -195,8 +195,9 @@ PHONE_INSTALL = table(['Your phone', 'How to install the app'],
 
 OFFLINE = callout('No signal at the plant?',
     'The app still opens and shows everything from your last sync, with an amber banner telling you '
-    'how old the data is. Browsing works offline; saving needs a connection. If a save fails mid-blip, '
-    'your entries stay in the form: reconnect and press the button again.')
+    'how old the data is. Technicians can even finish jobs and report problems with no signal at all — '
+    'the phone keeps the work and sends it by itself when the connection returns. Other actions '
+    '(reviews, new work orders, signatures) need a connection.')
 
 WO_NUMBER = Paragraph('Every job created since late August carries a <b>number like WO-2026-0147</b>. '
     'It shows on the job, in the log, and on service reports — use it when you talk about a job on '
@@ -267,6 +268,12 @@ T.append(steps([
 T.append(Spacer(1, 3))
 T.append(Paragraph('Small job, finished in a few minutes? Press <b>Complete now</b> instead of Start Work. '
                    'It records the start and the finish together.', st_small))
+T.append(Spacer(1, 3))
+T.append(callout('No signal? Finish the job anyway',
+                 'Close the job exactly as normal — photos, notes, everything. The phone shows an orange '
+                 'bubble: <b>"saved on this phone — sends when back online"</b>, and the job shows '
+                 '<b>Waiting for signal</b>. The moment your phone finds a connection, it all sends by '
+                 'itself. Tap the orange bubble any time to see what is waiting, or to send it now.'))
 T.append(Paragraph('The closing form', st_h3))
 T.append(bullets([
     '<b>Service guide</b> — tap to open it if you want a reminder of the usual steps for that machine. '
@@ -367,8 +374,9 @@ for q, a in [
      'Your engineer put it on hold — usually a part is on order. It comes back on that date; nothing for '
      'you to do until then.'),
     ('There is no signal at the plant.',
-     'You can still open the app and read everything. Saving needs signal. Do the work, then close the '
-     'job when you have signal again — you can change the completion date to the day you actually did it.'),
+     'Work normally. Finishing a job, sending one again, and reporting a problem all save on the phone '
+     'and send themselves when the signal returns — the orange bubble shows what is waiting. Just do '
+     'not clear the browser or delete the app while something is waiting to send.'),
     ('The client signed but the report looks wrong.',
      'A signed report cannot be changed. Tell your engineer — he will make a correction report.'),
     ('Can I put a machine into maintenance myself?',

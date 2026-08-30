@@ -962,6 +962,11 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 startTableLabeller();
+// Saved offline work: load it, show it, and send it whenever we come online.
+window.addEventListener('online', () => setTimeout(() => flushOutbox(), 800));
+setTimeout(async () => {
+  try { await outboxLoad(); renderOutboxChip(); flushOutbox(); } catch (e) { console.warn(e); }
+}, 1500);
 // Escape closes the topmost overlay (notification panel, then modal).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -2215,6 +2220,15 @@ function renderMyWork() {
         <td class="col-center"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="openResubmitModal('${l.id}')">Fix &amp; send again</button></td>
       </tr>`;
     }
+    if (outboxHasFor(l.id)) {
+      return `<tr>
+        <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div>${woRef(l, 'block mt-0.5')}</td>
+        <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">Saved on this phone — waiting for signal.</div></td>
+        <td><div class="cell-primary">${l.etr || '—'}</div><div class="cell-muted">Started ${l.startDate}</div></td>
+        <td class="col-center"><span class="badge badge-mt">Waiting for signal</span></td>
+        <td class="col-center"><span class="text-xs text-slate-400">—</span></td>
+      </tr>`;
+    }
     const et = onHold(l) ? { cls: 'text-slate-500', label: 'On hold \u00b7 check back ' + l.holdUntil } : ecStatus(l.etr, null);
     const act = woStateOf(l) === 'open'
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${l.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')" title="Done on the spot — record it in one go">Complete now</button></div>`
@@ -2533,11 +2547,26 @@ function openResubmitModal(logId) {
 async function submitResubmit(ev, logId) {
   ev.preventDefault();
   const notes = new FormData(ev.target).get('notes') || '';
+  const queueIt = async () => {
+    await outboxAdd('resubmit', logId, { notes, photosDone: false },
+      (window._woPhotos || []).map(x => x.blob));
+    (window._woPhotos || []).forEach(x => URL.revokeObjectURL(x.url));
+    window._woPhotos = [];
+    closeModal(); route();
+    toast('No signal — saved on this phone. It sends itself when you are back online.');
+  };
+  if (SUPA && !navigator.onLine) { await queueIt(); return; }
   const unlock = lockSubmit(ev);
   const upErr = await uploadWoPhotos(logId);
-  if (upErr) { unlock(); appAlert('Could not save the photos — nothing was resubmitted. ' + upErr); return; }
+  if (upErr) {
+    if (isNetworkError(upErr)) { unlock(); await queueIt(); return; }
+    unlock(); appAlert('Could not save the photos — nothing was sent. ' + upErr); return;
+  }
   const { error } = await SUPA.rpc('resubmit_work_order', { p_log: logId, p_notes: notes });
-  if (error) { unlock(); appAlert('Could not send again: ' + error.message); return; }
+  if (error) {
+    if (isNetworkError(error)) { unlock(); await queueIt(); return; }
+    unlock(); appAlert('Could not send again: ' + error.message); return;
+  }
   await refreshLogRows([logId]); closeModal(); route();
   toast('Sent again — your engineer will take another look.');
 }
@@ -4688,8 +4717,21 @@ async function _startWorkOrderInner(logId) {
   if (!log || woStateOf(log) !== 'open') { appAlert('This work-order has already been started.'); return; }
   const eq = eqById(log.equipmentId);
   if (SUPA) {
+    if (!navigator.onLine) {
+      await outboxAdd('start', logId, { eqId: log.equipmentId });
+      route();
+      toast('No signal — saved on this phone. It sends itself when you are back online.');
+      return;
+    }
     const { error } = await SUPA.rpc('start_work_order', { p_log: logId });
-    if (error) { saveError(error); return; }
+    if (error) {
+      if (isNetworkError(error)) {
+        await outboxAdd('start', logId, { eqId: log.equipmentId });
+        route(); toast('No signal — saved on this phone. It sends itself when you are back online.');
+        return;
+      }
+      saveError(error); return;
+    }
     await refreshLogRows([logId]);
     route();
     pushEventNotification(log.reason === 'Breakdown' ? 'breakdown' : 'maintenance', eqById(log.equipmentId), log);
@@ -5351,6 +5393,258 @@ function openMaintModal(eqId, fromIssueId) {
   document.getElementById('modal').classList.remove('hidden');
   pushOverlayState();
 }
+// ---------- Offline outbox ----------
+// A technician in a signal-dead plant can finish jobs and report problems;
+// the device keeps them here and sends them when the connection returns.
+// Scope is deliberately the FIELD LOOP only (start / complete / send-again /
+// report issue). Creating work orders, reviews, holds and signatures stay
+// online-only: they happen at desks, or must not replay against state that
+// may have changed.
+//
+// Two rules keep this safe:
+//   1. Never lie about server state — a queued job stays visibly open with a
+//      "waiting for signal" chip; nothing renders as done until the server
+//      says so.
+//   2. Replays are harmless — the flusher re-fetches the job first and skips
+//      as success when it is already in the target state; photos use
+//      deterministic paths + a unique index (45) so retries cannot duplicate.
+//
+// Storage is IndexedDB (photos are Blobs; localStorage cannot hold them),
+// mirrored into memory for synchronous UI checks. Items are stamped with the
+// user id and only ever flushed for the signed-in user.
+let _outbox = [];              // in-memory mirror of the IDB store
+let _outboxFlushing = false;
+
+function outboxDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('mm-outbox', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('outbox', { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function outboxLoad() {
+  if (!SUPA) return;
+  try {
+    const db = await outboxDb();
+    _outbox = await new Promise((res, rej) => {
+      const r = db.transaction('outbox').objectStore('outbox').getAll();
+      r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error);
+    });
+    db.close();
+  } catch (e) { console.warn('outbox unavailable', e); _outbox = []; }
+}
+async function outboxPut(item) {
+  const db = await outboxDb();
+  await new Promise((res, rej) => {
+    const tx = db.transaction('outbox', 'readwrite');
+    tx.objectStore('outbox').put(item);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  db.close();
+  const i = _outbox.findIndex(x => x.id === item.id);
+  if (i >= 0) _outbox[i] = item; else _outbox.push(item);
+  renderOutboxChip();
+}
+async function outboxRemove(id) {
+  const db = await outboxDb();
+  await new Promise((res, rej) => {
+    const tx = db.transaction('outbox', 'readwrite');
+    tx.objectStore('outbox').delete(id);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  db.close();
+  _outbox = _outbox.filter(x => x.id !== id);
+  renderOutboxChip();
+}
+function myOutbox() { return _outbox.filter(x => x.userId === currentUser()?.id); }
+function outboxHasFor(logId) { return myOutbox().some(x => x.logId === logId && !x.failed); }
+
+// A fetch that died at the network layer — the only failure worth queueing.
+// Anything the server actually answered (validation, permissions) is a real
+// answer, not a connectivity problem.
+function isNetworkError(err) {
+  const m = String(err?.message || err || '');
+  return !navigator.onLine || /Failed to fetch|NetworkError|network|ERR_INTERNET|Load failed/i.test(m);
+}
+async function outboxAdd(kind, logId, payload, photos) {
+  const item = {
+    id: (crypto.randomUUID ? crypto.randomUUID() : 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2)),
+    userId: currentUser()?.id, kind, logId: logId || null, payload,
+    photos: photos || [],           // compressed JPEG blobs — IDB stores them natively
+    createdAt: new Date().toISOString(), failed: null,
+  };
+  await outboxPut(item);
+  return item;
+}
+
+// ---- The flusher: oldest first, one at a time, single-flight ----
+async function flushOutbox(manual) {
+  if (_outboxFlushing || !SUPA || !authUser || !navigator.onLine) return;
+  const mine = myOutbox().filter(x => !x.failed || manual);
+  if (!mine.length) return;
+  _outboxFlushing = true;
+  let sent = 0, failed = 0;
+  try {
+    for (const item of mine.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      try {
+        await flushOne(item);
+        await outboxRemove(item.id);
+        sent++;
+      } catch (err) {
+        if (isNetworkError(err)) break;          // still offline — try again later
+        item.failed = String(err?.message || err).slice(0, 200);
+        await outboxPut(item);                    // a real refusal: keep, show why
+        failed++;
+      }
+    }
+  } finally { _outboxFlushing = false; }
+  if (sent) {
+    const ids = [...new Set(mine.map(x => x.logId).filter(Boolean))];
+    await refreshLogRows(ids);
+    await refreshEquipmentRows([...new Set(mine.map(x => x.payload?.eqId).filter(Boolean))]);
+    if (mine.some(x => x.kind === 'issue' || x.payload?.issueDesc)) await hydrateCloud(['issues']);
+    route();
+    toast(`Sent ${sent} saved action${sent === 1 ? '' : 's'} from this phone.`);
+  }
+  if (failed) { renderOutboxChip(); toast('Some saved actions were refused — open the list to see why.'); }
+}
+
+async function flushOne(item) {
+  // Current truth first: if the job already reflects this action (the earlier
+  // send actually landed, or someone else did it), succeed without replaying.
+  let live = null;
+  if (item.logId) {
+    const { data, error } = await SUPA.from('maintenance_logs').select('*').eq('id', item.logId).maybeSingle();
+    if (error) throw error;
+    live = data ? logFromDb(data) : null;
+    if (!live) throw new Error('This job no longer exists.');
+  }
+  const p = item.payload || {};
+
+  if (item.kind === 'start') {
+    if (woStateOf(live) !== 'open') return;                     // already started or beyond
+    const { error } = await SUPA.rpc('start_work_order', { p_log: item.logId });
+    if (error) throw error;
+    return;
+  }
+
+  if (item.kind === 'resubmit') {
+    if ((item.photos || []).length && !p.photosDone) {
+      const rows = [];
+      for (let i = 0; i < item.photos.length; i++) {
+        const path = `${item.logId}/${item.id}_${i}.jpg`;
+        const { error } = await SUPA.storage.from('wo-media').upload(path, item.photos[i], { contentType: 'image/jpeg' });
+        if (error && !/already exists|duplicate/i.test(error.message || '')) throw error;
+        rows.push({ log_id: item.logId, path });
+      }
+      const { error: mErr } = await SUPA.from('work_order_media')
+        .upsert(rows, { onConflict: 'path', ignoreDuplicates: true });
+      if (mErr) throw mErr;
+      p.photosDone = true; item.payload = p; await outboxPut(item);
+    }
+    if (woStateOf(live) !== 'returned') return;                 // already sent again / decided
+    const { error } = await SUPA.rpc('resubmit_work_order', { p_log: item.logId, p_notes: p.notes || '' });
+    if (error) throw error;
+    return;
+  }
+
+  if (item.kind === 'complete') {
+    // Photos first, deterministic paths, duplicates tolerated (unique index 45).
+    if ((item.photos || []).length && !p.photosDone) {
+      const rows = [];
+      for (let i = 0; i < item.photos.length; i++) {
+        const path = `${item.logId}/${item.id}_${i}.jpg`;
+        const { error } = await SUPA.storage.from('wo-media').upload(path, item.photos[i], { contentType: 'image/jpeg' });
+        if (error && !/already exists|duplicate/i.test(error.message || '')) throw error;
+        rows.push({ log_id: item.logId, path });
+      }
+      const { error: mErr } = await SUPA.from('work_order_media')
+        .upsert(rows, { onConflict: 'path', ignoreDuplicates: true });
+      if (mErr) throw mErr;
+      p.photosDone = true; item.payload = p; await outboxPut(item);   // survive a crash between steps
+    }
+    if (!live.endDate) {
+      const { error } = await SUPA.rpc('log_maintenance_complete', {
+        p_log: item.logId, p_end: p.endDate, p_notes: p.notes || '',
+        p_checklist: null, p_part_actions: p.partActions?.length ? p.partActions : null,
+      });
+      if (error) throw error;
+    }
+    if ((p.issueDesc || '').trim() && !p.issueDone) {
+      const { error } = await SUPA.from('wo_issues').upsert({
+        equipment_id: p.eqId, log_id: item.logId, description: p.issueDesc.trim(),
+        need: p.issueNeed || 'repair', raised_name: p.raisedName || '', client_key: item.id + '-issue',
+      }, { onConflict: 'client_key', ignoreDuplicates: true });
+      if (error) throw error;
+    }
+    return;
+  }
+
+  if (item.kind === 'issue') {
+    const { error } = await SUPA.from('wo_issues').upsert({
+      equipment_id: p.eqId, description: p.desc, need: p.need || 'repair',
+      raised_name: p.raisedName || '', client_key: item.id,
+    }, { onConflict: 'client_key', ignoreDuplicates: true });
+    if (error) throw error;
+    return;
+  }
+  throw new Error('Unknown saved action.');
+}
+
+// ---- The chip: saved work is visible, inspectable, discardable ----
+function renderOutboxChip() {
+  document.getElementById('outboxChip')?.remove();
+  const mine = myOutbox();
+  if (!mine.length || !SUPA) return;
+  const failed = mine.filter(x => x.failed).length;
+  const el = document.createElement('button');
+  el.id = 'outboxChip';
+  el.onclick = openOutboxModal;
+  el.className = 'fixed bottom-4 left-4 z-[60] px-3.5 py-2 rounded-full shadow-lg text-xs font-medium inline-flex items-center gap-2 '
+    + (failed ? 'bg-red-600 text-white' : 'bg-amber-500 text-white');
+  el.innerHTML = failed
+    ? `${failed} saved action${failed === 1 ? '' : 's'} refused — tap to see why`
+    : `${mine.length} saved on this phone — sends when back online`;
+  document.body.appendChild(el);
+}
+const OUTBOX_KIND_LABEL = { start: 'Start work', complete: 'Complete job', resubmit: 'Send again', issue: 'Report issue' };
+function openOutboxModal() {
+  const mine = myOutbox();
+  document.getElementById('modalTitle').textContent = 'Saved on this phone';
+  document.getElementById('modalBody').innerHTML = `
+    <div class="space-y-3 text-sm">
+      <p class="text-xs text-slate-500">These were saved without signal. They send themselves when the
+        connection returns — or press <b>Send now</b> to try immediately.</p>
+      <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[40vh] overflow-y-auto">
+        ${mine.map(x => {
+          const e = x.logId ? eqById(state.logs.find(l => l.id === x.logId)?.equipmentId) : eqById(x.payload?.eqId);
+          return `<div class="px-3 py-2 flex items-start gap-2">
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-medium text-slate-800">${OUTBOX_KIND_LABEL[x.kind] || x.kind} — ${e ? esc(e.tag) : ''}</div>
+              <div class="text-[11px] text-slate-500">${new Date(x.createdAt).toLocaleString()}${(x.photos || []).length ? ` · ${x.photos.length} photo${x.photos.length === 1 ? '' : 's'}` : ''}</div>
+              ${x.failed ? `<div class="text-[11px] text-red-600 mt-0.5">Refused: ${esc(x.failed)}</div>` : ''}
+            </div>
+            <button onclick="discardOutboxItem('${x.id}')" class="text-xs px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 shrink-0">Discard</button>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="flex gap-2 justify-end">
+        <button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
+        <button onclick="closeModal(); flushOutbox(true)" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Send now</button>
+      </div>
+    </div>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
+}
+async function discardOutboxItem(id) {
+  const x = _outbox.find(i => i.id === id);
+  if (!await appConfirm(`Throw away this saved ${(OUTBOX_KIND_LABEL[x?.kind] || 'action').toLowerCase()}? It was never sent — the work will show as not done.`, 'Discard saved action')) return;
+  await outboxRemove(id);
+  closeModal();
+  if (myOutbox().length) openOutboxModal();
+}
+
 // ---------- Work-order photos ----------
 // Staged in memory as compressed JPEG blobs; uploaded to the wo-media bucket
 // only when the completion actually submits. Phone camera files arrive at
@@ -5584,12 +5878,23 @@ function openIssueModal(eqId) {
 async function submitIssue(ev, eqId) {
   ev.preventDefault();
   const f = new FormData(ev.target);
+  const payload = { eqId, desc: (f.get('desc') || '').trim(), need: f.get('need') || 'repair',
+                    raisedName: currentUser()?.name || '' };
+  const queueIt = async () => {
+    await outboxAdd('issue', null, payload);
+    closeModal(); route();
+    toast('No signal — saved on this phone. The engineers see it when you are back online.');
+  };
+  if (!navigator.onLine) { await queueIt(); return; }
   const unlock = lockSubmit(ev);
   const { error } = await SUPA.from('wo_issues').insert({
-    equipment_id: eqId, description: (f.get('desc') || '').trim(),
-    need: f.get('need') || 'repair', raised_name: currentUser()?.name || '',
+    equipment_id: eqId, description: payload.desc,
+    need: payload.need, raised_name: payload.raisedName,
   });
-  if (error) { unlock(); appAlert('Could not save the issue: ' + error.message); return; }
+  if (error) {
+    if (isNetworkError(error)) { unlock(); await queueIt(); return; }
+    unlock(); appAlert('Could not save the issue: ' + error.message); return;
+  }
   await hydrateCloud(['issues']); closeModal(); route();
   toast('Reported — the engineers will see it in their review queue.');
 }
@@ -5830,11 +6135,29 @@ async function submitComplete(ev, eqId) {
       appAlert('This job requires photos — add at least one before completing.');
       return;
     }
+    // No signal: keep everything on the phone — photos, notes, part actions,
+    // any issue found — and send it all when the connection returns.
+    const queueCompletion = async () => {
+      await outboxAdd('complete', log.id, {
+        eqId, endDate, notes: completionNotes, partActions,
+        issueDesc: (f.get('issueDesc') || '').trim(), issueNeed: f.get('issueNeed') || 'repair',
+        raisedName: currentUser()?.name || '',
+        photosDone: window._woUploadedFor === log.id,
+      }, (window._woPhotos || []).map(x => x.blob));
+      (window._woPhotos || []).forEach(x => URL.revokeObjectURL(x.url));
+      window._woPhotos = [];
+      closeModal(); route();
+      toast('No signal — the whole completion is saved on this phone and sends itself when you are back online.');
+    };
+    if (!navigator.onLine) { await queueCompletion(); return; }
     const unlock = lockSubmit(ev);
     // Photos go up FIRST: they attach to the still-open log, so a failed
     // upload leaves the job open and retryable instead of closed and bare.
     const upErr = await uploadWoPhotos(log.id);
-    if (upErr) { unlock(); appAlert('Could not save the photos — the job is still open. ' + upErr); return; }
+    if (upErr) {
+      if (isNetworkError(upErr)) { unlock(); await queueCompletion(); return; }
+      unlock(); appAlert('Could not save the photos — the job is still open. ' + upErr); return;
+    }
     // Atomic RPC: closes the log, records part actions, stamps part history,
     // and returns the equipment to service — one transaction.
     let { error } = await SUPA.rpc('log_maintenance_complete', {
@@ -5848,7 +6171,10 @@ async function submitComplete(ev, eqId) {
         ({ error } = await SUPA.rpc('log_maintenance_complete', { p_log: log.id, p_end: endDate, p_notes: completionNotes }));
       }
     }
-    if (error) { unlock(); saveError(error); return; }
+    if (error) {
+      if (isNetworkError(error)) { unlock(); await queueCompletion(); return; }   // photos flag rides in payload
+      unlock(); saveError(error); return;
+    }
     // Quick-completed auto-generated tasks were never "started" — stamp the
     // acting user as technician, and replace the scheduled start_date with the
     // actual completion date so durations don't read as weeks of phantom work.
