@@ -344,6 +344,11 @@ T.append(Spacer(1, 3))
 T.append(Paragraph('After the client signs, the report is <b>locked</b>. Nobody can change it — not you, '
                    'not your engineer. That is what makes it proof of the work.', st_body))
 T.append(Spacer(1, 3))
+T.append(Paragraph('Did more work on a day whose report is already signed? The Reports tab shows that '
+                   'day again with a <b>Report new work</b> button. It makes a <b>second</b> report '
+                   'covering only the new jobs — the signed one is never touched, and the client signs '
+                   'the new one the same way.', st_body))
+T.append(Spacer(1, 3))
 T.append(callout('Client not there?',
                  'Leave it. The line stays at <b>Ready for client signature</b> and you can collect it on '
                  'your next visit. Your engineer has already signed, so the work is recorded either way.'))
@@ -377,6 +382,9 @@ for q, a in [
      'Work normally. Finishing a job, sending one again, and reporting a problem all save on the phone '
      'and send themselves when the signal returns — the orange bubble shows what is waiting. Just do '
      'not clear the browser or delete the app while something is waiting to send.'),
+    ('I finished the job days ago but only recorded it today.',
+     'Set the completion date to the day the work was really done — the tool allows up to 30 days back, '
+     'never a future date. The record also notes when it was saved, so a late entry is honest, not hidden.'),
     ('The client signed but the report looks wrong.',
      'A signed report cannot be changed. Tell your engineer — he will make a correction report.'),
     ('Can I put a machine into maintenance myself?',
@@ -443,6 +451,12 @@ E.append(callout('A note, not a job?',
                  'If a machine needs attention <b>later</b> but keeps running, do not put it in '
                  'maintenance — use <b>Report issue</b> on the machine instead. Put in Maintenance takes '
                  'it out of service and starts the overdue clock; Report issue just gets it on your list.'))
+E.append(Paragraph('When photos cannot happen', st_h2))
+E.append(Paragraph('A dark pit, a dead camera — sometimes the evidence rule has to bend. On the '
+                   'machine\'s page, <b>Photos: required</b> switches to <b>Photos: optional</b> (and '
+                   'back) while the job is open. Waiving is never silent: the review card says '
+                   '<b>photos waived</b> and by whom, so approving a photo-less job is a decision on '
+                   'record, not an oversight.', st_body))
 E.append(Paragraph('Doing a job yourself', st_h2))
 E.append(Paragraph('Work you complete yourself closes directly — the review ceremony exists for '
                    'delegation, not for its own sake. Your Visit Reports tab still builds your own '
@@ -464,7 +478,10 @@ E.append(table(['You press', 'What happens'],
     [26 * mm, None]))
 E.append(Spacer(1, 4))
 E.append(Paragraph('Each card shows the completion notes and the photos. Look at the photos — they are '
-                   'what the client will see in the report.', st_body))
+                   'what the client will see in the report. Two small labels earn a second look when '
+                   'they appear: <b>"recorded N days after the work"</b> (the completion was saved later '
+                   'than it is dated — normal for offline work, worth a question otherwise) and '
+                   '<b>"photos waived"</b>.', st_body))
 
 E += section('4. Issues and holds', 'What was found, and what is honestly blocked.')
 E.append(Paragraph('Issues: deciding on what technicians report', st_h2))
@@ -509,7 +526,10 @@ E.append(table(['Path', 'How it goes'],
      ['You prepare it', 'When you approve the last job of a visit, the tool offers the report '
                         'immediately — <b>Create &amp; sign report</b>. One press compiles and signs it. '
                         'Any fully-approved visit without a report also waits in <b>Visits ready for a '
-                        'report</b>, so nothing is lost if you dismiss the prompt.']],
+                        'report</b>, so nothing is lost if you dismiss the prompt.'],
+     ['New work after signing', 'If more jobs from that day are approved after the client signed, the '
+                        'day qualifies again — the extra report covers <b>only the new jobs</b> and is '
+                        'marked as an addition to the signed one, which stays locked.']],
     [30 * mm, None]))
 E.append(Spacer(1, 4))
 E.append(Paragraph('Either way, the last step is the client signing <b>on the technician\'s phone</b> at '
@@ -549,7 +569,8 @@ for q, a in [
      'Yes — once every job of the visit is approved. The tool offers it at the moment of the last '
      'approval, and lists it under Visits ready for a report afterwards.'),
     ('Why can\'t I edit a signed report?',
-     'The client\'s signature locks it — that is what makes it proof. Corrections are new reports.'),
+     'The client\'s signature locks it — that is what makes it proof. Work finished later that day goes '
+     'into an additional report (the tool offers it); anything else is corrected in a new report.'),
     ('Who sees the ageing clocks?',
      'Your admin, on the Oversight page: unreviewed work, jobs sent back, issues with no decision, outstanding '
      'signatures, and passed check-backs — each with how long it has waited.'),
@@ -630,6 +651,8 @@ A.append(bullets([
     'Jobs <b>on hold</b> are shown separately and do not count as overdue: a hold means an engineer has '
     'named what the job is waiting on and when they will chase it. A hold extended three or more times '
     'is flagged — that is a vendor problem, not a maintenance problem.',
+    'The <b>Photo storage</b> card shows how much space the job photos use, and offers a one-tap '
+    '<b>Clean up</b> when leftover files belong to deleted records.',
 ]))
 
 A += section('3. How work flows', 'The whole machine on one page.')
@@ -637,7 +660,9 @@ A.append(steps([
     '<b>A job is created</b> — by an engineer, or automatically from the PPM schedule — and assigned to '
     'a technician. It carries a number (WO-2026-0147) and can require photos; breakdowns always do.',
     '<b>The technician does the work</b> and completes it with notes and photos. The machine returns to '
-    'service immediately; the record becomes <b>Awaiting review</b>.',
+    'service immediately; the record becomes <b>Awaiting review</b>. Completion dates cannot be in the '
+    'future or more than 30 days back, and a record saved later than it is dated is labelled so at '
+    'review — dates are claims the tool keeps honest.',
     '<b>The engineer reviews</b> — approves, or sends it back with a note; the technician fixes and '
     'sends it again. Stuck jobs can be reassigned or closed as-is.',
     '<b>Issues</b> found along the way (a part needing service, repair or replacement) go to the '
@@ -675,7 +700,9 @@ A.append(bullets([
     'roam; their access comes from the jobs assigned to them.',
     '<b>Edit</b> — name, phone (with country code), and email notification settings per person.',
     '<b>Generate Schedule</b> — a PDF of someone\'s upcoming and outstanding work for any period.',
-    '<b>Deactivate</b> — reversible; their records stay. Enforced in the database, not just the screen.',
+    '<b>Deactivate</b> — reversible; their records stay. If they still have open assigned jobs, the '
+    'tool makes you hand those to someone else (or explicitly back to the engineers) first — nobody\'s '
+    'work is silently orphaned. Enforced in the database, not just the screen.',
 ]))
 A.append(Spacer(1, 3))
 A.append(Paragraph('Below the users sits the <b>Technicians</b> list — every field name ever used on '
@@ -710,7 +737,8 @@ for q, a in [
      'The engineer should put it on hold with a check-back date — then it shows as "waiting on vendor" '
      'instead of ageing. If they keep extending the hold, that pattern is flagged too.'),
     ('Can a signed service report be edited or deleted?',
-     'No — by anyone, ever. That is what makes it proof. Corrections are issued as new reports.'),
+     'No — by anyone, ever. That is what makes it proof. Work finished after signing goes into an '
+     'additional report for the same day; other corrections are issued as new reports.'),
     ('A technician left. What happens to their open jobs?',
      'Reassign them (on the job or in the review tab). Deactivating the account keeps all their history.'),
     ('Does anything get sent to the customer automatically?',

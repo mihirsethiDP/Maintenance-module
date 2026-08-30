@@ -25,6 +25,7 @@ bottom table with its version.
 
 | Version | What |
 |---------|------|
+| guides r3 | All three role guides regenerated to cover SQL 46–51: honest-date bounds + late-entry label, the photo waiver and its review trail, the Oversight Photo storage card, the deactivation handover, and amendment reports ("Report new work"). Every button label in the PDFs verified verbatim against app.js |
 | SQL 51 | Signature images join the storage sweep: an SR-* file is an orphan when no report's client_sign references it (24h guard kept). And the "bell lag" backlog item was VERIFIED NON-EXISTENT — route() re-renders the header after every scoped save and activity entries echo locally at insert; closed without shipping a phantom fix |
 | v=106 / SQL 50 | Amendment reports: a signed visit day accepts an additional report covering only the uncovered jobs; delta content, chained coverage, amendment chips at review and in the report view |
 | v=105 / SQL 49 | Silent no-op fixed: compiling over a client-signed report now refuses in plain words; mid-session deactivation signs out politely; outbox survives IndexedDB being unavailable (form stays open, entries intact) |
