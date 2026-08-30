@@ -572,39 +572,41 @@ function restoreSnapshot() {
   } catch { return false; }
 }
 
-async function hydrateCloud() {
-  if (!SUPA || !authUser) return;
-  hydrateErrors = [];
-  const fail = (name, err) => { hydrateErrors.push(name); console.warn(name + ' hydrate failed', err); };
-  await Promise.all([
-    SUPA.from('profiles').select('id,name,role,phone,status,email,ui_mode,email_digest,email_urgent,oversight_thresholds')
-      .then(({ data, error }) => {
-        if (error) return fail('users', error);
-        cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active', uiMode: p.ui_mode || 'simple',
-          emailDigest: p.email_digest !== false, emailUrgent: p.email_urgent !== false,
-          oversightThresholds: p.oversight_thresholds || null }));
-      }, e => fail('users', e)),
-    SUPA.from('plant_assignments').select('user_id,plant_id')
-      .then(({ data, error }) => {
-        if (error) return fail('assignments', error);
-        cloudAssignments = {};
-        (data || []).forEach(a => { (cloudAssignments[a.user_id] = cloudAssignments[a.user_id] || []).push(a.plant_id); });
-      }, e => fail('assignments', e)),
-    SUPA.from('plants').select('*').order('id')
-      .then(({ data, error }) => {
-        if (error) return fail('plants', error);
-        cloudPlants = (data || []).map(p => ({ id: p.id, name: p.name, location: p.location || '', notifications: p.notifications || defaultNotifConfig() }));
-      }, e => fail('plants', e)),
-    SUPA.from('equipment').select('*').order('id')
-      .then(({ data, error }) => {
-        if (error) return fail('equipment', error);
-        cloudEquipment = (data || []).map(eqFromDb);
-        cloudSlots = {};
-        cloudEquipment.forEach(e => { if (e.slot) cloudSlots[e.id] = e.slot; });
-      }, e => fail('equipment', e)),
-    // Logs: PostgREST caps un-ranged selects at 1000 rows. Fetch ALL open
-    // work-orders (must never drop out) + the most recent history, merged.
-    Promise.all([
+// Every save used to call this with no arguments and refetch all ~14 tables —
+// the whole 663-machine fleet and 1000+ logs — over plant Wi-Fi, per save.
+// Fetchers are now named, so a mutation refreshes only what it changed:
+//   hydrateCloud()                    full sync (login, reconnect, bulk admin)
+//   hydrateCloud(['issues'])          one small table
+//   refreshLogRows([id]) / refreshEquipmentRows([id])   just the rows touched
+const CLOUD_FETCHERS = {
+  users: (fail) => SUPA.from('profiles').select('id,name,role,phone,status,email,ui_mode,email_digest,email_urgent,oversight_thresholds')
+    .then(({ data, error }) => {
+      if (error) return fail('users', error);
+      cloudUsers = (data || []).map(p => ({ id: p.id, name: p.name || (p.email||'').split('@')[0] || 'User', role: p.role, phone: p.phone || '', email: p.email || '', status: p.status || 'active', uiMode: p.ui_mode || 'simple',
+        emailDigest: p.email_digest !== false, emailUrgent: p.email_urgent !== false,
+        oversightThresholds: p.oversight_thresholds || null }));
+    }, e => fail('users', e)),
+  assignments: (fail) => SUPA.from('plant_assignments').select('user_id,plant_id')
+    .then(({ data, error }) => {
+      if (error) return fail('assignments', error);
+      cloudAssignments = {};
+      (data || []).forEach(a => { (cloudAssignments[a.user_id] = cloudAssignments[a.user_id] || []).push(a.plant_id); });
+    }, e => fail('assignments', e)),
+  plants: (fail) => SUPA.from('plants').select('*').order('id')
+    .then(({ data, error }) => {
+      if (error) return fail('plants', error);
+      cloudPlants = (data || []).map(p => ({ id: p.id, name: p.name, location: p.location || '', notifications: p.notifications || defaultNotifConfig() }));
+    }, e => fail('plants', e)),
+  equipment: (fail) => SUPA.from('equipment').select('*').order('id')
+    .then(({ data, error }) => {
+      if (error) return fail('equipment', error);
+      cloudEquipment = (data || []).map(eqFromDb);
+      cloudSlots = {};
+      cloudEquipment.forEach(e => { if (e.slot) cloudSlots[e.id] = e.slot; });
+    }, e => fail('equipment', e)),
+  // Logs: PostgREST caps un-ranged selects at 1000 rows. Fetch ALL open
+  // work-orders (must never drop out) + the most recent history, merged.
+  logs: (fail) => Promise.all([
       SUPA.from('maintenance_logs').select('*').is('end_date', null),
       SUPA.from('maintenance_logs').select('*').order('start_date', { ascending: false }).limit(1000),
     ]).then(([open, recent]) => {
@@ -613,54 +615,69 @@ async function hydrateCloud() {
       (open.data || []).concat(recent.data || []).forEach(r => byId.set(r.id, r));
       cloudLogs = [...byId.values()].map(logFromDb);
     }, e => fail('logs', e)),
-    SUPA.from('notifications').select('*').order('ts', { ascending: false }).limit(100)
-      .then(({ data, error }) => {
-        if (error) return fail('notifications', error);
-        cloudNotifs = data || [];
-      }, e => fail('notifications', e)),
-    SUPA.from('checklist_templates').select('eq_type,items')
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet — fall back to defaults silently
-        cloudChecklists = {};
-        (data || []).forEach(row => { cloudChecklists[row.eq_type] = row.items || []; });
-      }, () => {}),
-    SUPA.from('equipment_parts').select('*').order('criticality', { ascending: false })
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet
-        cloudParts = data || [];
-      }, () => {}),
-    SUPA.from('type_config').select('eq_type,expected_life_years')
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet — fall back to constants
-        cloudTypeLife = {};
-        (data || []).forEach(row => { cloudTypeLife[row.eq_type] = row.expected_life_years; });
-      }, () => {}),
-    SUPA.from('maintenance_log_parts').select('*')
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet
-        cloudLogParts = data || [];
-      }, () => {}),
-    SUPA.from('enrichment_queue').select('*').order('id')
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet (run supabase/14) — feature hides itself
-        cloudQueue = data || [];
-      }, () => {}),
-    SUPA.from('technicians').select('*').order('name')
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet (run supabase/15)
-        cloudTechnicians = data || [];
-      }, () => {}),
-    SUPA.from('wo_issues').select('*').order('created_at', { ascending: false }).limit(500)
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet (run supabase/35)
-        cloudIssues = data || [];
-      }, () => {}),
-    SUPA.from('service_reports').select('*').order('visit_date', { ascending: false }).limit(300)
-      .then(({ data, error }) => {
-        if (error) return;   // table may not exist yet (run supabase/35)
-        cloudReports = data || [];
-      }, () => {}),
-  ]);
+  notifications: (fail) => SUPA.from('notifications').select('*').order('ts', { ascending: false }).limit(100)
+    .then(({ data, error }) => {
+      if (error) return fail('notifications', error);
+      cloudNotifs = data || [];
+    }, e => fail('notifications', e)),
+  checklists: () => SUPA.from('checklist_templates').select('eq_type,items')
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet — fall back to defaults silently
+      cloudChecklists = {};
+      (data || []).forEach(row => { cloudChecklists[row.eq_type] = row.items || []; });
+    }, () => {}),
+  parts: () => SUPA.from('equipment_parts').select('*').order('criticality', { ascending: false })
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet
+      cloudParts = data || [];
+    }, () => {}),
+  typeLife: () => SUPA.from('type_config').select('eq_type,expected_life_years')
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet — fall back to constants
+      cloudTypeLife = {};
+      (data || []).forEach(row => { cloudTypeLife[row.eq_type] = row.expected_life_years; });
+    }, () => {}),
+  logParts: () => SUPA.from('maintenance_log_parts').select('*')
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet
+      cloudLogParts = data || [];
+    }, () => {}),
+  queue: () => SUPA.from('enrichment_queue').select('*').order('id')
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet (run supabase/14) — feature hides itself
+      cloudQueue = data || [];
+    }, () => {}),
+  technicians: () => SUPA.from('technicians').select('*').order('name')
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet (run supabase/15)
+      cloudTechnicians = data || [];
+    }, () => {}),
+  issues: () => SUPA.from('wo_issues').select('*').order('created_at', { ascending: false }).limit(500)
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet (run supabase/35)
+      cloudIssues = data || [];
+    }, () => {}),
+  reports: () => SUPA.from('service_reports').select('*').order('visit_date', { ascending: false }).limit(300)
+    .then(({ data, error }) => {
+      if (error) return;   // table may not exist yet (run supabase/35)
+      cloudReports = data || [];
+    }, () => {}),
+};
+
+async function hydrateCloud(only) {
+  if (!SUPA || !authUser) return;
+  const full = !only;
+  const t0 = performance.now();
+  if (full) hydrateErrors = [];
+  // Partial refreshes never touch the error banner: a failed refresh just
+  // leaves that table's data one save stale, which the next full sync heals.
+  const fail = full
+    ? (name, err) => { hydrateErrors.push(name); console.warn(name + ' hydrate failed', err); }
+    : (name, err) => console.warn(name + ' refresh failed (stale until next sync)', err);
+  const names = full ? Object.keys(CLOUD_FETCHERS) : only.filter(k => CLOUD_FETCHERS[k]);
+  await Promise.all(names.map(k => CLOUD_FETCHERS[k](fail)));
+  window._lastRefresh = { what: full ? 'full' : names.join('+'), ms: Math.round(performance.now() - t0) };
+  if (!full) return;
   // Leave offline mode as soon as the core data is back — but only persist
   // the snapshot on a FULLY clean sync: a partial hydrate (logs failed, say)
   // would overwrite a complete snapshot with nulls.
@@ -668,6 +685,35 @@ async function hydrateCloud() {
   if (!hydrateErrors.length && cloudEquipment) saveSnapshot();
   // Resume / kick the background parts-research runner (single-flight, admin-only).
   setTimeout(() => { try { runEnrichmentQueue(); } catch (e) { console.warn(e); } }, 1200);
+}
+
+// Row-scoped refreshes for the two big tables. After completing one job there
+// is no reason to re-download 663 machines and 1000 logs: fetch the rows that
+// changed and merge them in place — state.logs/state.equipment share these
+// array references, so the next route() renders the merged data.
+async function refreshLogRows(ids) {
+  ids = (ids || []).filter(Boolean);
+  if (!SUPA || !ids.length) return;
+  if (!cloudLogs) return hydrateCloud(['logs']);      // never hydrated: do it properly
+  const { data, error } = await SUPA.from('maintenance_logs').select('*').in('id', ids);
+  if (error) return hydrateCloud(['logs']);           // fall back to the table
+  (data || []).map(logFromDb).forEach(l => {
+    const i = cloudLogs.findIndex(x => x.id === l.id);
+    if (i >= 0) cloudLogs[i] = l; else cloudLogs.unshift(l);
+  });
+  window._lastRefresh = { what: 'logs:' + ids.length + ' rows', ms: -1 };
+}
+async function refreshEquipmentRows(ids) {
+  ids = (ids || []).filter(Boolean);
+  if (!SUPA || !ids.length) return;
+  if (!cloudEquipment) return hydrateCloud(['equipment']);
+  const { data, error } = await SUPA.from('equipment').select('*').in('id', ids);
+  if (error) return hydrateCloud(['equipment']);
+  (data || []).map(eqFromDb).forEach(e => {
+    const i = cloudEquipment.findIndex(x => x.id === e.id);
+    if (i >= 0) cloudEquipment[i] = e; else cloudEquipment.push(e);
+    if (e.slot) cloudSlots[e.id] = e.slot;
+  });
 }
 // Part actions recorded on a completed work-order (real mode: junction table;
 // prototype: stored directly on the log object).
@@ -2332,7 +2378,7 @@ async function submitServiceReport(ev, plantId, date, existingId) {
     p_id: id, p_plant: plantId, p_date: date, p_content: content,
   });
   if (error) { unlock(); appAlert('Could not submit the report: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await hydrateCloud(['reports']); closeModal(); route();
   toast('Report signed and sent to your engineer.');
 }
 
@@ -2394,7 +2440,7 @@ async function submitClientSign(ev, reportId) {
     p_id: reportId, p_name: f.get('cname'), p_designation: f.get('cdesig') || '', p_image_path: path,
   });
   if (error) { unlock(); appAlert('Could not record the signature: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await hydrateCloud(['reports']); closeModal(); route();
   toast('Signed and locked. The report is final.');
 }
 
@@ -2402,7 +2448,7 @@ async function submitClientSign(ev, reportId) {
 async function engineerSignReport(reportId) {
   const { error } = await SUPA.rpc('engineer_review_report', { p_id: reportId, p_approve: true });
   if (error) { appAlert('Could not sign: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await hydrateCloud(['reports']); closeModal(); route();
   toast('Signed — the technician can now collect the client\'s signature.');
 }
 async function openReportChangesModal(reportId) {
@@ -2411,7 +2457,7 @@ async function openReportChangesModal(reportId) {
   if (!note.trim()) { appAlert('A note is required.'); return; }
   const { error } = await SUPA.rpc('engineer_review_report', { p_id: reportId, p_approve: false, p_note: note.trim() });
   if (error) { appAlert('Could not send back: ' + error.message); return; }
-  await hydrateCloud(); route();
+  await hydrateCloud(['reports']); route();
   toast('Sent back to the technician.');
 }
 function openReportView(reportId) {
@@ -2491,8 +2537,8 @@ async function submitResubmit(ev, logId) {
   const upErr = await uploadWoPhotos(logId);
   if (upErr) { unlock(); appAlert('Could not save the photos — nothing was resubmitted. ' + upErr); return; }
   const { error } = await SUPA.rpc('resubmit_work_order', { p_log: logId, p_notes: notes });
-  if (error) { unlock(); appAlert('Could not resubmit: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  if (error) { unlock(); appAlert('Could not send again: ' + error.message); return; }
+  await refreshLogRows([logId]); closeModal(); route();
   toast('Sent again — your engineer will take another look.');
 }
 
@@ -2526,7 +2572,7 @@ async function saveAgeCfg(ev) {
   const unlock = lockSubmit(ev);
   const { error } = await SUPA.from('profiles').update({ oversight_thresholds: cfg }).eq('id', currentUser().id);
   if (error) { unlock(); appAlert('Could not save: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await hydrateCloud(['users']); closeModal(); route();
   toast('Your clocks are saved — they apply to this page and your daily email.');
 }
 function openAgeCfgModal() {
@@ -4208,7 +4254,7 @@ async function reassignWo(logId, toId) {
   if (!toId) return;
   const { error } = await SUPA.rpc('reassign_work_order', { p_log: logId, p_to: toId });
   if (error) { appAlert('Could not reassign: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await refreshLogRows([logId]); closeModal(); route();
   toast('Reassigned — it is on their My Work now.');
 }
 function openReassignModal(logId) {
@@ -4333,7 +4379,7 @@ function renderWoReviewTab(items) {
 async function triageIssue(id, action, note, followLog) {
   const { error } = await SUPA.rpc('triage_issue', { p_id: id, p_action: action, p_note: note || null, p_follow_log: followLog || null });
   if (error) { appAlert('Could not update the issue: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await hydrateCloud(['issues']); closeModal(); route();
   toast(action === 'scheduled' ? 'Issue linked to the new work order.' : action === 'handled' ? 'Marked handled.' : 'Dismissed.');
 }
 async function dismissIssue(id) {
@@ -4402,7 +4448,7 @@ async function engineerCompileReport(plantId, date, techId) {
     p_id: id, p_plant: plantId, p_date: date, p_tech: techId, p_content: content,
   });
   if (error) { appAlert('Could not create the report: ' + error.message); return false; }
-  await hydrateCloud(); closeModal(); route();
+  await hydrateCloud(['reports']); closeModal(); route();
   toast('Report created and signed by you — ready for the client signature on site.');
   return true;
 }
@@ -4439,7 +4485,7 @@ async function reviewWo(logId, approve, note) {
   const before = state.logs.find(x => x.id === logId);
   const { error } = await SUPA.rpc('review_work_order', { p_log: logId, p_approve: approve, p_note: note || null });
   if (error) { appAlert('Could not save the review: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await refreshLogRows([logId]); closeModal(); route();
   toast(approve ? 'Approved and closed.' : 'Sent back to the technician with your note.');
   // If that approval completed a whole visit, offer its report now rather
   // than making the engineer come back after the technician raises one.
@@ -4565,7 +4611,7 @@ async function _startWorkOrderInner(logId) {
   if (SUPA) {
     const { error } = await SUPA.rpc('start_work_order', { p_log: logId });
     if (error) { saveError(error); return; }
-    await hydrateCloud();
+    await refreshLogRows([logId]);
     route();
     pushEventNotification(log.reason === 'Breakdown' ? 'breakdown' : 'maintenance', eqById(log.equipmentId), log);
     toast(`Work started — ${esc(eq?.tag || 'equipment')} is now in maintenance.`);
@@ -5402,14 +5448,14 @@ async function submitHold(ev, logId) {
     p_issue: f.get('issue') ? parseInt(f.get('issue'), 10) : null,
   });
   if (error) { unlock(); appAlert('Could not place the hold: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await refreshLogRows([logId]); closeModal(); route();
   toast('On hold \u2014 the overdue clock is paused until your check-back date.');
 }
 async function releaseHold(logId) {
   if (!await appConfirm('Release the hold? The job starts counting towards overdue again from its expected completion date.', 'Release hold')) return;
   const { error } = await SUPA.rpc('release_work_order_hold', { p_log: logId });
   if (error) { appAlert('Could not release the hold: ' + error.message); return; }
-  await hydrateCloud(); route();
+  await refreshLogRows([logId]); route();
   toast('Hold released.');
 }
 
@@ -5465,7 +5511,7 @@ async function submitIssue(ev, eqId) {
     need: f.get('need') || 'repair', raised_name: currentUser()?.name || '',
   });
   if (error) { unlock(); appAlert('Could not save the issue: ' + error.message); return; }
-  await hydrateCloud(); closeModal(); route();
+  await hydrateCloud(['issues']); closeModal(); route();
   toast('Reported — the engineers will see it in their review queue.');
 }
 
@@ -5553,12 +5599,14 @@ async function submitMaint(ev, eqId) {
     if (error) { unlock(); saveError(error); return; }
     await recordTechnician(log.technician);
     // Created from a reported issue — link them and mark it scheduled.
-    if (window._fromIssueId) {
-      await SUPA.rpc('triage_issue', { p_id: window._fromIssueId, p_action: 'scheduled', p_note: null, p_follow_log: log.id })
+    const fromIssue = window._fromIssueId;
+    if (fromIssue) {
+      await SUPA.rpc('triage_issue', { p_id: fromIssue, p_action: 'scheduled', p_note: null, p_follow_log: log.id })
         .then(({ error: e2 }) => { if (e2) console.warn('issue link failed', e2); });
       window._fromIssueId = null;
     }
-    await hydrateCloud();
+    await Promise.all([refreshLogRows([log.id]), refreshEquipmentRows([eqId]),
+                       ...(fromIssue ? [hydrateCloud(['issues'])] : [])]);
     closeModal(); route();
     const eq0 = eqById(eqId);
     pushEventNotification(evKey, eq0, log);
@@ -5695,7 +5743,7 @@ async function submitComplete(ev, eqId) {
       const unlock0 = lockSubmit(ev);
       const { error: stErr } = await SUPA.rpc('set_equipment_status', { eq_id: eqId, new_status: 'Operational' });
       if (stErr) { unlock0(); saveError(stErr); return; }
-      await hydrateCloud(); closeModal(); route();
+      await refreshEquipmentRows([eqId]); closeModal(); route();
       toast(`${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
       return;
     }
@@ -5742,7 +5790,9 @@ async function submitComplete(ev, eqId) {
       }).then(({ error: iErr }) => { if (iErr) console.warn('issue save failed', iErr); });
     }
     const closedLog = { ...log, endDate, completionNotes, checklist, partActions };
-    await hydrateCloud();
+    await Promise.all([refreshLogRows([log.id]), refreshEquipmentRows([eqId]),
+                       ...(partActions.length ? [hydrateCloud(['logParts', 'parts'])] : []),
+                       ...((f.get('issueDesc') || '').trim() ? [hydrateCloud(['issues'])] : [])]);
     closeModal(); route();
     pushEventNotification('operational', eqById(eqId), closedLog);
     toast(isTechnician()
@@ -5952,7 +6002,8 @@ async function submitEquipmentForm(ev, mode, eqId) {
       // Make & model just became known — release any waiting research row.
       const qRow = (cloudQueue || []).find(x => x.equipment_id === eqId && x.status === 'needs_info');
       if (qRow && make && model) await setQueueRow(qRow.id, { status: 'pending', error: null });
-      await hydrateCloud(); closeModal(); route(); return;
+      await Promise.all([refreshEquipmentRows([eqId]), ...(qRow ? [hydrateCloud(['queue'])] : [])]);
+      closeModal(); route(); return;
     }
     Object.assign(cur, patch);
   } else {
