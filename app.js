@@ -420,6 +420,12 @@ function woRef(log, cls) {
 // Days between when the work is CLAIMED to have happened (end_date) and when
 // it was actually RECORDED (server clock). More than a day apart is worth the
 // reviewer's eye — it is also simply true for offline work that synced later.
+// A removed photo requirement, shown to the reviewer by name.
+function photoWaivedChip(log) {
+  if (!log || !log.photosWaivedBy) return '';
+  const who = (state.users || []).find(u => u.id === log.photosWaivedBy)?.name || 'an engineer';
+  return `<span class="badge badge-mt" title="This job originally required photos.">photos waived by ${esc(who)}</span>`;
+}
 function recordedGapChip(log) {
   if (!log || !log.endDate || !log.recordedAt) return '';
   const gap = daysBetween(log.endDate, String(log.recordedAt).slice(0, 10));
@@ -530,7 +536,7 @@ const eqToDb    = e => ({ id: e.id, tag: e.tag, type: e.type, make: e.make || ''
 const logFromDb = r => ({ id: r.id, equipmentId: r.equipment_id, reason: r.reason, startDate: r.start_date, etr: r.etr, endDate: r.end_date, technician: r.technician || '', notes: r.notes || '', completionNotes: r.completion_notes || '', woState: r.wo_state || (r.end_date ? 'done' : 'active'), priority: r.priority || 'Normal', checklist: r.checklist || null, affectedPartId: r.affected_part_id || null, severity: r.severity || null, assignedTo: r.assigned_to || null, woNo: r.wo_no || null,
   holdUntil: r.hold_until || null, holdReason: r.hold_reason || '', holdKind: r.hold_kind || null,
   holdAt: r.hold_at || null, holdReviews: r.hold_reviews || 0,
-  recordedAt: r.completed_recorded_at || null, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
+  recordedAt: r.completed_recorded_at || null, photosWaivedBy: r.photos_waived_by || null, photosRequired: !!r.photos_required, reviewNote: r.review_note || null, submittedAt: r.submitted_at || null });
 const logToDb   = l => ({ id: l.id, equipment_id: l.equipmentId, reason: l.reason, start_date: l.startDate, etr: l.etr || null, end_date: l.endDate || null, technician: l.technician || '', notes: l.notes || '', completion_notes: l.completionNotes || '', wo_state: l.woState || (l.endDate ? 'done' : 'active'), priority: l.priority || 'Normal' });
 
 // Work-order state, tolerant of prototype logs that predate the column.
@@ -1747,6 +1753,11 @@ function renderEquipmentDetail(id) {
     const reassign = (detailOpenWo && SUPA && technicianAccounts().length)
       ? `<button onclick="openReassignModal('${detailOpenWo.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium">Reassign</button>` : '';
     const hb = 'px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium';
+    const photoReqBtn = (detailOpenWo && SUPA)
+      ? (detailOpenWo.photosRequired
+          ? `<button onclick="togglePhotoRequirement('${detailOpenWo.id}', false)" class="${hb}" title="The technician cannot close this job without a photo. Press to remove that requirement — the reviewer will see it was waived.">Photos: required</button>`
+          : `<button onclick="togglePhotoRequirement('${detailOpenWo.id}', true)" class="${hb}" title="Photos are optional on this job. Press to require at least one before it can be closed.">Photos: optional</button>`)
+      : '';
     const holdBtn = (detailOpenWo && SUPA)
       ? (onHold(detailOpenWo)
           ? `<button onclick="openHoldModal('${detailOpenWo.id}')" class="${hb}">Extend hold</button><button onclick="releaseHold('${detailOpenWo.id}')" class="${hb}">Release hold</button>`
@@ -1757,7 +1768,7 @@ function renderEquipmentDetail(id) {
       : e.status === 'Operational'
         ? `<button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
         : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
-    actionBtn = reassign + holdBtn + main;
+    actionBtn = reassign + photoReqBtn + holdBtn + main;
   }
   const replaceBtn = (!retired && isValveType(e.type) && !isTechnician())
     ? `<button onclick="openReplaceValveModal('${e.id}')" class="px-3 py-1.5 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium">Replace ${e.type}</button>` : '';
@@ -4467,7 +4478,7 @@ function renderWoReviewTab(items) {
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
           <div class="font-semibold text-sm">${tagLink(e)} <span class="text-slate-500 font-normal">· ${esc(plantName(e.plantId))}</span></div>
-          <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b> ${recordedGapChip(l)}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${l.woNo ? esc(l.woNo) + ' · ' : ''}${esc(l.reason)} · completed ${l.endDate} by <b>${esc(l.technician) || 'unknown'}</b> ${recordedGapChip(l)} ${photoWaivedChip(l)}</div>
         </div>
         <span class="badge badge-mt">Awaiting review</span>
       </div>
@@ -5815,6 +5826,22 @@ function onAssignPick(sel) {
   const t = technicianAccounts().find(x => x.id === sel.value);
   if (t) { inp.value = t.name; inp.readOnly = true; }
   else { inp.readOnly = false; }
+}
+
+// ---------- Photo requirement (open jobs; engineers and admins) ----------
+// A technician who genuinely cannot photograph calls their engineer; the
+// engineer decides here. Waivers are recorded and shown at review — the
+// reviewer approves a photo-less job knowing it was a decision.
+async function togglePhotoRequirement(logId, required) {
+  const l = state.logs.find(x => x.id === logId); if (!l) return;
+  const msg = required
+    ? 'Require photos on this job? The technician will not be able to close it without at least one.'
+    : `Remove the photo requirement? The job can then be closed without photos, and the review will show that you waived it${l.reason === 'Breakdown' ? ' \u2014 on a BREAKDOWN, where photos are normally always required' : ''}.`;
+  if (!await appConfirm(msg, required ? 'Require photos' : 'Waive photos')) return;
+  const { error } = await SUPA.rpc('set_photo_requirement', { p_log: logId, p_required: required });
+  if (error) { appAlert('Could not change it: ' + error.message); return; }
+  await refreshLogRows([logId]); route();
+  toast(required ? 'Photos are now required on this job.' : 'Photo requirement removed \u2014 the review will show it was waived.');
 }
 
 // ---------- Work-order holds ----------
