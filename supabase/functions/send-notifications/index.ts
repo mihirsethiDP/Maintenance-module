@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
 
   // ================= DIGEST: one summary per person per day ===============
   const { data: openLogs, error: logErr } = await db.from("maintenance_logs")
-    .select("id,equipment_id,reason,start_date,etr,technician,wo_state,notes")
+    .select("id,equipment_id,reason,start_date,etr,technician,wo_state,notes,hold_until")
     .is("end_date", null);
   if (logErr) {
     return json({ error: "db_error", message: "reading maintenance_logs: " + logErr.message }, 500);
@@ -358,9 +358,14 @@ Deno.serve(async (req) => {
       const e = eqById(l.equipment_id as string)!;
       return [e.tag as string, plantName(e.plant_id as string), String(l.etr || l.start_date || "")];
     };
-    const overdue = mine.filter((l) => l.etr && String(l.etr) < day).map(row);
-    const dueToday = mine.filter((l) => String(l.etr) === day).map(row);
-    const ready = mine.filter((l) => l.wo_state === "open" && (!l.etr || String(l.etr) > day)).map(row);
+    // A held job is honestly waiting on the world — not overdue, not noise —
+    // until its check-back date passes. A plan scheduled for a future day is
+    // not "ready" yet: far-future plans must not keep the daily email firing.
+    const onHold = (l: Record<string, unknown>) => l.hold_until && String(l.hold_until) >= day;
+    const overdue = mine.filter((l) => !onHold(l) && l.etr && String(l.etr) < day).map(row);
+    const dueToday = mine.filter((l) => !onHold(l) && String(l.etr) === day).map(row);
+    const ready = mine.filter((l) => !onHold(l) && l.wo_state === "open"
+      && String(l.start_date) <= day && (!l.etr || String(l.etr) > day)).map(row);
 
     // Admins get the accountability section; engineers already see their own
     // queue in the tables above and do not need to be told about themselves.

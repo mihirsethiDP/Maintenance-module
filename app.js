@@ -204,6 +204,7 @@ const saveSlots = s => localStorage.setItem(LS_SLOTS, JSON.stringify(s));
 const savePlant = p => localStorage.setItem(LS_PLANT, JSON.stringify(p));
 const saveUsers = u => localStorage.setItem(LS_USERS, JSON.stringify(u));
 const saveInvites = i => localStorage.setItem(LS_INVITES, JSON.stringify(i));
+// Kept callable from the DevTools console only — not wired to any UI.
 function resetDemo() { [LS_EQ, LS_LOG, LS_PLANT, LS_USERS, LS_SLOTS, LS_NOTIF, LS_OVERDUE_SEEN, LS_INVITES].forEach(k => localStorage.removeItem(k)); route(); }
 
 // ---------- Helpers ----------
@@ -927,7 +928,8 @@ function homeHashFor(user) {
 // the workspace exists before they learn where anything lives.
 function engineerAttentionCount() {
   if (!SUPA || isTechnician()) return 0;
-  return getSubmittedWOs().length + getOpenIssues().length + getSubmittedReports().length;
+  return getSubmittedWOs().length + getOpenIssues().length + getSubmittedReports().length
+       + visitsReadyForReport().length;
 }
 function myWorkAttentionCount() {
   if (!SUPA || !isTechnician()) return 0;
@@ -1332,7 +1334,7 @@ function buildNotifFeed() {
     if (techMe && l.assignedTo !== techMe) return;
     if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Work-order overdue — ${e.tag} at ${plantName(e.plantId)} (expected ${l.etr}).` });
-    else if (woStateOf(l) === 'open' && String(l.startDate) <= todayStr) feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
+    else if (woStateOf(l) === 'open' && String(l.startDate) <= todayStr && !onHold(l)) feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Scheduled task ready to start — ${e.tag} at ${plantName(e.plantId)}.` });
   });
   // Review traffic: engineers/admins see what awaits their verdict;
@@ -1818,7 +1820,7 @@ function renderEquipmentDetail(id) {
       <div class="flex flex-wrap items-center gap-2 text-sm">
         ${reasonBadge(l.reason)}
         ${woRef(l)}
-        <span class="text-slate-500">${l.startDate} → ${l.endDate || 'ongoing'}</span>
+        <span class="text-slate-500">${l.startDate} → ${l.endDate || (woStateOf(l) === 'open' && String(l.startDate) > today() ? 'planned' : 'ongoing')}</span>
         ${l.endDate
           ? `<span class="text-xs text-slate-400">(${daysBetween(l.startDate, l.endDate)} day${daysBetween(l.startDate,l.endDate)===1?'':'s'})</span>`
           : `<span class="text-xs ${isOverdue(l)?'text-red-600 font-medium':'text-brand'}">Expected ${l.etr || '—'}</span>`}
@@ -1878,7 +1880,7 @@ function renderEquipmentDetail(id) {
     const main = (detailOpenWo && woStateOf(detailOpenWo) === 'open')
       ? `<span class="inline-flex gap-2"><button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button><button class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></span>`
       : e.status === 'Operational'
-        ? `<span class="inline-flex gap-2"><button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>${SUPA && !isTechnician() ? `<button title="Plan a job for a later day — the machine keeps running until work starts." class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium" onclick="openScheduleModal('${e.id}')">Schedule for later</button>` : ''}</span>`
+        ? `<span class="inline-flex gap-2"><button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>${SUPA && !isTechnician() ? `<button title="Plan a job for a later day — the machine keeps running until work starts." class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium" onclick="openScheduleWorkModal('${e.id}')">Schedule for later</button>` : ''}</span>`
         : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     actionBtn = reassign + photoReqBtn + holdBtn + main;
   }
@@ -2379,7 +2381,7 @@ function renderMyWork() {
       <td class="col-center">${act}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="5" class="py-8 text-center text-slate-500">${mine.some(l => l.endDate === today())
-    ? `All done for today. Once your engineer approves your jobs, open the <button onclick="ui.myWorkTab='reports'; route()" class="text-brand font-medium hover:underline">Reports tab</button> to create and sign your visit report.`
+    ? `All done for today. Once your engineer approves your jobs, open the <button onclick="ui.myWorkTab='reports'; route()" class="text-brand font-medium hover:underline">Reports tab</button> to create and sign your service report.`
     : 'Nothing assigned to you right now. New jobs appear here the moment an engineer assigns them.'}</td></tr>`;
 
   const doneRows = done.map(l => {
@@ -2508,7 +2510,7 @@ function renderMyReportsTab(visits) {
     }
     if (!r && v.pending) act = `<span class="text-[11px] text-slate-400">Waiting on review</span>`;
     else if (!r) act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Create &amp; sign</button>`;
-    else if (r.status === 'changes') act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}', '${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Fix &amp; resubmit</button>`;
+    else if (r.status === 'changes') act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}', '${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Fix &amp; send again</button>`;
     else if (r.status === 'eng_signed') act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
     else act = `<button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">View</button>`;
     return `<tr>
@@ -2518,8 +2520,23 @@ function renderMyReportsTab(visits) {
       <td class="col-center">${act}</td>
     </tr>`;
   }).join('');
+  // A report can outlive the visit list (old visit days fall off the caps):
+  // anything of mine still needing action gets its own row regardless.
+  const shownKeys = new Set(visits.map(v => v.plantId + '|' + v.date));
+  const me = currentUser()?.id;
+  const orphanRows = (cloudReports || [])
+    .filter(r => r.technician_id === me && (r.status === 'changes' || r.status === 'eng_signed'))
+    .filter(r => !shownKeys.has(r.plant_id + '|' + r.visit_date))
+    .map(r => `<tr>
+      <td><div class="cell-primary">${esc(plantName(r.plant_id))}</div><div class="cell-secondary">${r.visit_date}</div></td>
+      <td><div class="cell-primary">${esc(r.id)}</div><div class="cell-muted">${(r.content?.jobs || []).length} job${(r.content?.jobs || []).length === 1 ? '' : 's'}</div></td>
+      <td class="col-center">${r.status === 'changes' ? '<span class="badge badge-bd">Needs changes</span>' : '<span class="badge badge-brand">Ready for client signature</span>'}${r.status === 'changes' ? `<div class="text-[10px] text-red-600 mt-1">${esc(r.review_note || '')}</div>` : ''}</td>
+      <td class="col-center">${r.status === 'changes'
+        ? `<button onclick="openReportCompose('${r.plant_id}', '${r.visit_date}', '${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Fix &amp; send again</button>`
+        : `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`}</td>
+    </tr>`).join('');
   return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="overflow-x-auto">
-    <table class="list-table"><thead><tr><th>Visit</th><th>Work</th><th class="col-center">Report</th><th class="col-center">Action</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="list-table"><thead><tr><th>Visit</th><th>Work</th><th class="col-center">Report</th><th class="col-center">Action</th></tr></thead><tbody>${orphanRows}${rows}</tbody></table>
   </div></div>`;
 }
 // techId defaults to the signed-in user (the technician raising their own
@@ -2531,14 +2548,17 @@ function buildReportContent(plantId, date, techId) {
   const covered = coveredJobIds(plantId, date, tid);
   // Issues already told to the client in a signed report are not re-told:
   // anything raised after the last signature is new information.
-  const lastSigned = signed.map(r => r.updated_at).sort().pop() || null;
+  // The freeze moment is when the CONTENT was fixed (submission/compile),
+  // not when the client signed — issues raised in between must not vanish.
+  const lastSigned = signed.map(r => (r.eng_sign?.compiled ? r.eng_sign?.ts : r.tech_signed_at) || r.updated_at)
+    .sort().pop() || null;
   const jobs = state.logs
     .filter(l => l.assignedTo === tid && l.endDate === date && eqById(l.equipmentId)?.plantId === plantId)
     .filter(l => !covered.has(l.id))
     .map(l => ({ id: l.id, wo_no: l.woNo || null, tag: eqById(l.equipmentId)?.tag || l.equipmentId,
                  reason: l.reason, scope: l.notes || '', done: l.completionNotes || '', state: woStateOf(l) }));
   const issues = (cloudIssues || [])
-    .filter(i => i.equipment_id && i.raised_by === tid && String(i.created_at).slice(0, 10) === date
+    .filter(i => i.equipment_id && i.raised_by === tid && dstr(new Date(i.created_at)) === date
                  && eqById(i.equipment_id)?.plantId === plantId)
     .filter(i => !lastSigned || String(i.created_at) > String(lastSigned))
     .map(i => ({ tag: eqById(i.equipment_id)?.tag || '', description: i.description, need: i.need }));
@@ -2811,13 +2831,13 @@ async function downloadSignedReportPdf(reportId) {
   doc.setDrawColor(220,225,232); doc.line(14, y, W - 14, y); y += 8;
   doc.setFont(undefined,'normal');
   const cW = (W - 28) / 3;
-  const sigCol = (label, name, sub, when, x) => {
+  const sigCol = (label, name, sub, when, x, verb) => {
     doc.setFontSize(8); doc.setTextColor(120,120,120); doc.text(label, x, y);
     doc.setFontSize(10); doc.setTextColor(15,23,42);
     doc.text(name || '—', x, y + 24);
     doc.setFontSize(7); doc.setTextColor(120,120,120);
     if (sub) doc.text(sub, x, y + 28);
-    doc.text(when ? `Signed ${when}` : '', x, y + 32);
+    doc.text(when ? `${verb || 'Signed'} ${when}` : '', x, y + 32);
     doc.setTextColor(15,23,42);
   };
   const selfWork = r.eng_sign?.user_id && r.eng_sign.user_id === r.technician_id;
@@ -2827,7 +2847,7 @@ async function downloadSignedReportPdf(reportId) {
     sigCol('CLIENT', r.client_sign?.name, r.client_sign?.designation || 'Client', ts(r.client_sign?.ts), 14 + half);
     if (sigImg) { try { doc.addImage(sigImg, 'PNG', 14 + half, y + 3, 45, 17); } catch {} }
   } else {
-    sigCol('TECHNICIAN', r.technician_name, r.eng_sign?.compiled ? 'Confirmed by the jobs they submitted' : 'Service Technician', ts(r.tech_signed_at), 14);
+    sigCol('TECHNICIAN', r.technician_name, r.eng_sign?.compiled ? 'Confirmed by the jobs they submitted' : 'Service Technician', ts(r.tech_signed_at), 14, r.eng_sign?.compiled ? 'Submitted' : 'Signed');
     sigCol('ENGINEER', r.eng_sign?.name, 'Service Engineer', ts(r.eng_sign?.ts), 14 + cW);
     sigCol('CLIENT', r.client_sign?.name, r.client_sign?.designation || 'Client', ts(r.client_sign?.ts), 14 + 2 * cW);
     if (sigImg) { try { doc.addImage(sigImg, 'PNG', 14 + 2 * cW, y + 3, 45, 17); } catch {} }
@@ -3313,8 +3333,11 @@ function renderLogRows() {
   const rows = pageData.map(({l, e}) => {
     const durDays = l.endDate ? daysBetween(l.startDate, l.endDate) : daysBetween(l.startDate, today());
     const overdue = isOverdue(l);
+    const isPlan = !l.endDate && woStateOf(l) === 'open' && String(l.startDate) > today();
     const durHtml = l.endDate
       ? `<span class="text-slate-700">${durDays} day${durDays===1?'':'s'}</span>`
+      : isPlan
+      ? `<span class="text-brand">starts in ${-durDays}d</span>`
       : `<span class="font-medium ${overdue?'text-red-600':'text-brand'}">${durDays} day${durDays===1?'':'s'} (ongoing)</span>`;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(e.make)} ${esc(e.model)}</div>${woRef(l, 'block mt-0.5')}</td>
@@ -3368,6 +3391,7 @@ function renderPlants() {
       <td class="col-center">
         <div class="inline-flex gap-1.5 flex-wrap justify-center">
           <button onclick="generateQrSheet('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">QR Codes</button>
+          <button onclick="openPlantNotifModal('${p.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">Notifications</button>
         </div>
       </td>
     </tr>`;
@@ -4544,7 +4568,9 @@ function exportRows(eqId) {
     Tag: e.tag, Plant: plantName(e.plantId), Type: e.type, Make: e.make, Model: e.model, Location: e.location,
     Reason: l.reason, Start: l.startDate, 'Expected Completion': l.etr || '', End: l.endDate || '',
     'Duration (days)': l.endDate ? daysBetween(l.startDate, l.endDate) : '',
-    Status: l.endDate ? 'Completed' : (isOverdue(l) ? 'Overdue' : 'Ongoing'),
+    Status: l.endDate ? 'Completed'
+      : (woStateOf(l) === 'open' && String(l.startDate) > today()) ? 'Scheduled'
+      : (isOverdue(l) ? 'Overdue' : 'Ongoing'),
     Technician: l.technician, 'Reason / Notes': l.notes, 'Completion Notes': l.completionNotes || '',
   }));
 }
@@ -4559,11 +4585,16 @@ function exportXLSX(eqId) {
 function exportPDF(eqId) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'landscape' });
+  const W0 = doc.internal.pageSize.getWidth();
+  doc.setFillColor(25,52,88);
+  doc.rect(0, 0, W0, 22, 'F');
+  doc.setTextColor(255,255,255);
   doc.setFontSize(14);
   const title = eqId ? `Maintenance Log — ${eqById(eqId).tag} (${eqById(eqId).make} ${eqById(eqId).model})` : 'Maintenance Log';
   doc.text(title, 14, 14);
   doc.setFontSize(9);
-  doc.text(`Generated ${today()}`, 14, 20);
+  doc.text(`Generated ${today()}`, W0 - 14, 14, { align: 'right' });
+  doc.setTextColor(15,23,42);
   const rows = exportRows(eqId);
   const cols = Object.keys(rows[0] || { Tag:'' });
   doc.autoTable({ head: [cols], body: rows.map(r => cols.map(c => r[c])), startY: 26, styles: { fontSize: 7 }, headStyles: { fillColor: [25,52,88] } });
@@ -4685,7 +4716,7 @@ function renderEngineer() {
   const pending  = getPendingTasks();
   const todayStr = today();
   const toStart  = pending.filter(({ l }) => woStateOf(l) === 'open');
-  const toStartDue = toStart.filter(({ l }) => String(l.startDate) <= todayStr);
+  const toStartDue = toStart.filter(({ l }) => String(l.startDate) <= todayStr && !onHold(l));
   const ongoing  = pending.filter(({ l }) => woStateOf(l) !== 'open');
   const overdue  = getOverduePPM();
   const upcoming = getUpcomingPPM(30);
@@ -4736,7 +4767,7 @@ function renderEngineer() {
     </div>
     <p class="text-slate-500 mb-5">${isAdmin()
       ? "Your engineers' workspace — you have it as cover: review work, decide on issues, and sign reports when an engineer isn't available."
-      : "For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports."}</p>
+      : "For site service engineers: see what's pending, what's coming up, and generate visit summaries."}</p>
     ${strip ? `<div class="flex gap-2 mb-4 flex-wrap items-center"><span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Needs your attention ${infoBtn('Needs your attention', 'One chip for each thing waiting on you. Tap a chip to open the right place. When nothing is waiting, the whole strip disappears.')}</span>${strip}</div>` : ''}
     <div class="flex gap-2 mb-5 flex-wrap">
       ${tabBtn('pending',  'To start', toStartDue.length + overdue.length)}
@@ -5069,6 +5100,7 @@ async function reviewWo(logId, approve, note) {
   // than making the engineer come back after the technician raises one.
   if (!approve || !before) return;
   const e = eqById(before.equipmentId); if (!e) return;
+  await hydrateCloud(['reports']);   // another device may have raised this visit's report meanwhile
   const ready = visitsReadyForReport().find(v =>
     v.plantId === e.plantId && v.date === before.endDate && v.techId === before.assignedTo);
   if (ready) openCompileReportModal(ready.plantId, ready.date, ready.techId);
@@ -5078,7 +5110,7 @@ function openReturnWoModal(logId) {
   document.getElementById('modalTitle').textContent = 'Send back for fixes';
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="event.preventDefault(); reviewWo('${logId}', false, this.querySelector('[name=note]').value)" class="space-y-3 text-sm">
-      <p class="text-xs text-slate-500">The job stays recorded and the machine stays in service — this sends the paperwork back to <b>${esc(l.technician) || 'the technician'}</b> to fix and resubmit.</p>
+      <p class="text-xs text-slate-500">The job stays recorded and the machine stays in service — this sends the paperwork back to <b>${esc(l.technician) || 'the technician'}</b> to fix and send again.</p>
       <div>
         <label class="block text-xs text-slate-600 mb-1">What needs fixing <span class="text-red-500">*</span></label>
         <textarea name="note" rows="3" required class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Add a photo of the replaced seal, and note the test result."></textarea>
@@ -5103,7 +5135,9 @@ function renderToStartTab(toStart, overdue) {
   if (!fOpen.length && !fComing.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing to start — no scheduled work is waiting and no PPM is overdue.</div>`;
 
   const rowFor = ({l, e}, coming) => {
-    const et = coming ? { cls: 'text-brand font-medium', label: 'Starts ' + l.startDate } : ecStatus(l.etr, null);
+    const et = coming ? { cls: 'text-brand font-medium', label: 'Starts ' + l.startDate }
+      : onHold(l) ? { cls: 'text-slate-500', label: 'On hold · check back ' + l.holdUntil }
+      : ecStatus(l.etr, null);
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
@@ -5194,7 +5228,7 @@ function renderOngoingTab(ongoing) {
 
   return `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-500 font-normal">(${fOngoing.length})</span> ${infoBtn('Ongoing maintenance', 'Jobs being worked on right now. The machine is out of service until the job is completed.\n\nReassign hands the job to another technician. Put on hold pauses its overdue clock when it is genuinely waiting on something — a part, a shutdown window — with a date you will check back on.')}</div>
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-500 font-normal">(${fOngoing.length})</span> ${infoBtn('Ongoing maintenance', 'Jobs being worked on right now. The machine is out of service until the job is completed.' + (SUPA ? '\n\nReassign hands the job to another technician. Put on hold pauses its overdue clock when it is genuinely waiting on something — a part, a shutdown window — with a date you will check back on.' : ''))}</div>
       <div class="overflow-x-auto"><table class="list-table">
         <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
         <tbody>${ongoingRows}</tbody>
@@ -5271,7 +5305,7 @@ function renderUpcomingTab(upcoming) {
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${ds}</div><div class="cell-muted">${slot}</div></td>
       <td>${dueLabel}</td>
-      <td class="col-center"><div class="inline-flex gap-1.5 flex-wrap justify-center">${SUPA && !isTechnician() ? `<button onclick="openScheduleModal('${e.id}', '${ds}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Schedule &amp; assign</button>` : ''}<button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Put in Maintenance</button></div></td>
+      <td class="col-center"><div class="inline-flex gap-1.5 flex-wrap justify-center">${SUPA && !isTechnician() ? `<button onclick="openScheduleWorkModal('${e.id}', '${ds}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Schedule &amp; assign</button>` : ''}<button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Put in Maintenance</button></div></td>
     </tr>`;
   }).join('');
   return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -5406,7 +5440,7 @@ function renderVisitsTabInner(visits, pills, customPanel) {
     </tr>`;
   }).join('');
   return filterHeader + `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Visit reports — grouped by completion date</div>
+    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Visit summaries — grouped by completion date</div>
     <div class="overflow-x-auto"><table class="list-table">
       <thead><tr><th>Visit date</th><th>Coverage</th><th>Plant(s)</th><th>Equipment serviced</th><th class="col-center">Action</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -5446,7 +5480,7 @@ function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
   let y = 34;
   doc.setFontSize(10);
   doc.text(`Plant(s):  ${plants.map(p => p.name).join(', ') || '—'}`, 14, y); y += 6;
-  doc.text(`Engineer(s):  ${technicians.join(', ') || '—'}`, 14, y); y += 6;
+  doc.text(`Work done by:  ${technicians.join(', ') || '—'}`, 14, y); y += 6;
   doc.text(`Equipment serviced:  ${equipment.length}`, 14, y); y += 6;
   doc.text(`Tasks completed:  ${logs.length}`, 14, y); y += 8;
 
@@ -5495,7 +5529,7 @@ function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
   sig('Approved by', approvedBy, 'Plant Maintenance Lead', 14 + cW);
 
   doc.setFontSize(7); doc.setTextColor(140,140,140);
-  doc.text('This visit report is system-generated from completed maintenance log entries.', 14, doc.internal.pageSize.getHeight() - 8);
+  doc.text('This visit summary is system-generated from completed maintenance log entries.', 14, doc.internal.pageSize.getHeight() - 8);
 
   return { doc, filename: `visit-summary-${date}.pdf` };
 }
@@ -5510,7 +5544,7 @@ function openReportModal(visitDate) {
   const plantIds = accessiblePlantIds();
   const allCount = activeEquipment().filter(e => plantIds.includes(e.plantId)).length;
   const sel = visitDate ? 'visit' : 'filtered';
-  document.getElementById('modalTitle').textContent = 'Maintenance summary (unsigned PDF)';
+  document.getElementById('modalTitle').textContent = visitDate ? 'Visit summary (unsigned PDF)' : 'Maintenance summary (unsigned PDF)';
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="generateReport(event)" class="space-y-4 max-h-[75vh] overflow-y-auto pr-1 text-sm">
       <div>
@@ -5534,7 +5568,7 @@ function openReportModal(visitDate) {
             <input type="radio" name="scope" value="visit" ${sel === 'visit' ? 'checked' : ''} class="mt-1" />
             <div class="flex-1">
               <div class="font-medium text-slate-800 text-sm">Single visit (one day)</div>
-              <div class="text-xs text-slate-500 mb-1.5">Everything completed on one date, grouped by plant — the sign-off document for a site visit.</div>
+              <div class="text-xs text-slate-500 mb-1.5">Everything completed on one date, grouped by plant — a quick unsigned summary of a site visit.</div>
               <input type="date" name="visitDate" value="${visitDate || today()}" class="border border-slate-300 rounded-md px-2 py-1 text-xs"
                 onclick="this.closest('label').querySelector('input[type=radio]').checked = true" />
             </div>
@@ -5815,7 +5849,9 @@ function generateQrSheet(plantId) {
 }
 
 // ---------- PDF preview ----------
-function openPdfPreview(doc, filename, title) {
+function openPdfPreview(doc, filename, rawTitle) {
+  // Plant names reach this header — escape them (filenames are regex-sanitized upstream).
+  const title = esc(rawTitle);
   // Android Chrome shows a blank iframe for blob PDFs; iOS renders only page 1.
   // On phones, hand the PDF to the platform viewer / share sheet instead.
   if (IS_MOBILE_UA) { savePdfDoc(doc, filename); return; }
@@ -5857,7 +5893,7 @@ function closeModal() { document.getElementById('modal').classList.add('hidden')
 // Scheduling is a PLAN: the job exists on a future day, the machine keeps
 // running, and whoever it is assigned to sees it on My Work immediately.
 // Reality begins at Start Work (the server stamps the real start date).
-function openScheduleModal(eqId, presetDate) {
+function openScheduleWorkModal(eqId, presetDate) {
   if (isTechnician() || !SUPA) return;
   const e = eqById(eqId); if (!e) return;
   if (openLogFor(eqId)) { appAlert('This machine already has an open job — finish or reassign that one first.'); return; }
@@ -5866,7 +5902,7 @@ function openScheduleModal(eqId, presetDate) {
   const d0 = (presetDate && presetDate >= min) ? presetDate : min;
   document.getElementById('modalTitle').textContent = `Schedule work — ${e.tag}`;
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="submitSchedule(event, '${eqId}')" class="space-y-3 text-sm">
+    <form onsubmit="submitScheduleWork(event, '${eqId}')" class="space-y-3 text-sm">
       <div class="p-2.5 rounded-md bg-brand-50 border border-brand-100 text-[11px] text-brand leading-relaxed">
         <b>The machine keeps running.</b> The job waits under To start until its day, and whoever you
         assign sees it in their My Work right away. Happening right now? Use <b>Put in Maintenance</b> instead.
@@ -5905,7 +5941,7 @@ function openScheduleModal(eqId, presetDate) {
   document.getElementById('modal').classList.remove('hidden');
   pushOverlayState();
 }
-async function submitSchedule(ev, eqId) {
+async function submitScheduleWork(ev, eqId) {
   ev.preventDefault();
   const f = ev.target;
   const id = 'L-' + Date.now();
@@ -6145,6 +6181,15 @@ async function flushOne(item) {
 
   if (item.kind === 'start') {
     if (woStateOf(live) !== 'open') return;                     // already started or beyond
+    // Handed to someone else while this phone was offline: starting it now
+    // would flag the machine under THEIR name for work they never began.
+    if (live.assignedTo && authUser?.id && live.assignedTo !== authUser.id) {
+      throw new Error('This job was handed to someone else while you were offline.');
+    }
+    // A queued completion for the same job follows: let IT do the talking —
+    // replaying the start first would stamp today as the start date and then
+    // refuse the (earlier-dated) completion forever.
+    if (myOutbox().some(x => x.kind === 'complete' && x.logId === item.logId && x.id !== item.id)) return;
     const { error } = await SUPA.rpc('start_work_order', { p_log: item.logId });
     if (error) throw error;
     return;
@@ -6350,7 +6395,9 @@ function technicianAccounts() {
   return (state.users || []).filter(u => u.role === 'Technician' && u.status === 'active');
 }
 function openCountFor(uid) {
-  return state.logs.filter(l => l.assignedTo === uid && !l.endDate).length;
+  // Matches the person's My Work Open tab: unfinished work PLUS returned
+  // jobs waiting on their fixes.
+  return state.logs.filter(l => l.assignedTo === uid && (!l.endDate || woStateOf(l) === 'returned')).length;
 }
 function assignToControl() {
   const techs = technicianAccounts();
@@ -6847,6 +6894,7 @@ async function submitComplete(ev, eqId) {
       ? `${esc(eqById(eqId)?.tag || 'Equipment')} is back in service — submitted for your engineer's review.`
       : `${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
     if (!isTechnician()) {
+      await hydrateCloud(['reports']);
       const me = currentUser()?.id;
       const eqp = eqById(eqId);
       const readyOwn = eqp && visitsReadyForReport().find(v =>
@@ -7909,7 +7957,7 @@ const TOURS = {
       { setup: () => { route(); },
         target: '[data-tour="log-actions"]',
         title: { 'en-US':"Service reports & exports", 'hi-IN':'Service Reports और exports', 'es-ES':'Reportes y exportación' },
-        body:  { 'en-US':"Generate consolidated Service Reports — filtered or full — for sign-off, and export the underlying log to Excel or PDF for reporting.",
+        body:  { 'en-US':"Download a Maintenance Summary PDF of the filtered log, or export the records to Excel or PDF. Sign-off happens on the co-signed service reports in Engineering Corner.",
                  'hi-IN':"Filtered या full Service Reports sign-off के लिए generate करें, और log को Excel या PDF में export करें reporting के लिए।",
                  'es-ES':"Genere reportes de servicio consolidados — filtrados o completos — para firma, y exporte el registro a Excel o PDF." } },
       { setup: () => { location.hash='#/plants'; route(); },

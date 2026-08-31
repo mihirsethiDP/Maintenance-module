@@ -739,6 +739,8 @@ A.append(bullets([
     '<b>Plants → QR Codes</b> — printable stickers for every machine; technicians scan them to open the '
     'right machine instantly.',
     '<b>Plants → PPM Checklists</b> — the service-guide steps people see when closing a job.',
+    '<b>Plants → Notifications</b> — who is emailed the moment a machine at that plant is reported '
+    'broken down, and for other plant events.',
     '<b>Equipment → Add Equipment</b> — single machines; the name writes itself from Make + Model. '
     'Engineers can do this too, at their own plants.',
 ]))

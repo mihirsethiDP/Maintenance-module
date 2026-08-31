@@ -409,10 +409,19 @@ begin
   -- 11. Amendments (50): a signed day accepts an additional report
   --     (also the first-ever execution of the partial-index ON CONFLICT)
   -- =========================================================
+  -- Content that re-lists signed work must be refused (55): a stale device
+  -- must never sign duplicates into a second official document.
   begin
     perform public.engineer_create_report(v_rep2, v_plant, v_vdate, v_tech,
       json_build_object('jobs', json_build_array(
         json_build_object('id', v_log), json_build_object('id', v_log2), json_build_object('id', v_log3)))::jsonb);
+    res := array_append(res, 'FAIL  an amendment re-listing signed jobs was accepted');
+  exception when others then
+    res := array_append(res, 'PASS  amendment refuses to re-list work already in a signed report');
+  end;
+  begin
+    perform public.engineer_create_report(v_rep2, v_plant, v_vdate, v_tech,
+      json_build_object('jobs', json_build_array(json_build_object('id', v_log3)))::jsonb);
     select amendment_of into v_amends from public.service_reports where id = v_rep2;
     res := array_append(res, case when v_amends = v_rep
       then 'PASS  amendment created over the signed day, linked to the original'
