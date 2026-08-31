@@ -270,8 +270,11 @@ begin
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
   begin
+    -- Real job ids in the content: the amendment tests later depend on
+    -- covered_job_ids seeing what this signed report covers.
     perform public.submit_service_report(v_rep, v_plant, v_vdate,
-      json_build_object('plant_id', v_plant, 'visit_date', v_vdate, 'jobs', '[]'::json)::jsonb);
+      json_build_object('plant_id', v_plant, 'visit_date', v_vdate, 'jobs',
+        json_build_array(json_build_object('id', v_log), json_build_object('id', v_log2)))::jsonb);
     select status, content_hash into v_status, v_hash from public.service_reports where id = v_rep;
     res := array_append(res, ('PASS  technician submitted the report (status=' || v_status || ')'));
     res := array_append(res, ('      sha256 = ' || coalesce(left(v_hash, 16) || '...', '(NULL - hashing broken!)')));
