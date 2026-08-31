@@ -342,7 +342,8 @@ T.append(Paragraph('The line <b>"Waiting on review"</b> means a job from that da
                    'engineer — the report can only be made once every job is approved.', st_body))
 T.append(Spacer(1, 3))
 T.append(Paragraph('After the client signs, the report is <b>locked</b>. Nobody can change it — not you, '
-                   'not your engineer. That is what makes it proof of the work.', st_body))
+                   'not your engineer. That is what makes it proof of the work. A signed report can be '
+                   'saved as a PDF any time: open it and press <b>Download PDF</b>.', st_body))
 T.append(Spacer(1, 3))
 T.append(Paragraph('Did more work on a day whose report is already signed? The Reports tab shows that '
                    'day again with a <b>Report new work</b> button. It makes a <b>second</b> report '
@@ -351,7 +352,8 @@ T.append(Paragraph('Did more work on a day whose report is already signed? The R
 T.append(Spacer(1, 3))
 T.append(callout('Client not there?',
                  'Leave it. The line stays at <b>Ready for client signature</b> and you can collect it on '
-                 'your next visit. Your engineer has already signed, so the work is recorded either way.'))
+                 'your next visit — or your engineer can collect it on theirs. Your engineer has already '
+                 'signed, so the work is recorded either way.'))
 
 T.append(PageBreak())
 T += section('6. Quick reference', 'Keep this page on your phone.')
@@ -532,10 +534,13 @@ E.append(table(['Path', 'How it goes'],
                         'marked as an addition to the signed one, which stays locked.']],
     [30 * mm, None]))
 E.append(Spacer(1, 4))
-E.append(Paragraph('Either way, the last step is the client signing <b>on the technician\'s phone</b> at '
-                   'the plant. Once they sign, the report locks: no edits, ever — corrections are new '
-                   'reports. Every signature is stamped over a fingerprint (hash) of the content, which '
-                   'is what makes the PDF proof.', st_body))
+E.append(Paragraph('Either way, the last step is the client signing — usually <b>on the technician\'s '
+                   'phone</b> at the plant. If you are the one with the client, reports you have signed '
+                   'wait in <b>To review</b> under <b>Waiting for the client\'s signature</b>: press '
+                   '<b>Client sign-off</b> and hand over your own phone. Once the client signs, the '
+                   'report locks: no edits, ever — corrections are new reports. Every signature is '
+                   'stamped over a fingerprint (hash) of the content, and the locked report can be saved '
+                   'as a PDF any time — open it and press <b>Download PDF</b>.', st_body))
 
 E.append(PageBreak())
 E += section('6. Quick reference', 'The short version.')
@@ -669,10 +674,11 @@ A.append(steps([
     'engineer to schedule, mark handled, or dismiss with a reason. Open issues stay pinned to the '
     'machine.',
     '<b>The service report</b> — one per technician per plant per day — is signed in order: technician, '
-    'engineer, then the client, drawing on the technician\'s phone. Every signature stamps a fingerprint '
-    'of the content, and the client\'s signature <b>locks the report forever</b>. Corrections are new '
-    'reports. Engineers can also prepare and sign the report themselves at the moment they approve the '
-    'last job of a visit.',
+    'engineer, then the client, drawing on the technician\'s (or engineer\'s) phone. Every signature '
+    'stamps a fingerprint of the content, and the client\'s signature <b>locks the report forever</b>. '
+    'Corrections are new reports. Engineers can also prepare and sign the report themselves at the moment '
+    'they approve the last job of a visit. A signed report downloads as a <b>PDF</b>, and every job in a '
+    'machine\'s history links to the signed report that covers it.',
 ]))
 A.append(Spacer(1, 3))
 A.append(callout('Why a running machine can be "overdue"',

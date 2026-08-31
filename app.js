@@ -1747,7 +1747,10 @@ function renderEquipmentDetail(id) {
             ${l.checklist.map(c => `<li class="text-xs ${c.done ? 'text-slate-600' : 'text-slate-400'}">${c.done ? '✓' : '○'} ${esc(c.text)}${c.mandatory ? ' *' : ''}</li>`).join('')}
           </ul>
         </details>` : ''}
-      <div class="text-xs text-slate-500 mt-1">Technician: ${esc(l.technician)}</div>
+      <div class="text-xs text-slate-500 mt-1">Technician: ${esc(l.technician)}${(() => {
+        const sr = signedReportForLog(l.id);
+        return sr ? ` · <button onclick="openReportView('${sr.id}')" class="text-brand hover:underline font-medium">Signed report ${esc(sr.id)}</button>` : '';
+      })()}</div>
     </div>
   `).join('') || `<div class="text-slate-500 text-sm">No maintenance history yet.</div>`;
 
@@ -2339,6 +2342,11 @@ function visitReports(plantId, date, techId) {
     signed: reps.filter(r => r.status === 'signed'),
   };
 }
+// The signed report that covers a given job, if any — how a machine's history
+// links each entry to its official, client-signed document.
+function signedReportForLog(logId) {
+  return (cloudReports || []).find(r => r.status === 'signed' && (r.content?.jobs || []).some(j => j.id === logId)) || null;
+}
 // Job ids already inside SIGNED reports for a visit — an amendment carries
 // only what is missing.
 function coveredJobIds(plantId, date, techId) {
@@ -2577,6 +2585,7 @@ function openReportView(reportId) {
       </div>
       <div class="flex gap-2 justify-end">
         <button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
+        ${r.status === 'signed' ? `<button onclick="downloadSignedReportPdf('${r.id}')" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Download PDF</button>` : ''}
       </div>
     </div>`;
   document.getElementById('modal').classList.remove('hidden');
@@ -2587,6 +2596,107 @@ function openReportView(reportId) {
       if (host && data?.signedUrl) host.innerHTML = `<img src="${data.signedUrl}" class="h-16 mt-1 border border-slate-200 rounded bg-white" alt="client signature" />`;
     });
   }
+}
+
+// The official PDF of a client-signed report. Nothing is stored: the report
+// row is immutable once signed (hash-stamped, trigger-locked), so the PDF is
+// regenerated identically on demand — storing copies would only spend the
+// free storage tier on data the database already holds.
+async function downloadSignedReportPdf(reportId) {
+  const r = (cloudReports || []).find(x => x.id === reportId);
+  if (!r || r.status !== 'signed') { appAlert('The PDF is available once the client has signed.'); return; }
+  const c = r.content || {};
+
+  let sigImg = null;
+  if (r.client_sign?.image_path) {
+    try {
+      const { data } = await SUPA.storage.from('wo-media').createSignedUrl(r.client_sign.image_path, 300);
+      if (data?.signedUrl) {
+        const blob = await (await fetch(data.signedUrl)).blob();
+        sigImg = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(null); fr.readAsDataURL(blob); });
+      }
+    } catch { /* the PDF still stands without the drawn image — names and times are the record */ }
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait' });
+  const W = doc.internal.pageSize.getWidth();
+  const ts = v => String(v || '').slice(0, 16).replace('T', ' ');
+
+  doc.setFillColor(25,52,88);
+  doc.rect(0, 0, W, 24, 'F');
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(16); doc.text('Service Report', 14, 14);
+  doc.setFontSize(9);  doc.text(`Visit date: ${r.visit_date}`, 14, 20);
+  doc.text(r.id, W - 14, 14, { align: 'right' });
+  doc.setTextColor(15,23,42);
+
+  let y = 34;
+  doc.setFontSize(10);
+  doc.text(`Plant:  ${c.plant || plantName(r.plant_id)}`, 14, y); y += 6;
+  doc.text(`Technician:  ${r.technician_name || '—'}`, 14, y); y += 6;
+  doc.text(`Jobs covered:  ${(c.jobs || []).length}`, 14, y); y += 6;
+  if (r.amendment_of) {
+    doc.setTextColor(120,120,120);
+    doc.text(`Additional report — covers work finished after report ${r.amendment_of} was signed.`, 14, y); y += 6;
+    doc.setTextColor(15,23,42);
+  }
+  y += 2;
+
+  doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Work performed', 14, y);
+  doc.setFont(undefined,'normal');
+  doc.autoTable({
+    startY: y + 4,
+    head: [['Equipment', 'Work order', 'Task', 'Work performed']],
+    body: (c.jobs || []).map(j => [j.tag || '—', j.wo_no || '—', j.reason || '—', j.done || '—']),
+    styles:    { fontSize: 8, cellPadding: 2, valign: 'top' },
+    headStyles:{ fillColor: [25,52,88], textColor: 255 },
+    columnStyles: { 3: { cellWidth: 80 } },
+    margin: { left: 14, right: 14 },
+  });
+  y = doc.lastAutoTable.finalY + 8;
+
+  if ((c.issues || []).length) {
+    if (y > 240) { doc.addPage(); y = 24; }
+    doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Problems found during the visit', 14, y);
+    doc.setFont(undefined,'normal');
+    doc.autoTable({
+      startY: y + 4,
+      head: [['Equipment', 'What was found']],
+      body: (c.issues || []).map(i => [i.tag || '—', i.description || '—']),
+      styles:    { fontSize: 8, cellPadding: 2, valign: 'top' },
+      headStyles:{ fillColor: [146,64,14], textColor: 255 },
+      margin: { left: 14, right: 14 },
+    });
+    y = doc.lastAutoTable.finalY + 8;
+  }
+
+  if (y > 200) { doc.addPage(); y = 24; }
+  doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Signatures', 14, y); y += 3;
+  doc.setDrawColor(220,225,232); doc.line(14, y, W - 14, y); y += 8;
+  doc.setFont(undefined,'normal');
+  const cW = (W - 28) / 3;
+  const sigCol = (label, name, sub, when, x) => {
+    doc.setFontSize(8); doc.setTextColor(120,120,120); doc.text(label, x, y);
+    doc.setFontSize(10); doc.setTextColor(15,23,42);
+    doc.text(name || '—', x, y + 24);
+    doc.setFontSize(7); doc.setTextColor(120,120,120);
+    if (sub) doc.text(sub, x, y + 28);
+    doc.text(when ? `Signed ${when}` : '', x, y + 32);
+    doc.setTextColor(15,23,42);
+  };
+  sigCol('TECHNICIAN', r.technician_name, r.eng_sign?.compiled ? 'Confirmed by the jobs they submitted' : 'Service Technician', ts(r.tech_signed_at), 14);
+  sigCol('ENGINEER', r.eng_sign?.name, 'Service Engineer', ts(r.eng_sign?.ts), 14 + cW);
+  sigCol('CLIENT', r.client_sign?.name, r.client_sign?.designation || 'Client', ts(r.client_sign?.ts), 14 + 2 * cW);
+  if (sigImg) { try { doc.addImage(sigImg, 'PNG', 14 + 2 * cW, y + 3, 45, 17); } catch {} }
+  y += 38;
+
+  doc.setFontSize(7); doc.setTextColor(140,140,140);
+  const H = doc.internal.pageSize.getHeight();
+  doc.text(`This report is locked by the client's signature. Content fingerprint (SHA-256): ${r.content_hash || ''}`, 14, H - 12, { maxWidth: W - 28 });
+  doc.text('System-generated by DigitalPaani Maintenance Ops from the signed record — reprinting always produces this same document.', 14, H - 6);
+
+  doc.save(`${r.id}.pdf`);
 }
 
 // A returned job: the technician fixes the record (note + more photos) and
@@ -4497,6 +4607,14 @@ function getSubmittedReports() {
   const ids = accessiblePlantIds();
   return (cloudReports || []).filter(r => r.status === 'submitted' && ids.includes(r.plant_id));
 }
+// Reports the engineer has signed that still wait on the client. The client
+// usually signs on the technician's phone, but an engineer at the plant can
+// collect the signature too — the database allows both.
+function getAwaitingClientReports() {
+  if (!SUPA) return [];
+  const ids = accessiblePlantIds();
+  return (cloudReports || []).filter(r => r.status === 'eng_signed' && ids.includes(r.plant_id));
+}
 async function reassignWo(logId, toId) {
   if (!toId) return;
   const { error } = await SUPA.rpc('reassign_work_order', { p_log: logId, p_to: toId });
@@ -4532,7 +4650,8 @@ function renderWoReviewTab(items) {
   const returned = getReturnedWOs();
   const issues = getOpenIssues();
   const reports = getSubmittedReports();
-  if (!items.length && !returned.length && !issues.length && !reports.length && !visitsReadyForReport().length) {
+  const awaitingClient = getAwaitingClientReports();
+  if (!items.length && !returned.length && !issues.length && !reports.length && !awaitingClient.length && !visitsReadyForReport().length) {
     return `<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500">Nothing awaiting review. Technician-completed jobs, reported issues and service reports land here for your sign-off.</div>`;
   }
   const cards = items.map(({ l, e }) => `
@@ -4600,6 +4719,21 @@ function renderWoReviewTab(items) {
       </div>
     </div>`).join('');
 
+  const awaitingClientCards = awaitingClient.map(r => `
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="flex items-start gap-3 flex-wrap">
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-sm">${esc(plantName(r.plant_id))} — ${r.visit_date}</div>
+          <div class="text-xs text-slate-500 mt-0.5">Work by <b>${esc(r.technician_name)}</b> · ${(r.content?.jobs || []).length} job${(r.content?.jobs || []).length === 1 ? '' : 's'} · usually signed on the technician's phone — collect it here if you are with the client</div>
+        </div>
+        <span class="badge badge-brand">Ready for client signature</span>${r.amendment_of ? ' <span class="badge badge-neutral">additional report</span>' : ''}
+      </div>
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+        <button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">View</button>
+        <button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Client sign-off</button>
+      </div>
+    </div>`).join('');
+
   const readyVisits = visitsReadyForReport();
   const readyCards = readyVisits.map(v => `
     <div class="bg-white rounded-xl border border-slate-200 p-4">
@@ -4621,6 +4755,7 @@ function renderWoReviewTab(items) {
        + section(`Returned — waiting on the technician (${returned.length})`, returnedCards)
        + section(`Reported issues (${issues.length})`, issueCards)
        + section(`Service reports (${reports.length})`, reportCards)
+       + section(`Waiting for the client's signature (${awaitingClient.length})`, awaitingClientCards)
        + section(`Visits ready for a report (${readyVisits.length})`, readyCards);
 }
 async function triageIssue(id, action, note, followLog) {

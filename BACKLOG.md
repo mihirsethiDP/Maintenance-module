@@ -25,6 +25,7 @@ bottom table with its version.
 
 | Version | What |
 |---------|------|
+| v=110 | Engineers can collect the client signature: eng_signed reports now show in To review under "Waiting for the client's signature" with a Client sign-off button (the DB always allowed it — the UI never surfaced it). Signed reports download as an official PDF (generated on demand from the locked record, nothing stored), and every job in a machine's history links to the signed report covering it. Guides regenerated |
 | v=109 | Engineering Corner "Pending" split into "To start" (scheduled + overdue PPM, with honest count) and "Ongoing" (active/returned jobs — the engineer's only window on in-progress work, since Dashboard is admin-only). Tour updated with a new Ongoing step |
 | v=108 | Role-aware Engineering Corner subtitle: admins see "your engineers' workspace — you have it as cover", engineers keep the original line. Prompted by Mihir questioning why admins see the page at all — the page stays (admin is the engineer of last resort; Oversight links point into it) |
 | docs | PRD (`docs/PRD.md`) and developer guide (`docs/DEVELOPMENT.md`) written; both also published as private artifact pages. Keep both current: PRD on any scope change, DEVELOPMENT.md on any convention/gotcha change |
