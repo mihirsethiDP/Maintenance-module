@@ -496,8 +496,11 @@ E.append(Paragraph('A dark pit, a dead camera — sometimes the evidence rule ha
                    'record, not an oversight.', st_body))
 E.append(Paragraph('Doing a job yourself', st_h2))
 E.append(Paragraph('Work you complete yourself closes directly — the review ceremony exists for '
-                   'delegation, not for its own sake. The <b>Service reports</b> tab still builds your own '
-                   'visit-summary PDFs as before.', st_body))
+                   'delegation, not for its own sake. Your own visits earn the <b>same co-signed service '
+                   'report</b>: finish your last job of the day and the tool offers <b>Create &amp; sign</b> '
+                   '(it also waits under Visits ready for a report). You sign once — you did the work and '
+                   'you are the engineer — and the client signs after you, locking it. The unsigned '
+                   '<b>Visit Summary</b> PDF remains for quick day summaries.', st_body))
 
 E += section('3. The review loop', 'A technician\'s completed job lands with you before it counts.')
 E.append(Paragraph('When a technician completes a job it becomes <b>Awaiting review</b> in the '

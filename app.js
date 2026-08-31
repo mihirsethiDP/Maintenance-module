@@ -2694,10 +2694,13 @@ function openReportView(reportId) {
         ${c.day_note ? `<div class="px-3 py-2"><div class="text-[11px] font-medium text-slate-700">Also done at the plant:</div><div class="text-[11px] text-slate-500 whitespace-pre-line">${esc(c.day_note)}</div></div>` : ''}
       </div>
       <div class="p-3 rounded-md bg-slate-50 border border-slate-200 space-y-1">
-        <div class="text-xs"><span class="text-slate-500">Technician:</span> <b>${esc(r.technician_name)}</b>
+        ${r.eng_sign?.user_id && r.eng_sign.user_id === r.technician_id
+          ? `<div class="text-xs"><span class="text-slate-500">Work done &amp; signed by:</span> <b>${esc(r.eng_sign.name || r.technician_name)}</b>
+              <span class="text-slate-400">(Engineer) · ${String(r.eng_sign.ts || '').slice(0, 16).replace('T', ' ')}</span></div>`
+          : `<div class="text-xs"><span class="text-slate-500">Technician:</span> <b>${esc(r.technician_name)}</b>
           <span class="text-slate-400">· ${String(r.tech_signed_at || '').slice(0, 16).replace('T', ' ')}</span>
           ${r.eng_sign?.compiled ? '<span class="text-slate-400">(confirmed by the jobs they submitted)</span>' : ''}</div>
-        ${sig('Engineer', r.eng_sign)}
+        ${sig('Engineer', r.eng_sign)}`}
         ${sig('Client', r.client_sign, r.client_sign?.designation ? `, ${esc(r.client_sign.designation)}` : '')}
         <div id="clientSigImg"></div>
         <div class="text-[10px] text-slate-400 font-mono break-all pt-1">SHA-256 ${esc(r.content_hash)}</div>
@@ -2817,10 +2820,18 @@ async function downloadSignedReportPdf(reportId) {
     doc.text(when ? `Signed ${when}` : '', x, y + 32);
     doc.setTextColor(15,23,42);
   };
-  sigCol('TECHNICIAN', r.technician_name, r.eng_sign?.compiled ? 'Confirmed by the jobs they submitted' : 'Service Technician', ts(r.tech_signed_at), 14);
-  sigCol('ENGINEER', r.eng_sign?.name, 'Service Engineer', ts(r.eng_sign?.ts), 14 + cW);
-  sigCol('CLIENT', r.client_sign?.name, r.client_sign?.designation || 'Client', ts(r.client_sign?.ts), 14 + 2 * cW);
-  if (sigImg) { try { doc.addImage(sigImg, 'PNG', 14 + 2 * cW, y + 3, 45, 17); } catch {} }
+  const selfWork = r.eng_sign?.user_id && r.eng_sign.user_id === r.technician_id;
+  if (selfWork) {
+    const half = (W - 28) / 2;
+    sigCol('WORK DONE & SIGNED BY', r.eng_sign?.name || r.technician_name, 'Service Engineer', ts(r.eng_sign?.ts), 14);
+    sigCol('CLIENT', r.client_sign?.name, r.client_sign?.designation || 'Client', ts(r.client_sign?.ts), 14 + half);
+    if (sigImg) { try { doc.addImage(sigImg, 'PNG', 14 + half, y + 3, 45, 17); } catch {} }
+  } else {
+    sigCol('TECHNICIAN', r.technician_name, r.eng_sign?.compiled ? 'Confirmed by the jobs they submitted' : 'Service Technician', ts(r.tech_signed_at), 14);
+    sigCol('ENGINEER', r.eng_sign?.name, 'Service Engineer', ts(r.eng_sign?.ts), 14 + cW);
+    sigCol('CLIENT', r.client_sign?.name, r.client_sign?.designation || 'Client', ts(r.client_sign?.ts), 14 + 2 * cW);
+    if (sigImg) { try { doc.addImage(sigImg, 'PNG', 14 + 2 * cW, y + 3, 45, 17); } catch {} }
+  }
   y += 38;
 
   doc.setFontSize(7); doc.setTextColor(140,140,140);
@@ -5029,10 +5040,15 @@ function openCompileReportModal(plantId, date, techId) {
         <textarea name="dayNote" rows="2" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Other work worth telling the client about."></textarea>
       </div>
       <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
-        Covers <b>${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}</b> ${esc(content.technician)} finished
-        at ${esc(plantName(plantId))} on ${date} — all approved by you.
-        <br />Creating it <b>signs it as you</b>. The jobs ${esc(content.technician)} submitted count as
-        their confirmation of the work. The client signs last, on site.
+        ${techId === currentUser()?.id
+          ? `Covers <b>${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}</b> you finished yourself
+             at ${esc(plantName(plantId))} on ${date}.
+             <br />Creating it <b>signs it as you</b> — you did the work and you are the engineer, so one
+             signature covers both. The client signs last, on site.`
+          : `Covers <b>${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}</b> ${esc(content.technician)} finished
+             at ${esc(plantName(plantId))} on ${date} — all approved by you.
+             <br />Creating it <b>signs it as you</b>. The jobs ${esc(content.technician)} submitted count as
+             their confirmation of the work. The client signs last, on site.`}
       </div>
       <div class="flex gap-2 justify-end pt-1">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Not now</button>
@@ -6569,7 +6585,11 @@ async function submitMaint(ev, eqId) {
     // Atomic RPC: log insert + status change in one transaction, with a
     // DB-side guard against duplicate open work-orders. Falls back through
     // older signatures so a not-yet-migrated database still works.
-    const assignTo = f.get('assignTo') || null;
+    // A job recorded under your own name is yours: stamping the assignment
+    // is what lets your own visit produce a co-signed service report.
+    const assignTo = f.get('assignTo')
+      || ((log.technician || '').trim() === (currentUser()?.name || '').trim() ? currentUser()?.id : null)
+      || null;
     let { error } = await SUPA.rpc('log_maintenance_start', {
       p_id: log.id, p_eq: eqId, p_reason: log.reason, p_start: log.startDate,
       p_etr: log.etr || null, p_tech: log.technician, p_notes: log.notes,
@@ -6826,6 +6846,13 @@ async function submitComplete(ev, eqId) {
     toast(isTechnician()
       ? `${esc(eqById(eqId)?.tag || 'Equipment')} is back in service — submitted for your engineer's review.`
       : `${esc(eqById(eqId)?.tag || 'Equipment')} is back in service.`);
+    if (!isTechnician()) {
+      const me = currentUser()?.id;
+      const eqp = eqById(eqId);
+      const readyOwn = eqp && visitsReadyForReport().find(v =>
+        v.plantId === eqp.plantId && v.date === endDate && v.techId === me);
+      if (readyOwn) openCompileReportModal(readyOwn.plantId, readyOwn.date, readyOwn.techId);
+    }
     return;
   }
   if (log) { log.endDate = endDate; log.completionNotes = completionNotes; log.checklist = checklist; log.partActions = partActions; if (!log.technician) log.technician = currentUser()?.name || ''; if (woStateOf(log) === 'open') log.startDate = endDate; }

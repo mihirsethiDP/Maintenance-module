@@ -488,6 +488,45 @@ begin
     res := array_append(res, ('FAIL  could not complete the planned job early: ' || sqlerrm));
   end;
 
+  -- =========================================================
+  -- 13. Engineer-own work joins the co-signed flow (54)
+  -- =========================================================
+  -- Clear the deck: approve the scheduled job so v_eq is free again.
+  perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
+  perform public.review_work_order('L-SCHED-' || v_log3, true, null);
+  -- The engineer does a job with their own hands (assigned to themselves)…
+  perform public.log_maintenance_start('L-OWN-' || v_log3, v_eq, 'Scheduled', v_today, v_today,
+    'Self Test', 'own-work test', 'Normal', null::bigint, null::text, v_boss, false);
+  perform public.log_maintenance_complete('L-OWN-' || v_log3, v_today, 'Did it myself.', null, null);
+  -- …and that visit produces the same co-signed report.
+  begin
+    perform public.engineer_create_report('SR-OWN-' || v_rep2, v_plant, v_today, v_boss,
+      json_build_object('jobs', json_build_array(json_build_object('id', 'L-OWN-' || v_log3)))::jsonb);
+    select (status = 'eng_signed' and technician_id = v_boss) into v_bool
+      from public.service_reports where id = 'SR-OWN-' || v_rep2;
+    res := array_append(res, case when v_bool
+      then 'PASS  an engineer''s own visit compiles into a co-signed report'
+      else 'FAIL  own-work report wrong status or worker' end);
+  exception when others then
+    res := array_append(res, ('FAIL  could not compile an own-work report: ' || sqlerrm));
+  end;
+  begin
+    perform public.client_sign_report('SR-OWN-' || v_rep2, 'Test Client', 'Plant In-charge',
+      'SR-OWN-' || v_rep2 || '/sig.png');
+    res := array_append(res, 'PASS  the client signed the engineer''s own-work report');
+  exception when others then
+    res := array_append(res, ('FAIL  own-work client-sign failed: ' || sqlerrm));
+  end;
+  -- Completing an UNASSIGNED job stamps the completer as the one who did it.
+  perform public.log_maintenance_start('L-UNAS-' || v_log3, v_eq, 'Scheduled', v_today, v_today,
+    'x', 'unassigned completion', 'Normal', null::bigint, null::text, null::uuid, false);
+  perform public.log_maintenance_complete('L-UNAS-' || v_log3, v_today, 'Closed by hand.', null, null);
+  select (assigned_to = v_boss) into v_bool
+    from public.maintenance_logs where id = 'L-UNAS-' || v_log3;
+  res := array_append(res, case when v_bool
+    then 'PASS  completing an unassigned job stamps the completer as the worker'
+    else 'FAIL  unassigned completion left no worker on the record' end);
+
   raise exception 'TEST RESULTS%', E'\n  ' || array_to_string(res, E'\n  ') ||
     E'\n\n  (Everything above was rolled back — no data was changed.)';
 end $$;
