@@ -75,17 +75,11 @@ select 'next work-order number', 'WO-' || extract(year from (now() at time zone 
                             where year = extract(year from (now() at time zone 'Asia/Kolkata'))::int), 0) + 1)::text, 4, '0');
 
 -- ===================================================================
--- OPTIONAL — only if the completed history is build-period testing too.
--- Check first with CHECK_completed_history.sql: each of those rows is a
--- job someone recorded as done. If they are real work, KEEP THEM (the
--- health scores and PPM baselines read from them). If they are test
--- records, uncomment this block to remove them and let the client's
--- first real job be WO-2026-0001.
---
--- begin;
--- delete from public.maintenance_logs where end_date is not null;
--- delete from public.wo_counters;
--- commit;
--- select 'completed history left' as what, count(*)::text as result
---   from public.maintenance_logs where end_date is not null;
+-- IF THE COMPLETED HISTORY IS ALSO BUILD-PERIOD TESTING
+-- Do not delete it from here. Two of those completions sit inside
+-- client-signed reports, and removing the jobs alone would leave signed
+-- documents pointing at nothing. Inspect with
+-- CHECK_completed_history.sql, then run RESET_build_records.sql, which
+-- clears the reports, the jobs, the counter, the activity feed and the
+-- test machine in one transaction.
 -- ===================================================================
