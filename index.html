@@ -14,7 +14,7 @@
   <!-- Static Tailwind build (see tailwind.config.js). The Play CDN compiled
        CSS at runtime in the browser: one poisoned service-worker cache entry
        on plant Wi-Fi and every utility class on the page silently died. -->
-  <link rel="stylesheet" href="tailwind.css?v=9" />
+  <link rel="stylesheet" href="tailwind.css?v=10" />
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" crossorigin="anonymous"></script>
@@ -66,13 +66,15 @@
     .login-card { position: relative; overflow: hidden; }
     .login-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
       background: linear-gradient(90deg, #193458, #3d5a83 55%, #7fa3d0); }
-    .info-dot { display:inline-grid; place-items:center; width:15px; height:15px; border-radius:9999px;
-      border:1px solid #94a3b8; color:#64748b; background:#f8fafc; font-size:10px; font-weight:700;
+    .info-dot { position:relative; display:inline-grid; place-items:center; width:16px; height:16px; border-radius:9999px;
+      border:1px solid #64748b; color:#475569; background:#f8fafc; font-size:10px; font-weight:700;
       font-style:italic; font-family:Georgia,serif; line-height:1; vertical-align:1px; cursor:pointer; }
+    /* An invisible 40px target around a 16px dot — the same trick .health-q uses. */
+    .info-dot::after { content:''; position:absolute; inset:-12px; }
     .info-dot:hover { border-color:#193458; color:#193458; background:#f1f4f9; }
     #tipHost { position:fixed; z-index:96; background:#0f172a; color:#e2e8f0; font-size:11.5px;
       line-height:1.5; padding:8px 10px; border-radius:8px; box-shadow:0 8px 24px -8px rgba(15,23,42,0.5);
-      pointer-events:none; }
+      pointer-events:none; white-space:pre-line; }
     #tipHost .tip-title { font-weight:600; color:#fff; margin-bottom:2px; }
     .badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:9999px; font-size:10.5px; font-weight:600; border:1px solid; white-space:nowrap; line-height:1.5; }
     .badge-op { background:#f0fdf4; color:#15803d; border-color:#86efac; }
@@ -204,9 +206,19 @@
     @media (max-width: 640px) {
       /* 16px inputs stop iOS Safari's zoom-on-focus jump */
       input, select, textarea { font-size: 16px !important; }
-      /* Field-finger touch targets on the controls engineers actually tap */
-      .list-table tbody button, .review-row button, #modalBody button[data-t] { min-height: 42px; }
-      #modalBody form > div:last-of-type button { min-height: 44px; }
+      /* Field-finger touch targets. One rule for everything a thumb presses,
+         rather than a list of selectors that every new screen forgets to join.
+         The info dot is excluded (it carries its own 40px ::after target) and
+         so is the floating tour button. */
+      #view button:not(.info-dot):not(.tour-fab),
+      #modalBody button:not(.info-dot),
+      #appDialog button,
+      #outboxChip { min-height: 42px; }
+      #modalBody form > div:last-of-type button, #appDialog [data-btns] button { min-height: 44px; }
+      #appDialog [data-btns] button { padding-left: 16px; padding-right: 16px; }
+      /* Photo thumbnails' remove dot stays small on purpose — it has its own
+         28px circle and sits outside the flow of pressable rows. */
+      #woPhotoStrip button { min-height: 28px; }
       .health-q { width: 26px !important; height: 26px !important; font-size: 13px !important; }
       /* Closing a job = choosing per-part radios; make them finger-sized */
       #modalBody input[type="radio"], #modalBody input[type="checkbox"] { width: 18px; height: 18px; }
@@ -248,6 +260,8 @@
          phone that hides most filters off screen. Same treatment as the other
          toolbars: wrap into equal-width pairs, date range on its own row. */
       .filter-strip { flex-wrap: wrap; overflow-x: visible; }
+      /* Card stacks sat flush inside their panel, doubling both borders. */
+      .list-table tbody tr { margin-left: 10px; margin-right: 10px; }
       .filter-strip > select, .filter-strip > input {
         flex: 1 1 40% !important; width: auto !important; min-width: 0; min-height: 42px;
       }
@@ -348,7 +362,7 @@
     <div class="bg-white rounded-xl shadow-xl w-full max-w-lg">
       <div class="px-5 py-4 border-b border-slate-200 flex items-center">
         <div id="modalTitle" class="font-semibold"></div>
-        <button class="ml-auto text-slate-400 hover:text-slate-700" onclick="closeModal()">&times;</button>
+        <button aria-label="Close" class="ml-auto w-10 h-10 -my-1 grid place-items-center text-2xl leading-none text-slate-500 hover:text-slate-800" onclick="closeModal()">&times;</button>
       </div>
       <div id="modalBody" class="p-5"></div>
     </div>
@@ -367,6 +381,6 @@
       document.write('<scr' + 'ipt src="seed-data.js?v=1"><\/scr' + 'ipt>');
     }
   </script>
-  <script src="app.js?v=116"></script>
+  <script src="app.js?v=117"></script>
 </body>
 </html>

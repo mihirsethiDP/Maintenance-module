@@ -8,7 +8,7 @@
 //     offline without them.
 //   - Supabase API + all non-GET requests: network only, never cached. Data
 //     freshness and writes are the app's job (it keeps its own snapshot).
-const CACHE = 'mm-shell-v3';   // v3: purge poisoned Tailwind-CDN entries; CSS is now our own file
+const CACHE = 'mm-shell-v4';   // v4: shell navigations bypass the HTTP cache (see fetch)
 // Bare same-origin paths (retrieval uses ignoreSearch, so app.js matches
 // app.js?v=N) plus the CDN libraries — offline must work after ONE visit.
 const CORE = [
@@ -78,7 +78,10 @@ self.addEventListener('fetch', (e) => {
   if (url.origin === location.origin) {
     e.respondWith((async () => {
       try {
-        const resp = await fetch(req);
+        // index.html carries no ?v= (it cannot), so a host cache window could
+        // serve yesterday's shell — which then loads yesterday's app.js. Ask
+        // the network directly for navigations.
+        const resp = await fetch(req.mode === 'navigate' ? new Request(req.url, { cache: 'no-store' }) : req);
         if (resp.ok) {
           const c = await caches.open(CACHE);
           // One copy per file: drop stale ?v=N variants before storing the new one.

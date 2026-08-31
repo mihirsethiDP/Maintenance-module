@@ -300,6 +300,15 @@ function lockSubmit(ev, label = 'Saving…') {
   btn.disabled = true; btn.textContent = label;
   return () => { btn.disabled = false; btn.textContent = orig; };
 }
+// Every PDF path needs jsPDF, which is a CDN script: behind a captive
+// portal it is simply absent, and an unguarded read throws into nothing.
+function pdfLib() {
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    appAlert('The PDF tool did not load — check your connection and refresh the page.');
+    return null;
+  }
+  return window.jspdf.jsPDF;
+}
 // ---------- In-app dialogs ----------
 // Browser appAlert()/confirm() pop OS chrome ("site says...") that breaks the
 // app feel, blocks JS, and can't be styled. These render inside the app.
@@ -345,14 +354,20 @@ function infoBtn(title, text) {
   return `<button type="button" class="info-dot" aria-label="${esc(title)} — what is this?"
     data-t="${esc(title)}" data-m="${esc(text)}"
     onmouseenter="showTip(this)" onmouseleave="hideTip()"
-    onfocus="showTip(this)" onblur="hideTip()"
-    onclick="event.stopPropagation(); event.preventDefault()">i</button>`;
+    onclick="event.stopPropagation(); event.preventDefault(); toggleTip(this)">i</button>`;
+}
+// Touch has no hover: a tap must open the tip, and a second tap close it.
+function toggleTip(el) {
+  const t = document.getElementById('tipHost');
+  if (t && t._for === el) { hideTip(); return; }
+  showTip(el);
 }
 function showTip(el) {
   hideTip();
   const r = el.getBoundingClientRect();
   const tip = document.createElement('div');
   tip.id = 'tipHost';
+  tip._for = el;
   tip.innerHTML = `<div class="tip-title">${esc(el.dataset.t)}</div>${esc(el.dataset.m)}`;
   document.body.appendChild(tip);
   const w = Math.min(280, window.innerWidth - 24);
@@ -539,12 +554,34 @@ const SUPA = (window.supabase && window.SUPABASE_URL && window.SUPABASE_ANON_KEY
       }) },
     })
   : null;
+const ROLE_CACHE_KEY = 'mm.lastProfile.';
 async function loadAuthProfile(u) {
-  let name = (u.email || '').split('@')[0], role = 'Engineer', phone = '', status = 'active';
+  let name = (u.email || '').split('@')[0], role = null, phone = '', status = 'active';
+  let profileFailed = false;
   try {
-    const { data } = await SUPA.from('profiles').select('name,role,phone,status,ui_mode').eq('id', u.id).single();
-    if (data) { name = data.name || name; role = data.role || role; phone = data.phone || ''; status = data.status || 'active'; var uiMode = data.ui_mode || 'simple'; }
-  } catch (e) { console.warn('profile load failed', e); }
+    const { data, error } = await SUPA.from('profiles').select('name,role,phone,status,ui_mode').eq('id', u.id).single();
+    if (error) throw error;
+    if (data) { name = data.name || name; role = data.role || null; phone = data.phone || ''; status = data.status || 'active'; var uiMode = data.ui_mode || 'simple'; }
+    if (role) {
+      try { localStorage.setItem(ROLE_CACHE_KEY + u.id, JSON.stringify({ role, name, uiMode })); } catch (e) {}
+    }
+  } catch (e) { console.warn('profile load failed', e); profileFailed = true; }
+  // Guessing a role is worse than failing: a technician defaulted to
+  // "Engineer" loses My Work entirely and sees an empty app. Fall back only
+  // to what THIS device last read for THIS account; otherwise say so.
+  if (!role) {
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(ROLE_CACHE_KEY + u.id) || 'null'); } catch (e) {}
+    if (cached && cached.role) {
+      role = cached.role; name = cached.name || name;
+      if (typeof uiMode === 'undefined') var uiMode = cached.uiMode || 'simple';
+    } else {
+      authUser = null;
+      window._profileUnreadable = true;
+      return;
+    }
+  }
+  if (profileFailed) hydrateErrors.push('profile');
   let plants = [];
   try {
     const { data: pa, error: paErr } = await SUPA.from('plant_assignments').select('plant_id').eq('user_id', u.id);
@@ -944,6 +981,25 @@ function myWorkAttentionCount() {
 // renderNav() -- each one clears the nav itself or the previous session's
 // tabs (and its highlighted tab) linger behind the login form.
 function clearNav() { const n = document.getElementById('nav'); if (n) n.innerHTML = ''; }
+function renderProfileRetry() {
+  clearNav();
+  document.getElementById('view').innerHTML = `
+    <div class="max-w-sm mx-auto mt-16 bg-white rounded-xl border border-slate-200 p-6 text-center">
+      <div class="text-base font-semibold text-slate-800 mb-1">Could not load your account</div>
+      <p class="text-sm text-slate-600">You are signed in, but the connection dropped before we could read
+        your role. Nothing is lost — try again when you have signal.</p>
+      <button onclick="retryProfile()" class="mt-4 px-4 py-2.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium">Try again</button>
+      <button onclick="signOut()" class="mt-2 block w-full px-4 py-2.5 rounded-md border border-slate-300 text-slate-700 text-sm">Sign out</button>
+    </div>`;
+}
+async function retryProfile() {
+  window._profileUnreadable = false;
+  try {
+    const { data } = await SUPA.auth.getSession();
+    if (data?.session) { await loadAuthProfile(data.session.user); await hydrateCloud(); }
+  } catch (e) { console.warn(e); }
+  route();
+}
 // Engineers read the nav in work order: workspace first, records second,
 // registers after. (Admins keep the fleet-first order.)
 const ENGINEER_NAV_ORDER = ['#/engineer', '#/log', '#/equipment', '#/team'];
@@ -1018,6 +1074,9 @@ function route() {
   // instead of degrading into the local prototype, which would offer demo
   // credentials that cannot work and write real work to localStorage.
   if (SUPA_LIB_MISSING) { renderAuthUnavailable(); return; }
+  // Signed in, but this device could not read WHO you are. Guessing a role
+  // would hand a technician an engineer's empty app — say so and retry.
+  if (window._profileUnreadable) { renderProfileRetry(); return; }
   state = load();
   const user = currentUser();
   renderHeaderChrome();
@@ -1849,7 +1908,7 @@ function renderEquipmentDetail(id) {
         </details>` : ''}
       <div class="text-xs text-slate-500 mt-1">Technician: ${esc(l.technician)}${(() => {
         const sr = signedReportForLog(l.id);
-        return sr ? ` · <button onclick="openReportView('${sr.id}')" class="text-brand hover:underline font-medium">Signed report ${esc(sr.id)}</button>` : '';
+        return sr ? ` · <button onclick="openReportView('${sr.id}')" class="text-brand underline font-medium">Signed report ${esc(sr.id)}</button>` : '';
       })()}</div>
     </div>
   `).join('') || `<div class="text-slate-500 text-sm">No maintenance history yet.</div>`;
@@ -1881,7 +1940,7 @@ function renderEquipmentDetail(id) {
       ? `<span class="inline-flex gap-2"><button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button><button class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></span>`
       : e.status === 'Operational'
         ? `<span class="inline-flex gap-2"><button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>${SUPA && !isTechnician() ? `<button title="Plan a job for a later day — the machine keeps running until work starts." class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium" onclick="openScheduleWorkModal('${e.id}')">Schedule for later</button>` : ''}</span>`
-        : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
+        : `<button class="px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     actionBtn = reassign + photoReqBtn + holdBtn + main;
   }
   const replaceBtn = (!retired && isValveType(e.type) && !isTechnician())
@@ -2358,17 +2417,21 @@ function renderMyWork() {
         <td class="col-center"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="openResubmitModal('${l.id}')">Fix &amp; send again</button></td>
       </tr>`;
     }
-    if (outboxHasFor(l.id)) {
+    // Only a queued COMPLETION closes the row. A queued start still lets him
+    // finish the job and record it — both send when the signal returns.
+    if (outboxHasFor(l.id, ['complete', 'resubmit'])) {
       return `<tr>
         <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div>${woRef(l, 'block mt-0.5')}</td>
         <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">Saved on this phone — waiting for signal.</div></td>
         <td><div class="cell-primary">${l.etr || '—'}</div><div class="cell-muted">Started ${l.startDate}</div></td>
         <td class="col-center"><span class="badge badge-mt">Waiting for signal</span></td>
-        <td class="col-center"><span class="text-xs text-slate-400">—</span></td>
+        <td class="col-center"><span class="text-xs text-slate-500">—</span></td>
       </tr>`;
     }
+    const startQueued = outboxHasFor(l.id, ['start']);
     const future = woStateOf(l) === 'open' && String(l.startDate) > today();
-    const et = future ? { cls: 'text-brand font-medium', label: 'Starts ' + l.startDate }
+    const et = startQueued ? { cls: 'text-amber-700 font-medium', label: 'Start saved \u2014 waiting for signal' }
+      : future ? { cls: 'text-brand font-medium', label: 'Starts ' + l.startDate }
       : onHold(l) ? { cls: 'text-slate-500', label: 'On hold \u00b7 check back ' + l.holdUntil } : ecStatus(l.etr, null);
     const act = woStateOf(l) === 'open'
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${l.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')" title="Done on the spot — record it in one go">Complete now</button></div>`
@@ -2489,7 +2552,7 @@ function renderMyReportsTab(visits) {
     if (!active && signed.length && newJobs > 0) {
       // The day is signed, but work finished afterwards — it gets its own report.
       act = v.pending
-        ? `<span class="text-[11px] text-slate-400">Waiting on review</span>`
+        ? `<span class="text-[11px] text-slate-500">Waiting on review</span>`
         : `<button onclick="openReportCompose('${v.plantId}', '${v.date}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Report new work</button>`;
       return `<tr>
         <td><div class="cell-primary">${esc(plantName(v.plantId))}</div><div class="cell-secondary">${v.date}</div></td>
@@ -2500,7 +2563,7 @@ function renderMyReportsTab(visits) {
     }
     if (r && r.status === 'eng_signed' && r.eng_sign?.compiled) {
       // The engineer compiled it — all that is left is the client.
-      act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
+      act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
       return `<tr>
         <td><div class="cell-primary">${esc(plantName(v.plantId))}</div><div class="cell-secondary">${v.date}</div></td>
         <td><div class="cell-primary">${v.jobs.length} job${v.jobs.length === 1 ? '' : 's'}</div><div class="cell-muted">Report prepared by your engineer</div></td>
@@ -2508,10 +2571,10 @@ function renderMyReportsTab(visits) {
         <td class="col-center">${act}</td>
       </tr>`;
     }
-    if (!r && v.pending) act = `<span class="text-[11px] text-slate-400">Waiting on review</span>`;
+    if (!r && v.pending) act = `<span class="text-[11px] text-slate-500">Waiting on review</span>`;
     else if (!r) act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Create &amp; sign</button>`;
     else if (r.status === 'changes') act = `<button onclick="openReportCompose('${v.plantId}', '${v.date}', '${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Fix &amp; send again</button>`;
-    else if (r.status === 'eng_signed') act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
+    else if (r.status === 'eng_signed') act = `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium whitespace-nowrap">Client sign-off</button>`;
     else act = `<button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">View</button>`;
     return `<tr>
       <td><div class="cell-primary">${esc(plantName(v.plantId))}</div><div class="cell-secondary">${v.date}</div></td>
@@ -2533,7 +2596,7 @@ function renderMyReportsTab(visits) {
       <td class="col-center">${r.status === 'changes' ? '<span class="badge badge-bd">Needs changes</span>' : '<span class="badge badge-brand">Ready for client signature</span>'}${r.status === 'changes' ? `<div class="text-[10px] text-red-600 mt-1">${esc(r.review_note || '')}</div>` : ''}</td>
       <td class="col-center">${r.status === 'changes'
         ? `<button onclick="openReportCompose('${r.plant_id}', '${r.visit_date}', '${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Fix &amp; send again</button>`
-        : `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap">Client sign-off</button>`}</td>
+        : `<button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium whitespace-nowrap">Client sign-off</button>`}</td>
     </tr>`).join('');
   return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden"><div class="overflow-x-auto">
     <table class="list-table"><thead><tr><th>Visit</th><th>Work</th><th class="col-center">Report</th><th class="col-center">Action</th></tr></thead><tbody>${orphanRows}${rows}</tbody></table>
@@ -2575,7 +2638,7 @@ function openReportCompose(plantId, date, existingId) {
       ${r && r.review_note ? `<div class="p-3 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900"><b>Engineer asked:</b> ${esc(r.review_note)}</div>` : ''}
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[38vh] overflow-y-auto">
         ${content.jobs.map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-500">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${content.issues.length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -2625,7 +2688,10 @@ function openClientSignModal(reportId) {
       <div>
         <label class="block text-xs text-slate-600 mb-1">Sign here</label>
         <canvas id="signPad" class="w-full border-2 border-dashed border-slate-300 rounded-md bg-white touch-none" height="160"></canvas>
-        <button type="button" onclick="clearSignPad()" class="text-[11px] text-slate-500 hover:text-brand mt-1">Clear and retry</button>
+        <div class="flex items-center gap-2 mt-1">
+          <button type="button" onclick="clearSignPad()" class="text-xs px-3 py-2 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">Clear and retry</button>
+          <span id="signPadNote" class="text-[11px] text-amber-700"></span>
+        </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="block text-xs text-slate-600 mb-1">Name <span class="text-red-500">*</span></label>
@@ -2635,28 +2701,72 @@ function openClientSignModal(reportId) {
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white">Sign &amp; lock report</button>
+        <button class="px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white">Sign &amp; lock report</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
   pushOverlayState();
   initSignPad();
 }
+// The client's signature is the legal core of a service report, drawn with a
+// finger on a phone that may be rotated mid-signature. Three things have to
+// hold: the bitmap matches the on-screen box (else ink lands away from the
+// finger), it is sized for the device's pixel ratio (else it prints fuzzy),
+// and a rotation re-sizes it honestly instead of stretching what was drawn.
+function sizePadBitmap(cv) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const w = Math.max(120, Math.round(cv.getBoundingClientRect().width));
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(160 * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // draw in CSS pixels
+  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#193458';
+  return ctx;
+}
 function initSignPad() {
   const cv = document.getElementById('signPad'); if (!cv) return;
-  cv.width = cv.offsetWidth; cv.height = 160;
-  const ctx = cv.getContext('2d');
-  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#193458';
+  let ctx = sizePadBitmap(cv);
   let drawing = false; window._signPadDirty = false;
-  const pos = ev => { const r = cv.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+  // Screen-to-canvas mapping, recomputed per stroke: correct even if a
+  // resize slipped past the listener.
+  const pos = ev => {
+    const r = cv.getBoundingClientRect();
+    return [(ev.clientX - r.left) * (cv.width / (r.width || 1)) / (Math.min(window.devicePixelRatio || 1, 3)),
+            (ev.clientY - r.top) * (cv.height / (r.height || 1)) / (Math.min(window.devicePixelRatio || 1, 3))];
+  };
   cv.onpointerdown = ev => { drawing = true; cv.setPointerCapture(ev.pointerId); ctx.beginPath(); ctx.moveTo(...pos(ev)); ev.preventDefault(); };
   cv.onpointermove = ev => { if (!drawing) return; ctx.lineTo(...pos(ev)); ctx.stroke(); window._signPadDirty = true; ev.preventDefault(); };
   cv.onpointerup = cv.onpointercancel = () => { drawing = false; };
+  // A rotation changes the box width: re-size and say plainly that the
+  // signature must be drawn again, rather than silently distorting it.
+  window._signPadResize = () => {
+    const live = document.getElementById('signPad');
+    if (!live) { window.removeEventListener('resize', window._signPadResize); return; }
+    if (Math.round(live.getBoundingClientRect().width * Math.min(window.devicePixelRatio || 1, 3)) === live.width) return;
+    const wasDirty = window._signPadDirty;
+    ctx = sizePadBitmap(live);
+    window._signPadDirty = false;
+    const note = document.getElementById('signPadNote');
+    if (note) note.textContent = wasDirty ? 'The screen turned — please sign again.' : '';
+  };
+  window.addEventListener('resize', window._signPadResize);
+  window.addEventListener('orientationchange', window._signPadResize);
+}
+function releaseSignPad() {
+  if (!window._signPadResize) return;
+  window.removeEventListener('resize', window._signPadResize);
+  window.removeEventListener('orientationchange', window._signPadResize);
+  window._signPadResize = null;
 }
 function clearSignPad() {
   const cv = document.getElementById('signPad'); if (!cv) return;
-  cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  const ctx = cv.getContext('2d');
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.restore();
   window._signPadDirty = false;
+  const note = document.getElementById('signPadNote');
+  if (note) note.textContent = '';
 }
 async function submitClientSign(ev, reportId) {
   ev.preventDefault();
@@ -2695,7 +2805,7 @@ async function openReportChangesModal(reportId) {
 function openReportView(reportId) {
   const r = (cloudReports || []).find(x => x.id === reportId); if (!r) return;
   const c = r.content || {};
-  const sig = (label, obj, extra) => obj ? `<div class="text-xs"><span class="text-slate-500">${label}:</span> <b>${esc(obj.name || '')}</b>${extra || ''} <span class="text-slate-400">· ${String(obj.ts || '').slice(0, 16).replace('T', ' ')}</span></div>` : '';
+  const sig = (label, obj, extra) => obj ? `<div class="text-xs"><span class="text-slate-500">${label}:</span> <b>${esc(obj.name || '')}</b>${extra || ''} <span class="text-slate-500">· ${String(obj.ts || '').slice(0, 16).replace('T', ' ')}</span></div>` : '';
   document.getElementById('modalTitle').textContent = `Service report — ${esc(c.plant || r.plant_id)}, ${r.visit_date}`;
   const amendNote = r.amendment_of
     ? `<div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600">This is an <b>additional report</b>: it covers work finished after report ${esc(r.amendment_of)} was signed. That report is unchanged.</div>`
@@ -2705,7 +2815,7 @@ function openReportView(reportId) {
       ${amendNote}
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
         ${(c.jobs || []).map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-500">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${(c.issues || []).length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -2716,21 +2826,21 @@ function openReportView(reportId) {
       <div class="p-3 rounded-md bg-slate-50 border border-slate-200 space-y-1">
         ${r.eng_sign?.user_id && r.eng_sign.user_id === r.technician_id
           ? `<div class="text-xs"><span class="text-slate-500">Work done &amp; signed by:</span> <b>${esc(r.eng_sign.name || r.technician_name)}</b>
-              <span class="text-slate-400">(Engineer) · ${String(r.eng_sign.ts || '').slice(0, 16).replace('T', ' ')}</span></div>`
+              <span class="text-slate-500">(Engineer) · ${String(r.eng_sign.ts || '').slice(0, 16).replace('T', ' ')}</span></div>`
           : `<div class="text-xs"><span class="text-slate-500">Technician:</span> <b>${esc(r.technician_name)}</b>
-          <span class="text-slate-400">· ${String(r.tech_signed_at || '').slice(0, 16).replace('T', ' ')}</span>
-          ${r.eng_sign?.compiled ? '<span class="text-slate-400">(confirmed by the jobs they submitted)</span>' : ''}</div>
+          <span class="text-slate-500">· ${String(r.tech_signed_at || '').slice(0, 16).replace('T', ' ')}</span>
+          ${r.eng_sign?.compiled ? '<span class="text-slate-500">(confirmed by the jobs they submitted)</span>' : ''}</div>
         ${sig('Engineer', r.eng_sign)}`}
         ${sig('Client', r.client_sign, r.client_sign?.designation ? `, ${esc(r.client_sign.designation)}` : '')}
         <div id="clientSigImg"></div>
-        <div class="text-[10px] text-slate-400 font-mono break-all pt-1">SHA-256 ${esc(r.content_hash)}</div>
+        <div class="text-[10px] text-slate-500 font-mono break-all pt-1">SHA-256 ${esc(r.content_hash)}</div>
       </div>
       <div class="flex gap-2 justify-end flex-wrap">
         <button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
         ${r.status === 'submitted' && !isTechnician() ? `
           <button onclick="openReportChangesModal('${r.id}')" class="px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-medium">Request changes</button>
-          <button onclick="engineerSignReport('${r.id}')" class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Approve &amp; sign</button>` : ''}
-        ${r.status === 'eng_signed' ? `<button onclick="openClientSignModal('${r.id}')" class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Client sign-off</button>` : ''}
+          <button onclick="engineerSignReport('${r.id}')" class="px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium">Approve &amp; sign</button>` : ''}
+        ${r.status === 'eng_signed' ? `<button onclick="openClientSignModal('${r.id}')" class="px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium">Client sign-off</button>` : ''}
         ${r.status === 'signed' ? `<button onclick="downloadSignedReportPdf('${r.id}')" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Download PDF</button>` : ''}
       </div>
     </div>`;
@@ -2764,7 +2874,7 @@ async function downloadSignedReportPdf(reportId) {
     } catch { /* the PDF still stands without the drawn image — names and times are the record */ }
   }
 
-  const { jsPDF } = window.jspdf;
+  const jsPDF = pdfLib(); if (!jsPDF) return;
   const doc = new jsPDF({ orientation: 'portrait' });
   const W = doc.internal.pageSize.getWidth();
   const ts = v => String(v || '').slice(0, 16).replace('T', ' ');
@@ -3552,7 +3662,7 @@ function renderTeam() {
 
   const pendingSection = pending.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mt-5">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center flex-wrap gap-x-2">
         <span>Pending invites <span class="text-slate-500 font-normal">(${pending.length})</span></span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Share the invite link — the person sets their own password to join.</span>
       </div>
@@ -3755,7 +3865,7 @@ function openDeactivateHandoverModal(userId, openJobs) {
           const e = eqById(l.equipmentId);
           return `<div class="px-3 py-2">
             <div class="text-xs font-medium text-slate-800">${e ? esc(e.tag) : l.equipmentId}
-              ${l.woNo ? `<span class="font-mono text-[10px] text-slate-400">${esc(l.woNo)}</span>` : ''}</div>
+              ${l.woNo ? `<span class="font-mono text-[10px] text-slate-500">${esc(l.woNo)}</span>` : ''}</div>
             <div class="text-[11px] text-slate-500">${e ? esc(plantName(e.plantId)) : ''} \u00b7 ${esc(l.reason)}${onHold(l) ? ' \u00b7 on hold' : ''}</div>
           </div>`;
         }).join('')}
@@ -4307,7 +4417,7 @@ function buildScheduleDoc(userId, from, to) {
   const u = state.users.find(x => x.id === userId); if (!u) return null;
   const plantIds = assignmentsFor(userId);
 
-  const { jsPDF } = window.jspdf;
+  const jsPDF = pdfLib(); if (!jsPDF) return;
   const doc = new jsPDF({ orientation: 'portrait' });
   const W = doc.internal.pageSize.getWidth();
 
@@ -4583,7 +4693,7 @@ function exportXLSX(eqId) {
   saveWorkbook(wb, name);
 }
 function exportPDF(eqId) {
-  const { jsPDF } = window.jspdf;
+  const jsPDF = pdfLib(); if (!jsPDF) return;
   const doc = new jsPDF({ orientation: 'landscape' });
   const W0 = doc.internal.pageSize.getWidth();
   doc.setFillColor(25,52,88);
@@ -4654,7 +4764,7 @@ function getUpcomingPPM(days = 30, plantIds) {
 // yet. Per-equipment, the floor is the LATER of this and the day the machine
 // was added (equipment.created_at), so importing a plant never manufactures a
 // backlog of maintenance nobody was asked to do — including future imports.
-const PPM_BASELINE = '2026-07-19';
+const PPM_BASELINE = '2026-09-01';
 function ppmOverdueFloor(e) {
   return (e && e.addedOn && e.addedOn > PPM_BASELINE) ? e.addedOn : PPM_BASELINE;
 }
@@ -4737,17 +4847,17 @@ function renderEngineer() {
       class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium ${urgent
         ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
         : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}">
-      <span class="${urgent ? 'bg-amber-600' : 'bg-slate-400'} text-white rounded-full min-w-[18px] h-[18px] px-1 grid place-items-center text-[10px] font-semibold">${n}</span>${label}
+      <span class="${urgent ? 'bg-amber-700 text-white' : 'bg-slate-200 text-slate-700'} rounded-full min-w-[18px] h-[18px] px-1 grid place-items-center text-[10px] font-semibold">${n}</span>${label}
     </button>`;
   const strip = [
-    chip(toReview.length, 'finished work to check', 'wo-review', true),
-    chip(issues.length, 'problems reported', 'wo-review', true),
+    chip(toReview.length, 'work to check', 'wo-review', true),
+    chip(issues.length, 'problems', 'wo-review', true),
     chip(repsToSign.length, 'reports to sign', 'wo-review', true),
-    chip(overdue.length, 'overdue maintenance', 'pending', true),
+    chip(overdue.length, 'overdue', 'pending', true),
     chip(toStartDue.length, 'ready to start', 'pending', false),
-    chip(readyVisits.length, 'visit days without a report', 'wo-review', false),
-    chip(awaitClient.length, 'waiting for the client to sign', 'wo-review', false),
-    chip(returned.length, 'sent back — with the technician', 'wo-review', false),
+    chip(readyVisits.length, 'reports to raise', 'wo-review', false),
+    chip(awaitClient.length, 'client to sign', 'wo-review', false),
+    chip(returned.length, 'sent back', 'wo-review', false),
   ].join('');
 
   let body = '';
@@ -4872,11 +4982,11 @@ function renderWoReviewTab(items) {
         </div>
         <span class="badge badge-mt">Awaiting review</span>
       </div>
-      <div class="text-xs text-slate-700 mt-2 whitespace-pre-line">${esc(l.completionNotes) || '<span class="text-slate-400">No completion notes.</span>'}</div>
-      <div class="flex gap-2 flex-wrap mt-2 wo-media-strip" data-log="${l.id}"><span class="text-[11px] text-slate-400">Loading photos…</span></div>
-      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+      <div class="text-xs text-slate-700 mt-2 whitespace-pre-line">${esc(l.completionNotes) || '<span class="text-slate-500">No completion notes.</span>'}</div>
+      <div class="flex gap-2 flex-wrap mt-2 wo-media-strip" data-log="${l.id}"><span class="text-[11px] text-slate-500">Loading photos…</span></div>
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100 flex-wrap">
         <button onclick="openReturnWoModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-medium">Send back</button>
-        <button onclick="reviewWo('${l.id}', true)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Approve</button>
+        <button onclick="reviewWo('${l.id}', true)" class="text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium">Approve</button>
       </div>
     </div>`).join('');
   const returnedCards = returned.map(({ l, e }) => `
@@ -4888,7 +4998,7 @@ function renderWoReviewTab(items) {
         </div>
         <span class="badge badge-bd">Waiting on technician</span>
       </div>
-      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100 flex-wrap">
         <button onclick="openReassignModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">Reassign</button>
         <button onclick="reviewWo('${l.id}', true)" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium" title="Accept the record as it stands instead of waiting">Close as-is</button>
       </div>
@@ -4921,10 +5031,10 @@ function renderWoReviewTab(items) {
         </div>
         <span class="badge badge-mt">Awaiting your signature</span>${r.amendment_of ? ' <span class="badge badge-neutral">additional report</span>' : ''}
       </div>
-      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100 flex-wrap">
         <button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">View</button>
         <button onclick="openReportChangesModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-medium">Request changes</button>
-        <button onclick="engineerSignReport('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Approve &amp; sign</button>
+        <button onclick="engineerSignReport('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium">Approve &amp; sign</button>
       </div>
     </div>`).join('');
 
@@ -4937,9 +5047,9 @@ function renderWoReviewTab(items) {
         </div>
         <span class="badge badge-brand">Ready for client signature</span>${r.amendment_of ? ' <span class="badge badge-neutral">additional report</span>' : ''}
       </div>
-      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100 flex-wrap">
         <button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium">View</button>
-        <button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Client sign-off</button>
+        <button onclick="openClientSignModal('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium">Client sign-off</button>
       </div>
     </div>`).join('');
 
@@ -4953,7 +5063,7 @@ function renderWoReviewTab(items) {
         </div>
         <span class="badge badge-neutral">Report not raised</span>
       </div>
-      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100">
+      <div class="flex gap-2 justify-end mt-3 pt-3 border-t border-slate-100 flex-wrap">
         <button onclick="openCompileReportModal('${v.plantId}', '${v.date}', '${v.techId}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium">Create &amp; sign report</button>
       </div>
     </div>`).join('');
@@ -5059,7 +5169,7 @@ function openCompileReportModal(plantId, date, techId) {
     <form onsubmit="event.preventDefault(); engineerCompileReport('${plantId}', '${date}', '${techId}', this.querySelector('[name=dayNote]')?.value)" class="space-y-3 text-sm">
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
         ${content.jobs.map(j => `<div class="px-3 py-2">
-          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
+          <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-500">${esc(j.wo_no)}</span>` : ''}</div>
           <div class="text-[11px] text-slate-500">${esc(j.done) || 'No completion notes.'}</div>
         </div>`).join('')}
         ${content.issues.length ? `<div class="px-3 py-2 bg-amber-50/50">
@@ -5083,7 +5193,7 @@ function openCompileReportModal(plantId, date, techId) {
       </div>
       <div class="flex gap-2 justify-end pt-1">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Not now</button>
-        <button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white">Create &amp; sign</button>
+        <button class="px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white">Create &amp; sign</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
@@ -5152,7 +5262,7 @@ function renderToStartTab(toStart, overdue) {
 
   const openSection = fOpen.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center flex-wrap gap-x-2">
         <span>Scheduled tasks — ready to start <span class="text-slate-500 font-normal">(${fOpen.length})</span></span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Generated from the PPM schedule</span>
       </div>
@@ -5164,7 +5274,7 @@ function renderToStartTab(toStart, overdue) {
 
   const comingSection = comingRows ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center flex-wrap gap-x-2">
         <span>Coming up — scheduled for a later day <span class="text-slate-500 font-normal">(${fComing.length})</span> ${infoBtn('Coming up', 'Planned jobs for a later day. The machine keeps running, and whoever is assigned already sees the job in My Work marked with its start day. Work begins when someone presses Start Work — that stamps the real start date.')}</span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Assigned people already see these in My Work</span>
       </div>
@@ -5190,7 +5300,7 @@ function renderToStartTab(toStart, overdue) {
 
   const overdueSection = fOverdue.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center flex-wrap gap-x-2">
         <span>Overdue PPM <span class="text-slate-500 font-normal">(${fOverdue.length})</span></span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Scheduled service dates that have passed without completion</span>
       </div>
@@ -5309,7 +5419,7 @@ function renderUpcomingTab(upcoming) {
     </tr>`;
   }).join('');
   return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+    <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center flex-wrap gap-x-2">
       <span>Upcoming PPM tasks — next 30 days ${infoBtn('Upcoming PPM', 'The next 30 days from each plant\'s planned maintenance schedule. Schedule & assign creates the job early so a technician can be assigned in advance; Put in Maintenance starts work right now instead.')}</span>
       <span class="ml-auto text-xs text-slate-500 font-normal">From the planned PPM schedule</span>
     </div>
@@ -5465,7 +5575,7 @@ function buildVisitReportDoc(date, preparedByIn, approvedByIn) {
   const preparedBy = preparedByIn || technicians[0] || '';
   const approvedBy = approvedByIn || '';
 
-  const { jsPDF } = window.jspdf;
+  const jsPDF = pdfLib(); if (!jsPDF) return;
   const doc = new jsPDF({ orientation: 'portrait' });
   const W = doc.internal.pageSize.getWidth();
 
@@ -5615,9 +5725,9 @@ function buildServiceReportDoc(args) {
     const plantIds = accessiblePlantIds();
     ids = activeEquipment().filter(e => plantIds.includes(e.plantId)).map(e => e.id);
   }
-  if (!ids.length) return null;
+  if (!ids.length) { appAlert('No equipment matches the chosen scope.'); return null; }
 
-  const { jsPDF } = window.jspdf;
+  const jsPDF = pdfLib(); if (!jsPDF) return;
   const doc = new jsPDF({ orientation: 'portrait' });
   const W = doc.internal.pageSize.getWidth();
 
@@ -5727,7 +5837,7 @@ function generateReport(ev) {
   }
   const args = { scope, from: f.get('from') || '', to: f.get('to') || today(), preparedBy, approvedBy };
   const result = buildServiceReportDoc(args);
-  if (!result) { appAlert('No equipment matches the chosen scope.'); return; }
+  if (!result) return;   // the builder said why
   closeModal();
   if (action === 'download') savePdfDoc(result.doc, result.filename);
   else openPdfPreview(result.doc, result.filename, 'Maintenance summary');
@@ -5806,7 +5916,7 @@ function generateQrSheet(plantId) {
   const eqs = activeEquipment().filter(e => e.plantId === plantId);
   if (!eqs.length) { appAlert('This plant has no equipment yet.'); return; }
 
-  const { jsPDF } = window.jspdf;
+  const jsPDF = pdfLib(); if (!jsPDF) return;
   const doc = new jsPDF({ orientation: 'portrait' });   // A4: 210 x 297 mm
   const W = doc.internal.pageSize.getWidth();
 
@@ -6108,7 +6218,12 @@ async function outboxRemove(id) {
   renderOutboxChip();
 }
 function myOutbox() { return _outbox.filter(x => x.userId === currentUser()?.id); }
-function outboxHasFor(logId) { return myOutbox().some(x => x.logId === logId && !x.failed); }
+// kinds: which queued actions count. A queued 'start' alone must NOT close
+// the row — the technician still has to be able to record the completion,
+// and flushOne sequences the pair correctly.
+function outboxHasFor(logId, kinds) {
+  return myOutbox().some(x => x.logId === logId && !x.failed && (!kinds || kinds.includes(x.kind)));
+}
 
 // A fetch that died at the network layer — the only failure worth queueing.
 // Anything the server actually answered (validation, permissions) is a real
@@ -6216,6 +6331,10 @@ async function flushOne(item) {
   }
 
   if (item.kind === 'complete') {
+    // The online path patches these after the RPC; the replay must too, or
+    // the same job records different dates depending on the route it took.
+    var _wasOpen = woStateOf(live) === 'open';
+    var _needName = !(live.technician || '').trim();
     // Photos first, deterministic paths, duplicates tolerated (unique index 45).
     if ((item.photos || []).length && !p.photosDone) {
       const rows = [];
@@ -6236,6 +6355,15 @@ async function flushOne(item) {
         p_checklist: null, p_part_actions: p.partActions?.length ? p.partActions : null,
       });
       if (error) throw error;
+      // Match the online path exactly: a job completed while still open was
+      // never started, and a blank technician takes the completer's name.
+      const patch = {};
+      if (_wasOpen) patch.start_date = p.endDate;
+      if (_needName && p.techName) patch.technician = p.techName;
+      if (Object.keys(patch).length) {
+        const { error: pErr } = await SUPA.from('maintenance_logs').update(patch).eq('id', item.logId);
+        if (pErr) console.warn('post-complete patch failed', pErr);
+      }
     }
     if ((p.issueDesc || '').trim() && !p.issueDone) {
       const { error } = await SUPA.from('wo_issues').upsert({
@@ -6267,7 +6395,7 @@ function renderOutboxChip() {
   const el = document.createElement('button');
   el.id = 'outboxChip';
   el.onclick = openOutboxModal;
-  el.className = 'fixed bottom-4 left-4 z-[60] px-3.5 py-2 rounded-full shadow-lg text-xs font-medium inline-flex items-center gap-2 '
+  el.className = 'fixed bottom-4 left-4 z-[15] px-3.5 py-2 rounded-full shadow-lg text-xs font-medium inline-flex items-center gap-2 '
     + (failed ? 'bg-red-600 text-white' : 'bg-amber-700 text-white');
   el.innerHTML = failed
     ? `${failed} saved action${failed === 1 ? '' : 's'} refused — tap to see why`
@@ -6276,6 +6404,13 @@ function renderOutboxChip() {
 }
 const OUTBOX_KIND_LABEL = { start: 'Start work', complete: 'Complete job', resubmit: 'Send again', issue: 'Report issue' };
 function openOutboxModal() {
+  // Tapping the floating chip while a completion form is open would replace
+  // the form (and lose its photos) with no way back.
+  const modal = document.getElementById('modal');
+  if (modal && !modal.classList.contains('hidden') && document.querySelector('#modalBody form')) {
+    appAlert('Finish or close what you are filling in first — your saved work is safe and will send itself.');
+    return;
+  }
   const mine = myOutbox();
   document.getElementById('modalTitle').textContent = 'Saved on this phone';
   document.getElementById('modalBody').innerHTML = `
@@ -6350,7 +6485,7 @@ function renderWoPhotoStrip() {
     <div class="relative">
       <img src="${p.url}" class="w-16 h-16 object-cover rounded-md border border-slate-200" alt="photo ${i + 1}" />
       <button type="button" onclick="removeWoPhoto(${i})" aria-label="Remove photo"
-        class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-700 text-white text-[11px] leading-none grid place-items-center">×</button>
+        class="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-slate-700 text-white text-xs leading-none grid place-items-center shadow">×</button>
     </div>`).join('');
   if (count) count.textContent = window._woPhotos?.length ? `${window._woPhotos.length} of ${WO_PHOTO_MAX}` : '';
 }
@@ -6781,7 +6916,7 @@ function openCompleteModal(eqId) {
       </div>
       <div class="flex gap-2 justify-end pt-2 flex-wrap">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button type="submit" name="action" value="confirm" class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white">Confirm</button>
+        <button type="submit" name="action" value="confirm" class="px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white">Confirm</button>
 
       </div>
     </form>
@@ -6831,6 +6966,7 @@ async function submitComplete(ev, eqId) {
         eqId, endDate, notes: completionNotes, partActions,
         issueDesc: (f.get('issueDesc') || '').trim(), issueNeed: f.get('issueNeed') || 'repair',
         raisedName: currentUser()?.name || '',
+        techName: currentUser()?.name || '',
         photosDone: window._woUploadedFor === log.id,
         }, (window._woPhotos || []).map(x => x.blob));
       } catch { return; }   // alerted inside outboxAdd; the form stays open
@@ -7622,7 +7758,7 @@ function reviewRowFor({ q, e }) {
         ${queueDraftFlags(q).length ? `<div class="flex gap-1 flex-wrap mt-1.5">${queueDraftFlags(q).map(fl => `<span class="badge badge-mt">${esc(fl)}</span>`).join('')}</div>` : ''}
       </div>
       <div class="flex gap-2 flex-wrap">
-        ${(q.draft?.parts || []).some(pt => pt && String(pt.name || '').trim()) ? `<button onclick="quickApproveQueueRow(${q.id}, false)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Save every drafted part exactly as suggested">Quick approve</button>` : ''}
+        ${(q.draft?.parts || []).some(pt => pt && String(pt.name || '').trim()) ? `<button onclick="quickApproveQueueRow(${q.id}, false)" class="text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium whitespace-nowrap" title="Save every drafted part exactly as suggested">Quick approve</button>` : ''}
         <button onclick="openQueueDraftModal(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Review</button>
         <button onclick="skipQueueRow(${q.id})" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Skip</button>
       </div>
@@ -7676,7 +7812,7 @@ function renderReview() {
         ${chip(count('ambiguous'), 'variant', 'badge-brand')}
         ${chip(count('failed'), 'attention', 'badge-bd')}
         ${chip(count('pending') + count('running'), 'researching', 'badge-neutral')}
-        ${readyCount ? `<button onclick="event.preventDefault(); event.stopPropagation(); bulkApproveReady('${pid}')" class="ml-auto text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium whitespace-nowrap" title="Approve every ready draft at this plant — flagged items are listed before anything saves">Quick approve (${readyCount})</button>` : ''}
+        ${readyCount ? `<button onclick="event.preventDefault(); event.stopPropagation(); bulkApproveReady('${pid}')" class="ml-auto text-xs px-3 py-1.5 rounded-md bg-green-700 hover:bg-green-800 text-white font-medium whitespace-nowrap" title="Approve every ready draft at this plant — flagged items are listed before anything saves">Quick approve (${readyCount})</button>` : ''}
       </summary>
       <div class="border-t border-slate-200 divide-y divide-slate-100">${items.map(reviewRowFor).join('')}</div>
     </details>`;
@@ -8191,6 +8327,9 @@ async function boot() {
       // as a silent bell.
       await hydrateCloud(['logs', 'equipment', 'issues', 'reports', 'notifications']);
       route();
+      // Plant Wi-Fi that is associated but dead never fires an 'online'
+      // event, so queued field work would sit forever. This is the retry.
+      try { await flushOutbox(); } catch (e) { console.warn(e); }
     };
     document.addEventListener('visibilitychange', () => { quietRefresh(); });
     setInterval(() => { quietRefresh(); }, 10 * 60 * 1000);
