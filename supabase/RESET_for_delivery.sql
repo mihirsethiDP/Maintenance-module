@@ -73,3 +73,19 @@ union all
 select 'next work-order number', 'WO-' || extract(year from (now() at time zone 'Asia/Kolkata'))::text
   || '-' || lpad((coalesce((select last_no from public.wo_counters
                             where year = extract(year from (now() at time zone 'Asia/Kolkata'))::int), 0) + 1)::text, 4, '0');
+
+-- ===================================================================
+-- OPTIONAL — only if the completed history is build-period testing too.
+-- Check first with CHECK_completed_history.sql: each of those rows is a
+-- job someone recorded as done. If they are real work, KEEP THEM (the
+-- health scores and PPM baselines read from them). If they are test
+-- records, uncomment this block to remove them and let the client's
+-- first real job be WO-2026-0001.
+--
+-- begin;
+-- delete from public.maintenance_logs where end_date is not null;
+-- delete from public.wo_counters;
+-- commit;
+-- select 'completed history left' as what, count(*)::text as result
+--   from public.maintenance_logs where end_date is not null;
+-- ===================================================================
