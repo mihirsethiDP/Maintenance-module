@@ -516,9 +516,12 @@ async function loadAuthProfile(u) {
   } catch (e) { console.warn('profile load failed', e); }
   let plants = [];
   try {
-    const { data: pa } = await SUPA.from('plant_assignments').select('plant_id').eq('user_id', u.id);
-    if (pa) plants = pa.map(x => x.plant_id);
-  } catch (e) { console.warn('assignment load failed', e); }
+    const { data: pa, error: paErr } = await SUPA.from('plant_assignments').select('plant_id').eq('user_id', u.id);
+    // A failed load must not silently scope an engineer to zero plants —
+    // keep the previous session's scope rather than showing an empty app.
+    if (paErr) { console.warn('assignment load failed', paErr); plants = authUser?.plants || []; }
+    else if (pa) plants = pa.map(x => x.plant_id);
+  } catch (e) { console.warn('assignment load failed', e); plants = authUser?.plants || []; }
   if (status !== 'active') {
     // Deactivated: end the session right here. (The DB already refuses their
     // requests — this is the polite front door.)
@@ -625,10 +628,13 @@ const CLOUD_FETCHERS = {
   logs: (fail) => Promise.all([
       SUPA.from('maintenance_logs').select('*').is('end_date', null),
       SUPA.from('maintenance_logs').select('*').order('start_date', { ascending: false }).limit(1000),
-    ]).then(([open, recent]) => {
-      if (open.error || recent.error) return fail('logs', open.error || recent.error);
+      // Work waiting on a review verdict must never fall out of the window,
+      // however old its start date — it is invisible everywhere else.
+      SUPA.from('maintenance_logs').select('*').in('wo_state', ['submitted', 'returned']),
+    ]).then(([open, recent, reviewing]) => {
+      if (open.error || recent.error || reviewing.error) return fail('logs', open.error || recent.error || reviewing.error);
       const byId = new Map();
-      (open.data || []).concat(recent.data || []).forEach(r => byId.set(r.id, r));
+      (open.data || []).concat(recent.data || [], reviewing.data || []).forEach(r => byId.set(r.id, r));
       cloudLogs = [...byId.values()].map(logFromDb);
     }, e => fail('logs', e)),
   notifications: (fail) => SUPA.from('notifications').select('*').order('ts', { ascending: false }).limit(100)
@@ -693,6 +699,7 @@ async function hydrateCloud(only) {
   const names = full ? Object.keys(CLOUD_FETCHERS) : only.filter(k => CLOUD_FETCHERS[k]);
   await Promise.all(names.map(k => CLOUD_FETCHERS[k](fail)));
   window._lastRefresh = { what: full ? 'full' : names.join('+'), ms: Math.round(performance.now() - t0) };
+  window._lastHydrate = Date.now();
   if (!full) return;
   // A deactivated account's session may outlive the flip. The database is
   // already refusing it; sign out politely instead of storming errors.
@@ -882,7 +889,22 @@ function routeAllowed(hash, user) {
 }
 function homeHashFor(user) {
   const r = effRole(user);
-  return r === 'Admin' ? '#/dashboard' : r === 'Technician' ? '#/mywork' : '#/equipment';
+  // Everyone lands where their work is: admins on the fleet overview,
+  // technicians on their jobs, engineers on their workspace.
+  return r === 'Admin' ? '#/dashboard' : r === 'Technician' ? '#/mywork' : '#/engineer';
+}
+// Nav badge: things only THIS person can move forward, so the pull toward
+// the workspace exists before they learn where anything lives.
+function engineerAttentionCount() {
+  if (!SUPA || isTechnician()) return 0;
+  return getSubmittedWOs().length + getOpenIssues().length + getSubmittedReports().length;
+}
+function myWorkAttentionCount() {
+  if (!SUPA || !isTechnician()) return 0;
+  const me = currentUser()?.id;
+  const returned = state.logs.filter(l => l.assignedTo === me && woStateOf(l) === 'returned').length;
+  const reports = (cloudReports || []).filter(r => r.technician_id === me && (r.status === 'changes' || r.status === 'eng_signed')).length;
+  return returned + reports;
 }
 
 // The sign-in / set-password / accept-invite screens are full-screen and
@@ -898,7 +920,9 @@ function renderNav() {
     .filter(r => r.hash !== '#/review' || (SUPA && !isSimple()))   // review queue: full mode only
     .map(r => {
     const active = cur === r.hash || (r.hash === '#/equipment' && cur.startsWith('#/equipment/'));
-    const n = r.hash === '#/review' ? reviewAttentionCount() : 0;
+    const n = r.hash === '#/review' ? reviewAttentionCount()
+            : r.hash === '#/engineer' ? engineerAttentionCount()
+            : r.hash === '#/mywork' ? myWorkAttentionCount() : 0;
     return `<a href="${r.hash}" class="px-3 py-1.5 rounded-lg ${active?'bg-white/15 text-white font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]':'text-white/65 hover:bg-white/10 hover:text-white'}">${r.label}${n ? `<span class="nav-badge">${n > 99 ? '99+' : n}</span>` : ''}</a>`;
   }).join('');
 }
@@ -1276,28 +1300,49 @@ function buildNotifFeed() {
   // Review traffic: engineers/admins see what awaits their verdict;
   // technicians see what came back to them.
   if (!techMe && SUPA) {
+    // Keys carry the submission stamp so a RE-submission rings the bell
+    // again — a stable key would stay "seen" from the first round forever.
     getSubmittedWOs().forEach(({ l, e }) => {
-      feed.push({ key: `wo-review-${l.id}`, group: 'due', date: l.endDate, plantId: e.plantId, href: '#/engineer',
+      feed.push({ key: `wo-review-${l.id}-${l.submittedAt || l.endDate}`, group: 'due', date: l.endDate, plantId: e.plantId, href: '#/engineer', tab: 'wo-review',
         message: `Awaiting your review — ${e.tag} completed by ${l.technician || 'a technician'}.` });
     });
     getOpenIssues().forEach(({ i, e }) => {
-      feed.push({ key: `issue-${i.id}`, group: 'due', date: String(i.created_at).slice(0, 10), plantId: e.plantId, href: '#/engineer',
+      feed.push({ key: `issue-${i.id}`, group: 'due', date: String(i.created_at).slice(0, 10), plantId: e.plantId, href: '#/engineer', tab: 'wo-review',
         message: `Issue reported — ${e.tag} ${ISSUE_NEED_LABEL[i.need] || i.need} (${i.raised_name || 'unknown'}).` });
     });
     getSubmittedReports().forEach(r => {
-      feed.push({ key: `sr-${r.id}`, group: 'due', date: r.visit_date, plantId: r.plant_id, href: '#/engineer',
+      feed.push({ key: `sr-${r.id}-${r.tech_signed_at || r.visit_date}`, group: 'due', date: r.visit_date, plantId: r.plant_id, href: '#/engineer', tab: 'wo-review',
         message: `Service report awaiting your signature — ${plantName(r.plant_id)}, ${r.visit_date} (${r.technician_name}).` });
     });
   }
   if (techMe) {
     (cloudReports || []).filter(r => r.technician_id === techMe && r.status === 'changes').forEach(r => {
-      feed.push({ key: `sr-chg-${r.id}`, group: 'overdue', date: r.visit_date, plantId: r.plant_id, href: '#/mywork',
+      feed.push({ key: `sr-chg-${r.id}-${r.updated_at || ''}`, group: 'overdue', date: r.visit_date, plantId: r.plant_id, href: '#/mywork', tab: 'reports',
         message: `Report needs changes — ${plantName(r.plant_id)}, ${r.visit_date}.` });
+    });
+    // The client signature needs the technician still AT the plant — this is
+    // the one notification that must not wait for him to poll the tab.
+    (cloudReports || []).filter(r => r.technician_id === techMe && r.status === 'eng_signed').forEach(r => {
+      feed.push({ key: `sr-ready-${r.id}-${r.updated_at || ''}`, group: 'due', date: r.visit_date, plantId: r.plant_id, href: '#/mywork', tab: 'reports',
+        message: `Ready for the client's signature — ${plantName(r.plant_id)}, ${r.visit_date}. Collect it before you leave the site.` });
     });
     state.logs.filter(l => l.assignedTo === techMe && woStateOf(l) === 'returned').forEach(l => {
       const e = eqById(l.equipmentId); if (!e) return;
-      feed.push({ key: `wo-returned-${l.id}`, group: 'overdue', date: l.endDate, plantId: e.plantId, href: '#/mywork',
+      feed.push({ key: `wo-returned-${l.id}-${l.submittedAt || ''}`, group: 'overdue', date: l.endDate, plantId: e.plantId, href: '#/mywork', tab: 'open',
         message: `Sent back for fixes — ${e.tag}. See your engineer's note in My Work.` });
+    });
+    // Every job of a visit approved, no report raised yet: the last step of
+    // the visit is his to take.
+    const mine = state.logs.filter(l => l.assignedTo === techMe);
+    myTechVisits(mine).forEach(v => {
+      if (v.pending) return;
+      const { active } = visitReports(v.plantId, v.date, techMe);
+      if (active) return;
+      const covered = coveredJobIds(v.plantId, v.date, techMe);
+      const fresh = v.jobs.filter(l => !covered.has(l.id)).length;
+      if (!fresh) return;
+      feed.push({ key: `sr-raise-${v.plantId}-${v.date}-${fresh}`, group: 'due', date: v.date, plantId: v.plantId, href: '#/mywork', tab: 'reports',
+        message: `All jobs approved — create and sign your report for ${plantName(v.plantId)}, ${v.date}.` });
     });
   }
   if (!techMe) {
@@ -1398,10 +1443,13 @@ function markNotifSeen(key) {
   const seen = loadSeenNotifs(); seen.add(key);
   localStorage.setItem(notifSeenKey(), JSON.stringify([...seen].slice(-1000)));
 }
-function notifGo(href, key) {
+function notifGo(href, key, tab) {
   markNotifSeen(key);
   document.getElementById('notifPanel')?.remove();
   renderHeaderChrome();
+  // Land on the tab the item actually lives in, not whichever was last open.
+  if (tab && href.startsWith('#/engineer')) ui.engineerTab = tab;
+  if (tab && href.startsWith('#/mywork')) ui.myWorkTab = tab;
   if (location.hash === href) route(); else location.hash = href;
 }
 const NOTIF_GROUPS = [
@@ -1412,7 +1460,8 @@ const NOTIF_GROUPS = [
   ['activity', 'Recent activity',   '#193458', '#f1f4f9', '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>'],
 ];
 function notifPanelBody() {
-  const feed = applyNotifFilters(buildNotifFeed());
+  const fullFeed = buildNotifFeed();
+  const feed = applyNotifFilters(fullFeed);
   const seen = loadSeenNotifs();
   const userName = id => (state.users.find(x => x.id === id)?.name || id);
   const chLabel = ch => ch === 'sms' ? 'SMS' : ch.charAt(0).toUpperCase() + ch.slice(1);
@@ -1425,7 +1474,7 @@ function notifPanelBody() {
       if (n.group === 'activity' && n.channels?.length) meta.push('via ' + esc(n.channels.map(chLabel).join(', ')));
       if (n.group === 'activity' && n.recipients?.length) meta.push('→ ' + esc(n.recipients.map(userName).join(', ')));
       return `
-      <div class="notif-item ${isSeen ? '' : 'unseen'} ${n.href ? 'clickable' : ''}" ${n.href ? `onclick="notifGo('${n.href}', '${n.key}')"` : ''}>
+      <div class="notif-item ${isSeen ? '' : 'unseen'} ${n.href ? 'clickable' : ''}" ${n.href ? `onclick="notifGo('${n.href}', '${n.key}', '${n.tab || ''}')"` : ''}>
         <div class="n-icon" style="background:${bg};color:${color}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
         </div>
@@ -1442,12 +1491,20 @@ function notifPanelBody() {
       ${rows}</div>`;
   }).join('');
   const filtered = ui.notifPlant !== 'all' || ui.notifTime !== 'all';
-  return sections || `
+  // The badge counts everything; the panel shows the filtered view. Never
+  // let those disagree silently — say what the filters are hiding.
+  const hiddenUnread = filtered ? fullFeed.filter(n => !seen.has(n.key) && !feed.includes(n)).length : 0;
+  const hiddenNote = hiddenUnread ? `
+    <div class="px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-100">
+      ${hiddenUnread} unread notification${hiddenUnread === 1 ? ' is' : 's are'} hidden by your filters —
+      <button onclick="ui.notifPlant='all'; ui.notifTime='all'; document.getElementById('notifPanel')?.remove(); toggleNotifPanel()" class="font-semibold underline">show all</button>
+    </div>` : '';
+  return hiddenNote + (sections || `
     <div class="notif-empty">
       <div class="ne-ring"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
       <div class="text-sm font-semibold text-slate-700">${filtered ? 'Nothing matches these filters' : 'All caught up'}</div>
       <div class="text-xs text-slate-500 mt-1">${filtered ? 'Try widening the plant or time window.' : 'Nothing due, overdue, or waiting on you.'}</div>
-    </div>`;
+    </div>`);
 }
 function refreshNotifPanel() {
   const body = document.getElementById('notifPanelBody');
@@ -1487,7 +1544,9 @@ function toggleNotifPanel() {
 }
 function markAllNotifsRead() {
   const seen = loadSeenNotifs();
-  buildNotifFeed().forEach(n => seen.add(n.key));
+  // Mark read only what the panel actually shows — with a plant/time filter
+  // active, the hidden entries were never seen and must keep their badge.
+  applyNotifFilters(buildNotifFeed()).forEach(n => seen.add(n.key));
   localStorage.setItem(notifSeenKey(), JSON.stringify([...seen].slice(-1000)));
   renderHeaderChrome();
   const panel = document.getElementById('notifPanel');
@@ -1728,6 +1787,7 @@ function renderEquipmentDetail(id) {
       </div>
       ${holdChip(l) ? `<div class="mt-1">${holdChip(l)} <span class="text-xs text-slate-500">${esc(l.holdReason)}</span></div>` : ''}
       ${recordedGapChip(l) ? `<div class="mt-1">${recordedGapChip(l)}</div>` : ''}
+      ${l.endDate && ['submitted','returned'].includes(woStateOf(l)) ? `<div class="mt-1">${ongoingStatusPill(l)}${!isTechnician() && woStateOf(l) === 'submitted' ? ` <button onclick="ui.engineerTab='wo-review'; location.hash='#/engineer'" class="text-xs text-brand hover:underline font-medium">Review it</button>` : ''}</div>` : ''}
       <div class="text-sm text-slate-700 mt-1"><span class="font-medium">Reason:</span> ${esc(l.notes) || '—'}</div>
       ${l.completionNotes ? `<div class="text-sm text-slate-700 mt-1"><span class="font-medium">Completion notes:</span> ${esc(l.completionNotes)}</div>` : ''}
       ${(() => {
@@ -1765,7 +1825,7 @@ function renderEquipmentDetail(id) {
       ? `<a href="#/mywork" class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium inline-block">Open in My Work</a>` : '';
   } else if (!retired) {
     const reassign = (detailOpenWo && SUPA && technicianAccounts().length)
-      ? `<button onclick="openReassignModal('${detailOpenWo.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium">Reassign</button>` : '';
+      ? `<button onclick="openReassignModal('${detailOpenWo.id}')" class="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium">${(detailOpenWo.assignedTo || (detailOpenWo.technician || '').trim()) ? 'Reassign' : 'Assign'}</button>` : '';
     const hb = 'px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-sm font-medium';
     const photoReqBtn = (detailOpenWo && SUPA)
       ? (detailOpenWo.photosRequired
@@ -2241,7 +2301,9 @@ function renderMyWork() {
   // "Open" = anything still needing THEIR action: not yet completed, or
   // completed but sent back by the engineer for fixes.
   const open = mine.filter(l => !l.endDate || woStateOf(l) === 'returned')
-    .sort((a, b) => String(a.etr || a.startDate).localeCompare(String(b.etr || b.startDate)));
+    // Returned jobs float to the top: the engineer is actively waiting on them.
+    .sort((a, b) => ((woStateOf(b) === 'returned') - (woStateOf(a) === 'returned'))
+      || String(a.etr || a.startDate).localeCompare(String(b.etr || b.startDate)));
   const done = mine.filter(l => l.endDate && woStateOf(l) !== 'returned')
     .sort((a, b) => String(b.endDate).localeCompare(String(a.endDate))).slice(0, 100);
 
@@ -2271,12 +2333,14 @@ function renderMyWork() {
       : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')">Mark Complete</button>`;
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div>${woRef(l, 'block mt-0.5')}</td>
-      <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${onHold(l) ? esc((HOLD_KIND[l.holdKind] || 'on hold') + ': ' + l.holdReason) : esc(l.notes || '')}</div></td>
+      <td><div class="cell-primary">${esc(l.reason)}</div><div class="cell-muted">${onHold(l) ? esc((HOLD_KIND[l.holdKind] || 'on hold') + ': ' + l.holdReason) : (l.reviewNote ? `Engineer's note: ${esc(l.reviewNote)}` : esc(l.notes || ''))}</div></td>
       <td><div class="cell-primary">${l.etr || '—'}</div><div class="cell-muted">Started ${l.startDate}</div></td>
       <td class="col-center"><span class="${et.cls}">${et.label}</span></td>
       <td class="col-center">${act}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="5" class="py-8 text-center text-slate-500">Nothing assigned to you right now. New jobs appear here the moment an engineer assigns them.</td></tr>`;
+  }).join('') || `<tr><td colspan="5" class="py-8 text-center text-slate-500">${mine.some(l => l.endDate === today())
+    ? `All done for today. Once your engineer approves your jobs, open the <button onclick="ui.myWorkTab='reports'; route()" class="text-brand font-medium hover:underline">Reports tab</button> to create and sign your visit report.`
+    : 'Nothing assigned to you right now. New jobs appear here the moment an engineer assigns them.'}</td></tr>`;
 
   const doneRows = done.map(l => {
     const e = eqById(l.equipmentId); if (!e) return '';
@@ -2302,7 +2366,15 @@ function renderMyWork() {
         <p class="text-slate-500 text-sm">Jobs assigned to you. Start one when you begin, complete it when the machine is back in service.</p>
       </div>
     </div>
-    <div class="flex gap-2 mt-3 mb-4 flex-wrap">${tabBtn('open', 'Open', open.length)}${tabBtn('done', 'Completed', done.length)}${SUPA ? tabBtn('reports', 'Reports', visits.length) : ''}</div>
+    <div class="flex gap-2 mt-3 mb-4 flex-wrap">${(() => {
+      // Tab labels carry what actually needs him: a returned job, a report
+      // to fix, a client signature to collect.
+      const ret = open.filter(l => woStateOf(l) === 'returned').length;
+      const repAttn = (cloudReports || []).filter(r => r.technician_id === me && (r.status === 'changes' || r.status === 'eng_signed')).length;
+      return tabBtn('open', ret ? `Open · ${ret} sent back` : 'Open', open.length)
+           + tabBtn('done', 'Completed', done.length)
+           + (SUPA ? tabBtn('reports', repAttn ? `Reports · ${repAttn} ${repAttn === 1 ? 'needs' : 'need'} you` : 'Reports', visits.length) : '');
+    })()}</div>
     ${tab === 'reports' ? renderMyReportsTab(visits) : `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="overflow-x-auto">
         ${tab === 'open'
@@ -2583,8 +2655,12 @@ function openReportView(reportId) {
         <div id="clientSigImg"></div>
         <div class="text-[10px] text-slate-400 font-mono break-all pt-1">SHA-256 ${esc(r.content_hash)}</div>
       </div>
-      <div class="flex gap-2 justify-end">
+      <div class="flex gap-2 justify-end flex-wrap">
         <button onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Close</button>
+        ${r.status === 'submitted' && !isTechnician() ? `
+          <button onclick="openReportChangesModal('${r.id}')" class="px-3 py-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 font-medium">Request changes</button>
+          <button onclick="engineerSignReport('${r.id}')" class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Approve &amp; sign</button>` : ''}
+        ${r.status === 'eng_signed' ? `<button onclick="openClientSignModal('${r.id}')" class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium">Client sign-off</button>` : ''}
         ${r.status === 'signed' ? `<button onclick="downloadSignedReportPdf('${r.id}')" class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Download PDF</button>` : ''}
       </div>
     </div>`;
@@ -2876,27 +2952,27 @@ function oversightData() {
   logs.filter(l => woStateOf(l) === 'submitted').forEach(l => {
     const d = daysAgo(l.submittedAt || l.endDate);
     if (d >= AGE.review) stuck.push({ d, kind: 'Unreviewed work', who: 'engineers for ' + plantName(eqPlant(l.equipmentId)),
-      what: (eqById(l.equipmentId)?.tag || '') + (l.woNo ? ' \u00b7 ' + l.woNo : ''), href: '#/engineer' });
+      what: (eqById(l.equipmentId)?.tag || '') + (l.woNo ? ' \u00b7 ' + l.woNo : ''), href: '#/engineer', tab: 'wo-review' });
   });
   logs.filter(l => woStateOf(l) === 'returned').forEach(l => {
     const d = daysAgo(l.endDate);
     if (d >= AGE.returned) stuck.push({ d, kind: 'Sent back, not fixed yet', who: l.technician || 'technician',
-      what: (eqById(l.equipmentId)?.tag || '') + (l.woNo ? ' \u00b7 ' + l.woNo : ''), href: '#/engineer' });
+      what: (eqById(l.equipmentId)?.tag || '') + (l.woNo ? ' \u00b7 ' + l.woNo : ''), href: '#/engineer', tab: 'wo-review' });
   });
   issues.forEach(i => {
     const d = daysAgo(i.created_at);
     if (d >= AGE.issue) stuck.push({ d, kind: 'Issue — no decision yet', who: 'engineers for ' + plantName(eqPlant(i.equipment_id)),
-      what: (eqById(i.equipment_id)?.tag || '') + ' \u2014 ' + (i.description || '').slice(0, 40), href: '#/engineer' });
+      what: (eqById(i.equipment_id)?.tag || '') + ' \u2014 ' + (i.description || '').slice(0, 40), href: '#/engineer', tab: 'wo-review' });
   });
   reports.filter(r => r.status === 'submitted').forEach(r => {
     const d = daysAgo(r.updated_at);
     if (d >= AGE.review) stuck.push({ d, kind: 'Report waiting for the engineer to sign', who: 'engineers for ' + plantName(r.plant_id),
-      what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer' });
+      what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer', tab: 'wo-review' });
   });
   reports.filter(r => r.status === 'eng_signed').forEach(r => {
     const d = daysAgo(r.updated_at);
     if (d >= AGE.clientSign) stuck.push({ d, kind: 'Client has not signed yet', who: r.technician_name || 'technician',
-      what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer' });
+      what: plantName(r.plant_id) + ' \u00b7 ' + r.visit_date, href: '#/engineer', tab: 'wo-review' });
   });
   // A passed check-back is the one hold state that IS a problem: the date the
   // engineer set has gone and nobody has revisited it.
@@ -2954,7 +3030,7 @@ function renderOversight() {
       <td><div class="cell-primary">${esc(x.kind)}</div><div class="cell-muted">${esc(x.what)}</div></td>
       <td><div class="cell-muted">${esc(x.who)}</div></td>
       <td class="col-center">${ageChip(x.d, 1)}</td>
-      <td class="col-center"><a href="${x.href}" class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium inline-block">Open</a></td>
+      <td class="col-center"><a href="${x.href}" ${x.tab ? `onclick="ui.engineerTab='${x.tab}'"` : ''} class="text-xs px-2.5 py-1 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium inline-block">Open</a></td>
     </tr>`).join('');
 
   document.getElementById('view').innerHTML = `
@@ -4546,6 +4622,33 @@ function renderEngineer() {
   const upcoming = getUpcomingPPM(30);
   const visits   = getVisits();
   const toReview = getSubmittedWOs();
+  const issues   = getOpenIssues();
+  const repsToSign = getSubmittedReports();
+  const awaitClient = getAwaitingClientReports();
+  const returned = getReturnedWOs();
+  const readyVisits = visitsReadyForReport();
+  // The tab's number means "things you can act on now" — not just completed
+  // jobs. An engineer with 0 jobs but 3 issues must not read "To review (0)".
+  const reviewCount = toReview.length + issues.length + repsToSign.length + readyVisits.length;
+
+  // "Needs your attention": one glance says what waits, one tap lands on it.
+  const chip = (n, label, tabKey, urgent) => !n ? '' : `
+    <button onclick="ui.engineerTab='${tabKey}'; renderEngineer()"
+      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium ${urgent
+        ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}">
+      <span class="${urgent ? 'bg-amber-600' : 'bg-slate-400'} text-white rounded-full min-w-[18px] h-[18px] px-1 grid place-items-center text-[10px] font-semibold">${n}</span>${label}
+    </button>`;
+  const strip = [
+    chip(toReview.length, 'finished work to check', 'wo-review', true),
+    chip(issues.length, 'problems reported', 'wo-review', true),
+    chip(repsToSign.length, 'reports to sign', 'wo-review', true),
+    chip(overdue.length, 'overdue maintenance', 'pending', true),
+    chip(toStart.length, 'ready to start', 'pending', false),
+    chip(readyVisits.length, 'visit days without a report', 'wo-review', false),
+    chip(awaitClient.length, 'waiting for the client to sign', 'wo-review', false),
+    chip(returned.length, 'sent back — with the technician', 'wo-review', false),
+  ].join('');
 
   let body = '';
   if (tab === 'pending') body = renderToStartTab(toStart, overdue);
@@ -4565,11 +4668,12 @@ function renderEngineer() {
     <p class="text-slate-500 mb-5">${isAdmin()
       ? "Your engineers' workspace — you have it as cover: review work, decide on issues, and sign reports when an engineer isn't available."
       : "For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports."}</p>
+    ${strip ? `<div class="flex gap-2 mb-4 flex-wrap items-center"><span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Needs your attention</span>${strip}</div>` : ''}
     <div class="flex gap-2 mb-5 flex-wrap">
       ${tabBtn('pending',  'To start', toStart.length + overdue.length)}
       ${tabBtn('ongoing',  'Ongoing', ongoing.length)}
       ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}
-      ${SUPA ? tabBtn('wo-review', 'To review', toReview.length) : ''}
+      ${SUPA ? tabBtn('wo-review', 'To review', reviewCount) : ''}
       ${tabBtn('visits',   'Visit Reports', visits.length)}
     </div>
     ${body}
@@ -4620,16 +4724,21 @@ async function reassignWo(logId, toId) {
   const { error } = await SUPA.rpc('reassign_work_order', { p_log: logId, p_to: toId });
   if (error) { appAlert('Could not reassign: ' + error.message); return; }
   await refreshLogRows([logId]); closeModal(); route();
-  toast('Reassigned — it is on their My Work now.');
+  toast('Done — it is on their My Work now.');
 }
 function openReassignModal(logId) {
   const l = state.logs.find(x => x.id === logId); if (!l) return;
   const e = eqById(l.equipmentId);
   const techs = technicianAccounts().filter(t => t.id !== l.assignedTo);
-  document.getElementById('modalTitle').textContent = `Reassign — ${e ? e.tag : logId}`;
+  const verb = (l.assignedTo || (l.technician || '').trim()) ? 'Reassign' : 'Assign';
+  document.getElementById('modalTitle').textContent = `${verb} — ${e ? e.tag : logId}`;
   document.getElementById('modalBody').innerHTML = `
     <form onsubmit="event.preventDefault(); reassignWo('${logId}', this.querySelector('[name=to]').value)" class="space-y-3 text-sm">
-      <p class="text-xs text-slate-500">Currently with <b>${esc(l.technician) || 'nobody'}</b>. The new person sees it in their My Work immediately; the job's history stays intact.</p>
+      <p class="text-xs text-slate-500">${verb === 'Assign'
+        ? 'Not assigned to anyone yet. Whoever you pick sees it in their My Work immediately.'
+        : woStateOf(l) === 'returned'
+        ? `Currently with <b>${esc(l.technician) || 'nobody'}</b>. The new person starts this job fresh — the earlier completion is cleared, and your send-back note goes with the job so they know what was missing.`
+        : `Currently with <b>${esc(l.technician) || 'nobody'}</b>. The new person sees it in their My Work immediately; the job's history stays intact.`}</p>
       <div>
         <label class="block text-xs text-slate-600 mb-1">Hand it to <span class="text-red-500">*</span></label>
         <select name="to" required class="w-full border border-slate-300 rounded-md px-2 py-1.5 bg-white">
@@ -4640,7 +4749,7 @@ function openReassignModal(logId) {
       </div>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
-        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white" ${techs.length ? '' : 'disabled'}>Reassign</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white" ${techs.length ? '' : 'disabled'}>${verb}</button>
       </div>
     </form>`;
   document.getElementById('modal').classList.remove('hidden');
@@ -4735,7 +4844,7 @@ function renderWoReviewTab(items) {
     </div>`).join('');
 
   const readyVisits = visitsReadyForReport();
-  const readyCards = readyVisits.map(v => `
+  const readyCards = readyVisits.slice(0, 30).map(v => `
     <div class="bg-white rounded-xl border border-slate-200 p-4">
       <div class="flex items-start gap-3 flex-wrap">
         <div class="min-w-0 flex-1">
@@ -4756,7 +4865,7 @@ function renderWoReviewTab(items) {
        + section(`Reported issues (${issues.length})`, issueCards)
        + section(`Service reports (${reports.length})`, reportCards)
        + section(`Waiting for the client's signature (${awaitingClient.length})`, awaitingClientCards)
-       + section(`Visits ready for a report (${readyVisits.length})`, readyCards);
+       + section(`Visits ready for a report (${readyVisits.length})${readyVisits.length > 30 ? ' — showing the 30 most recent' : ''}`, readyCards);
 }
 async function triageIssue(id, action, note, followLog) {
   const { error } = await SUPA.rpc('triage_issue', { p_id: id, p_action: action, p_note: note || null, p_follow_log: followLog || null });
@@ -4828,8 +4937,8 @@ function visitsReadyForReport() {
     // A report in flight owns the visit; a signed day qualifies again only
     // when it has approved work the signature does not cover.
     .filter(v => !v.blocked && v.newJobs > 0)
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 30);
+    .sort((a, b) => b.date.localeCompare(a.date));
+    // Counts read .length off the full list; the render site caps the cards.
 }
 async function engineerCompileReport(plantId, date, techId) {
   const content = buildReportContent(plantId, date, techId);
@@ -4916,10 +5025,10 @@ function renderToStartTab(toStart, overdue) {
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
-      <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">${esc(l.notes).slice(0,60)}</div></td>
+      <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">${l.technician ? `With <b>${esc(l.technician)}</b>` : (SUPA && !isTechnician() ? 'Not assigned to anyone yet' : esc(l.notes).slice(0,60))}</div></td>
       <td><div class="cell-primary">${l.etr || l.startDate}</div><div class="cell-muted">Scheduled</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
-      <td class="col-center"><div class="inline-flex gap-1.5"><button onclick="startWorkOrder('${l.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Start Work</button><button onclick="openCompleteModal('${l.equipmentId}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" title="Done on the spot — record start and completion in one go">Complete now</button></div></td>
+      <td class="col-center"><div class="inline-flex gap-1.5 flex-wrap justify-center">${SUPA && technicianAccounts().length ? `<button onclick="openReassignModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">${(l.assignedTo || (l.technician || '').trim()) ? 'Reassign' : 'Assign'}</button>` : ''}<button onclick="startWorkOrder('${l.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Start Work</button><button onclick="openCompleteModal('${l.equipmentId}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" title="Done on the spot — record start and completion in one go">Complete now</button></div></td>
     </tr>`;
   }).join('');
 
@@ -5005,6 +5114,14 @@ async function startWorkOrder(logId) {
 async function _startWorkOrderInner(logId) {
   const log = state.logs.find(l => l.id === logId);
   if (!log || woStateOf(log) !== 'open') { appAlert('This work-order has already been started.'); return; }
+  // Taking an unassigned job is a choice, not a side effect: engineers mostly
+  // hand work to technicians, so say plainly whose name goes on the record.
+  if (!isTechnician() && !log.assignedTo && !(log.technician || '').trim()) {
+    const canAssign = SUPA && technicianAccounts().length;
+    const ok = await appConfirm("You'll be doing this job yourself — your name goes on the work order."
+      + (canAssign ? ' To hand it to a technician instead, press Assign on the To start tab of Engineering Corner.' : ''), 'Start as myself');
+    if (!ok) return;
+  }
   const eq = eqById(log.equipmentId);
   if (SUPA) {
     if (!navigator.onLine) {
@@ -7626,6 +7743,12 @@ const TOURS = {
         body:  { 'en-US':"When you begin work on an equipment, click Put in Maintenance. Log the reason, expected return date, and notes — the equipment is now flagged across the system.",
                  'hi-IN':"किसी equipment पर काम शुरू करते समय Put in Maintenance पर click करें — reason, expected return date, और notes भरें। पूरे system में equipment flag हो जाएगा।",
                  'es-ES':"Cuando empiece a trabajar en un equipo, toque Poner en mantenimiento e ingrese el motivo, la fecha estimada de retorno y notas. El equipo queda marcado en todo el sistema." } },
+      ...(SUPA ? [{ setup: () => { ui.engineerTab='wo-review'; route(); },
+        target: '[data-tour="tab-wo-review"]',
+        title: { 'en-US':'To review', 'hi-IN':'To review', 'es-ES':'Por revisar' },
+        body:  { 'en-US':"Everything waiting on your verdict lives here: work your technicians finished, problems they reported, and service reports to sign. The bell also brings you straight to this tab.",
+                 'hi-IN':"आपके verdict का इंतज़ार करने वाला सब कुछ यहाँ है: technicians का पूरा किया काम, उनकी report की हुई problems, और sign करने वाली service reports। Bell भी आपको सीधे इसी tab पर लाती है।",
+                 'es-ES':"Todo lo que espera su veredicto vive aquí: trabajos terminados por sus técnicos, problemas reportados y reportes de servicio por firmar. La campana también lo trae directo a esta pestaña." } }] : []),
       { setup: () => { ui.engineerTab='visits'; route(); },
         target: '[data-tour="tab-visits"]',
         title: { 'en-US':'Visit Reports', 'hi-IN':'Visit Reports', 'es-ES':'Reportes de visita' },
@@ -7886,6 +8009,28 @@ async function boot() {
       route();
       if (!window._offlineSince) toast('Back online — data refreshed.');
     });
+    // Another device's changes (a technician completing work in the field)
+    // can only reach this screen by re-fetching. Refresh when the app comes
+    // back into view, and every 10 minutes while it stays visible — but
+    // never yank the page out from under someone typing or mid-modal.
+    const quietRefresh = async () => {
+      if (!SUPA || !authUser || !navigator.onLine || needsPasswordSet) return;
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - (window._lastHydrate || 0) < 4 * 60 * 1000) return;
+      const modalOpen = !document.getElementById('modal')?.classList.contains('hidden');
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+      // Text someone typed and left in a filter box would be wiped by the
+      // re-render — wait for a quieter moment.
+      const dirty = [...document.querySelectorAll('#view input, #view textarea')].some(el => el.value);
+      if (modalOpen || typing || dirty) return;
+      // Equipment rides along: completing a job flips its status server-side,
+      // and a stale 'Operational'/'In Maintenance' chip lies just as loudly
+      // as a silent bell.
+      await hydrateCloud(['logs', 'equipment', 'issues', 'reports', 'notifications']);
+      route();
+    };
+    document.addEventListener('visibilitychange', () => { quietRefresh(); });
+    setInterval(() => { quietRefresh(); }, 10 * 60 * 1000);
     // React to sign-in / sign-out / token refresh across tabs
     SUPA.auth.onAuthStateChange(async (event, session) => {
       if (event === 'PASSWORD_RECOVERY') needsPasswordSet = true;

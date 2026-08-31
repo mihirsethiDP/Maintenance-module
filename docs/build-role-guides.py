@@ -345,6 +345,13 @@ T.append(Paragraph('After the client signs, the report is <b>locked</b>. Nobody 
                    'not your engineer. That is what makes it proof of the work. A signed report can be '
                    'saved as a PDF any time: open it and press <b>Download PDF</b>.', st_body))
 T.append(Spacer(1, 3))
+T.append(Paragraph('The <b>bell</b> keeps you on track without hunting: it rings when a job is sent '
+                   'back to you, when your report needs changes, when a report is <b>ready for the '
+                   'client\'s signature</b> (collect it before you leave the site), and when every job '
+                   'of a visit is approved so the report is yours to raise. Tapping a notification '
+                   'opens the exact tab it lives in, and the tab names themselves show what needs you — '
+                   '"Open · 1 sent back", "Reports · 1 needs you".', st_body))
+T.append(Spacer(1, 3))
 T.append(Paragraph('Did more work on a day whose report is already signed? The Reports tab shows that '
                    'day again with a <b>Report new work</b> button. It makes a <b>second</b> report '
                    'covering only the new jobs — the signed one is never touched, and the client signs '
@@ -428,6 +435,13 @@ E.append(PHONE_INSTALL)
 E.append(Spacer(1, 4))
 E.append(OFFLINE)
 E.append(Paragraph('What you own', st_h2))
+E.append(Paragraph('Signing in lands you straight in <b>Engineering Corner</b> — your workspace. '
+                   'Across the top sits <b>Needs your attention</b>: one chip for each thing waiting on '
+                   'you (finished work to check, problems reported, reports to sign, overdue '
+                   'maintenance…), and one tap opens the right place. When nothing waits, the strip '
+                   'disappears. The Engineering Corner tab in the menu also carries a red count, and '
+                   'every bell notification opens the exact tab the item lives in.', st_body))
+E.append(Spacer(1, 3))
 E.append(Paragraph('You see the plants assigned to you, across four tabs: <b>Equipment</b>, '
                    '<b>Maintenance Log</b>, <b>Engineering Corner</b> and <b>Team</b>. At your plants you '
                    'can <b>add and edit equipment</b> (press <b>Add Equipment</b> — the machine\'s name is '
@@ -448,6 +462,12 @@ E.append(steps([
     'No account for the person doing the work? Type any name — the job follows the old flow and '
     'closes without review.',
 ]))
+E.append(Spacer(1, 3))
+E.append(Paragraph('Jobs the PPM schedule creates by itself arrive <b>assigned to nobody</b>. They wait '
+                   'on the <b>To start</b> tab showing "Not assigned to anyone yet" — press <b>Assign</b> '
+                   'on the row to hand one to a technician. <b>Start Work</b> there means "I am doing '
+                   'this job myself" — the tool asks you to confirm, because your name goes on the '
+                   'work order.', st_body))
 E.append(Spacer(1, 3))
 E.append(callout('A note, not a job?',
                  'If a machine needs attention <b>later</b> but keeps running, do not put it in '
@@ -474,7 +494,8 @@ E.append(table(['You press', 'What happens'],
      ['Send back', 'You write what is missing ("add a photo of the replaced seal"). The technician sees '
                    'your note at the top of My Work, fixes the record, and sends it back to you.'],
      ['Reassign', 'Hands an open or stuck job to a different technician — with their open-job counts '
-                  'shown. History stays intact.'],
+                  'shown. A returned job handed to someone new starts fresh: they complete it '
+                  'themselves instead of inheriting "fix and send again" for work they never did.'],
      ['Close as-is', 'On a returned job the technician never fixed: accept the record as it stands '
                      'instead of waiting forever.']],
     [26 * mm, None]))
