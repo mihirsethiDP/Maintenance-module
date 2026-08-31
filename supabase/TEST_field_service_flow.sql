@@ -443,6 +443,51 @@ begin
     res := array_append(res, 'PASS  nothing-new-to-report refusal once all jobs are covered');
   end;
 
+  -- =========================================================
+  -- 12. Scheduled work (53): plans may be future, claims may not
+  -- =========================================================
+  -- v_log3 is done and v_eq is free again, so the schedule guard passes.
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
+  begin
+    perform public.schedule_work_order('L-SCHED-' || v_log3, v_eq, 'Scheduled', v_today + 2,
+      null::date, 'Test Tech', 'plan test', 'Normal', v_tech, false);
+    res := array_append(res, 'FAIL  a technician scheduled a work order');
+  exception when others then
+    res := array_append(res, 'PASS  technicians cannot schedule work orders');
+  end;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_boss, 'role', 'authenticated')::text, true);
+  begin
+    perform public.schedule_work_order('L-SCHED-' || v_log3, v_eq, 'Scheduled', v_today + 2,
+      null::date, 'Test Tech', 'plan test', 'Normal', v_tech, false);
+    select (wo_state = 'open' and start_date = v_today + 2
+            and (select status from public.equipment where id = v_eq) <> 'In Maintenance')
+      into v_bool from public.maintenance_logs where id = 'L-SCHED-' || v_log3;
+    res := array_append(res, case when v_bool
+      then 'PASS  a future-day plan exists as open work; the machine keeps running'
+      else 'FAIL  scheduled job wrong: not open / wrong date / machine flagged' end);
+  exception when others then
+    res := array_append(res, ('FAIL  engineer could not schedule: ' || sqlerrm));
+  end;
+  begin
+    perform public.schedule_work_order('L-SCHED2-' || v_log3, v_eq, 'Scheduled', v_today + 90,
+      null::date, 'x', 'y', 'Normal', null::uuid, false);
+    res := array_append(res, 'FAIL  accepted a plan more than 60 days out');
+  exception when others then
+    res := array_append(res, 'PASS  plans are capped at 60 days ahead');
+  end;
+  -- Doing the planned work early: completion today clamps the start to today.
+  perform set_config('request.jwt.claims', json_build_object('sub', v_tech, 'role', 'authenticated')::text, true);
+  begin
+    perform public.log_maintenance_complete('L-SCHED-' || v_log3, v_today, 'Done early.', null, null);
+    select (start_date = v_today) into v_bool
+      from public.maintenance_logs where id = 'L-SCHED-' || v_log3;
+    res := array_append(res, case when v_bool
+      then 'PASS  finishing a planned job early clamps its start to the real day'
+      else 'FAIL  early completion left a start date after the end date' end);
+  exception when others then
+    res := array_append(res, ('FAIL  could not complete the planned job early: ' || sqlerrm));
+  end;
+
   raise exception 'TEST RESULTS%', E'\n  ' || array_to_string(res, E'\n  ') ||
     E'\n\n  (Everything above was rolled back — no data was changed.)';
 end $$;

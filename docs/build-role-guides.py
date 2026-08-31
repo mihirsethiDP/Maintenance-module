@@ -384,6 +384,9 @@ for q, a in [
      'That job needs at least one photo. Press Add photos and use your camera. Breakdowns always need photos.'),
     ('The job is not in my list.',
      'It has not been given to you yet. Call your engineer — he assigns the work.'),
+    ('A job in my list says "Starts" with a date that has not come yet.',
+     'It is planned for that day — your engineer gave it to you in advance so you can see the week '
+     'ahead. Nothing to do until then; start it early only if your engineer says so.'),
     ('My job says "Check back" with a date.',
      'Your engineer put it on hold — usually a part is on order. It comes back on that date; nothing for '
      'you to do until then.'),
@@ -462,6 +465,16 @@ E.append(steps([
     'No account for the person doing the work? Type any name — the job follows the old flow and '
     'closes without review.',
 ]))
+E.append(Spacer(1, 3))
+E.append(Paragraph('Planning ahead', st_h2))
+E.append(Paragraph('Work does not have to start today to exist. <b>Schedule for later</b> (on the '
+                   'machine\'s page) or <b>Schedule &amp; assign</b> (on any Upcoming PPM row) creates the '
+                   'job for a future day — up to 60 days out. The machine keeps running, the job waits '
+                   'under <b>To start → Coming up</b>, and the technician sees it in My Work marked '
+                   '<b>"Starts &lt;date&gt;"</b> the moment you assign it — so Monday evening you can lay out '
+                   'the whole week. When work really begins, <b>Start Work</b> stamps the true start '
+                   'date: plans can be in the future, records never are. The schedule also creates its '
+                   'own jobs <b>3 days before</b> their due date now, so they are assignable in advance.', st_body))
 E.append(Spacer(1, 3))
 E.append(Paragraph('Jobs the PPM schedule creates by itself arrive <b>assigned to nobody</b>. They wait '
                    'on the <b>To start</b> tab showing "Not assigned to anyone yet" — press <b>Assign</b> '
@@ -568,6 +581,7 @@ E += section('6. Quick reference', 'The short version.')
 E.append(Paragraph('I want to...', st_h2))
 E.append(table(['Task', 'Where'],
     [['Create a job for a technician', 'The machine → <b>Put in Maintenance</b> → pick them in <b>Assign to</b>'],
+     ['Plan a job for a later day', 'The machine → <b>Schedule for later</b>, or <b>Schedule &amp; assign</b> on an Upcoming PPM row'],
      ['Demand photo evidence', 'Tick <b>Require photos on completion</b> when creating the job'],
      ['Review completed work', 'Engineering Corner → <b>To review</b>'],
      ['Send work back for fixes', '<b>Send back</b> on the card, with a note'],

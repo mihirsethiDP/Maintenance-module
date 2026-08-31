@@ -1294,7 +1294,7 @@ function buildNotifFeed() {
     if (techMe && l.assignedTo !== techMe) return;
     if (isOverdue(l)) feed.push({ key: `wo-overdue-${l.id}`, group: 'overdue', date: l.etr, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Work-order overdue — ${e.tag} at ${plantName(e.plantId)} (expected ${l.etr}).` });
-    else if (woStateOf(l) === 'open') feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
+    else if (woStateOf(l) === 'open' && String(l.startDate) <= todayStr) feed.push({ key: `wo-open-${l.id}`, group: 'due', date: l.etr || l.startDate, plantId: e.plantId, href: '#/equipment/' + e.id,
       message: `Scheduled task ready to start — ${e.tag} at ${plantName(e.plantId)}.` });
   });
   // Review traffic: engineers/admins see what awaits their verdict;
@@ -1840,7 +1840,7 @@ function renderEquipmentDetail(id) {
     const main = (detailOpenWo && woStateOf(detailOpenWo) === 'open')
       ? `<span class="inline-flex gap-2"><button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="startWorkOrder('${detailOpenWo.id}')">Start Work</button><button class="px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 text-sm font-medium" onclick="openCompleteModal('${e.id}')" title="Done on the spot — record start and completion in one go">Complete now</button></span>`
       : e.status === 'Operational'
-        ? `<button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>`
+        ? `<span class="inline-flex gap-2"><button title="Start work now — this takes the machine out of service and puts the job on someone's queue." class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium" onclick="openMaintModal('${e.id}')">Put in Maintenance</button>${SUPA && !isTechnician() ? `<button title="Plan a job for a later day — the machine keeps running until work starts." class="px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 text-sm font-medium" onclick="openScheduleModal('${e.id}')">Schedule for later</button>` : ''}</span>`
         : `<button class="px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-sm font-medium" onclick="openCompleteModal('${e.id}')">Mark Operational</button>`;
     actionBtn = reassign + photoReqBtn + holdBtn + main;
   }
@@ -2327,7 +2327,9 @@ function renderMyWork() {
         <td class="col-center"><span class="text-xs text-slate-400">—</span></td>
       </tr>`;
     }
-    const et = onHold(l) ? { cls: 'text-slate-500', label: 'On hold \u00b7 check back ' + l.holdUntil } : ecStatus(l.etr, null);
+    const future = woStateOf(l) === 'open' && String(l.startDate) > today();
+    const et = future ? { cls: 'text-brand font-medium', label: 'Starts ' + l.startDate }
+      : onHold(l) ? { cls: 'text-slate-500', label: 'On hold \u00b7 check back ' + l.holdUntil } : ecStatus(l.etr, null);
     const act = woStateOf(l) === 'open'
       ? `<div class="inline-flex gap-1.5"><button class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap" onclick="startWorkOrder('${l.id}')">Start Work</button><button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')" title="Done on the spot — record it in one go">Complete now</button></div>`
       : `<button class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" onclick="openCompleteModal('${l.equipmentId}')">Mark Complete</button>`;
@@ -4616,7 +4618,9 @@ function renderEngineer() {
     </button>`;
 
   const pending  = getPendingTasks();
+  const todayStr = today();
   const toStart  = pending.filter(({ l }) => woStateOf(l) === 'open');
+  const toStartDue = toStart.filter(({ l }) => String(l.startDate) <= todayStr);
   const ongoing  = pending.filter(({ l }) => woStateOf(l) !== 'open');
   const overdue  = getOverduePPM();
   const upcoming = getUpcomingPPM(30);
@@ -4644,7 +4648,7 @@ function renderEngineer() {
     chip(issues.length, 'problems reported', 'wo-review', true),
     chip(repsToSign.length, 'reports to sign', 'wo-review', true),
     chip(overdue.length, 'overdue maintenance', 'pending', true),
-    chip(toStart.length, 'ready to start', 'pending', false),
+    chip(toStartDue.length, 'ready to start', 'pending', false),
     chip(readyVisits.length, 'visit days without a report', 'wo-review', false),
     chip(awaitClient.length, 'waiting for the client to sign', 'wo-review', false),
     chip(returned.length, 'sent back — with the technician', 'wo-review', false),
@@ -4670,7 +4674,7 @@ function renderEngineer() {
       : "For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports."}</p>
     ${strip ? `<div class="flex gap-2 mb-4 flex-wrap items-center"><span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Needs your attention</span>${strip}</div>` : ''}
     <div class="flex gap-2 mb-5 flex-wrap">
-      ${tabBtn('pending',  'To start', toStart.length + overdue.length)}
+      ${tabBtn('pending',  'To start', toStartDue.length + overdue.length)}
       ${tabBtn('ongoing',  'Ongoing', ongoing.length)}
       ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}
       ${SUPA ? tabBtn('wo-review', 'To review', reviewCount) : ''}
@@ -5015,22 +5019,27 @@ function openReturnWoModal(logId) {
 
 function renderToStartTab(toStart, overdue) {
   const fEq = e => (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) && (ui.typeFilter === 'all' || e.type === ui.typeFilter);
-  const fOpen    = toStart.filter(({e}) => fEq(e));
+  const todayStr = today();
+  const fAll     = toStart.filter(({e}) => fEq(e));
+  const fOpen    = fAll.filter(({l}) => String(l.startDate) <= todayStr);
+  const fComing  = fAll.filter(({l}) => String(l.startDate) > todayStr);
   const fOverdue = overdue.filter(({e}) => fEq(e));
 
-  if (!fOpen.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing to start — no scheduled work is waiting and no PPM is overdue.</div>`;
+  if (!fOpen.length && !fComing.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing to start — no scheduled work is waiting and no PPM is overdue.</div>`;
 
-  const openRows = fOpen.map(({l, e}) => {
-    const et = ecStatus(l.etr, null);
+  const rowFor = ({l, e}, coming) => {
+    const et = coming ? { cls: 'text-brand font-medium', label: 'Starts ' + l.startDate } : ecStatus(l.etr, null);
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">${l.technician ? `With <b>${esc(l.technician)}</b>` : (SUPA && !isTechnician() ? 'Not assigned to anyone yet' : esc(l.notes).slice(0,60))}</div></td>
-      <td><div class="cell-primary">${l.etr || l.startDate}</div><div class="cell-muted">Scheduled</div></td>
+      <td><div class="cell-primary">${coming ? l.startDate : (l.etr || l.startDate)}</div><div class="cell-muted">Scheduled</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
-      <td class="col-center"><div class="inline-flex gap-1.5 flex-wrap justify-center">${SUPA && technicianAccounts().length ? `<button onclick="openReassignModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">${(l.assignedTo || (l.technician || '').trim()) ? 'Reassign' : 'Assign'}</button>` : ''}<button onclick="startWorkOrder('${l.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Start Work</button><button onclick="openCompleteModal('${l.equipmentId}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" title="Done on the spot — record start and completion in one go">Complete now</button></div></td>
+      <td class="col-center"><div class="inline-flex gap-1.5 flex-wrap justify-center">${SUPA && technicianAccounts().length ? `<button onclick="openReassignModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">${(l.assignedTo || (l.technician || '').trim()) ? 'Reassign' : 'Assign'}</button>` : ''}<button onclick="startWorkOrder('${l.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Start Work</button>${coming ? '' : `<button onclick="openCompleteModal('${l.equipmentId}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap" title="Done on the spot — record start and completion in one go">Complete now</button>`}</div></td>
     </tr>`;
-  }).join('');
+  };
+  const openRows = fOpen.map(x => rowFor(x, false)).join('');
+  const comingRows = fComing.map(x => rowFor(x, true)).join('');
 
   const openSection = fOpen.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
@@ -5041,6 +5050,18 @@ function renderToStartTab(toStart, overdue) {
       <div class="overflow-x-auto"><table class="list-table">
         <thead><tr><th>Equipment</th><th>Type / Model</th><th>Task</th><th>Due</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
         <tbody>${openRows}</tbody>
+      </table></div>
+    </div>` : '';
+
+  const comingSection = comingRows ? `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
+        <span>Coming up — scheduled for a later day <span class="text-slate-500 font-normal">(${fComing.length})</span></span>
+        <span class="ml-auto text-xs text-slate-500 font-normal">Assigned people already see these in My Work</span>
+      </div>
+      <div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Task</th><th>Scheduled for</th><th>Status</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${comingRows}</tbody>
       </table></div>
     </div>` : '';
 
@@ -5070,7 +5091,7 @@ function renderToStartTab(toStart, overdue) {
       </table></div>
     </div>` : '';
 
-  return openSection + overdueSection;
+  return openSection + overdueSection + comingSection;
 }
 
 // Jobs being worked on right now (active, or returned to the technician) —
@@ -5172,7 +5193,7 @@ function renderUpcomingTab(upcoming) {
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${ds}</div><div class="cell-muted">${slot}</div></td>
       <td>${dueLabel}</td>
-      <td class="col-center"><button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium">Put in Maintenance</button></td>
+      <td class="col-center"><div class="inline-flex gap-1.5 flex-wrap justify-center">${SUPA && !isTechnician() ? `<button onclick="openScheduleModal('${e.id}', '${ds}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">Schedule &amp; assign</button>` : ''}<button onclick="openMaintModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-brand bg-brand-50 text-brand hover:bg-brand-100 font-medium whitespace-nowrap">Put in Maintenance</button></div></td>
     </tr>`;
   }).join('');
   return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -5716,6 +5737,76 @@ function closePdfPreview() {
 
 // ---------- Modals & mutations ----------
 function closeModal() { document.getElementById('modal').classList.add('hidden'); }
+
+// Scheduling is a PLAN: the job exists on a future day, the machine keeps
+// running, and whoever it is assigned to sees it on My Work immediately.
+// Reality begins at Start Work (the server stamps the real start date).
+function openScheduleModal(eqId, presetDate) {
+  if (isTechnician() || !SUPA) return;
+  const e = eqById(eqId); if (!e) return;
+  if (openLogFor(eqId)) { appAlert('This machine already has an open job — finish or reassign that one first.'); return; }
+  const min = today();
+  const max = dstr(new Date(new Date(min + 'T00:00:00').getTime() + 60 * 86400000));
+  const d0 = (presetDate && presetDate >= min) ? presetDate : min;
+  document.getElementById('modalTitle').textContent = `Schedule work — ${e.tag}`;
+  document.getElementById('modalBody').innerHTML = `
+    <form onsubmit="submitSchedule(event, '${eqId}')" class="space-y-3 text-sm">
+      <div class="p-2.5 rounded-md bg-brand-50 border border-brand-100 text-[11px] text-brand leading-relaxed">
+        <b>The machine keeps running.</b> The job waits under To start until its day, and whoever you
+        assign sees it in their My Work right away. Happening right now? Use <b>Put in Maintenance</b> instead.
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Scheduled for <span class="text-red-500">*</span></label>
+          <input type="date" name="schedDate" value="${d0}" required min="${min}" max="${max}" class="w-full border border-slate-300 rounded-md px-2 py-1.5"
+            onchange="const et = this.form.querySelector('[name=etr]'); if (et) { et.min = this.value; if (et.value && et.value < this.value) et.value = this.value; }" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Expected completion</label>
+          <input type="date" name="etr" value="${d0}" min="${d0}" class="w-full border border-slate-300 rounded-md px-2 py-1.5" />
+        </div>
+      </div>
+      ${assignToControl()}
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Priority</label>
+        <select name="priority" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+          <option>Normal</option><option>High</option><option>Critical</option>
+        </select>
+      </div>
+      ${SUPA ? `<label class="flex items-start gap-2 p-2.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+        <input type="checkbox" name="photosReq" class="mt-0.5" />
+        <span class="text-xs text-slate-700"><b>Require photos on completion</b> — the job cannot be closed without at least one photo.</span>
+      </label>` : ''}
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">What is to be done <span class="text-slate-400">(optional)</span></label>
+        <textarea name="notes" rows="2" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Quarterly service — grease bearings, check seals."></textarea>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
+        <button class="px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white">Schedule</button>
+      </div>
+    </form>`;
+  document.getElementById('modal').classList.remove('hidden');
+  pushOverlayState();
+}
+async function submitSchedule(ev, eqId) {
+  ev.preventDefault();
+  const f = ev.target;
+  const id = 'L-' + Date.now();
+  const assigned = f.querySelector('[name=assignTo]')?.value || null;
+  const techName = assigned ? (technicianAccounts().find(t => t.id === assigned)?.name || '') : '';
+  const date = f.schedDate.value;
+  const { error } = await SUPA.rpc('schedule_work_order', {
+    p_id: id, p_eq: eqId, p_reason: 'Scheduled', p_date: date,
+    p_etr: f.etr.value || null, p_tech: techName, p_notes: f.notes.value.trim(),
+    p_priority: f.priority.value, p_assigned: assigned,
+    p_photos: !!f.querySelector('[name=photosReq]')?.checked,
+  });
+  if (error) { appAlert('Could not schedule: ' + error.message); return; }
+  await refreshLogRows([id]);
+  closeModal(); route();
+  toast(assigned ? `Scheduled for ${date} — it is on ${techName}'s My Work.` : `Scheduled for ${date}.`);
+}
 
 function openMaintModal(eqId, fromIssueId) {
   if (isTechnician()) return;   // technicians complete work orders; engineers create them
