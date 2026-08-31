@@ -337,6 +337,13 @@ function appAlert(msg, title = 'Notice') {
     { label: 'OK', value: true, cls: 'px-4 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white text-sm font-medium' },
   ] });
 }
+// A small "i" dot that explains a section in one tap. Text is plain
+// language, rendered through the escaped in-app dialog.
+function infoBtn(title, text) {
+  return `<button type="button" class="info-dot" aria-label="What is this?"
+    data-t="${esc(title)}" data-m="${esc(text)}"
+    onclick="event.stopPropagation(); appAlert(this.dataset.m, this.dataset.t)">i</button>`;
+}
 function appConfirm(msg, title = 'Please confirm') {
   return showAppDialog({ title, msg, buttons: [
     { label: 'Cancel', value: false, cls: 'px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 text-sm' },
@@ -2528,6 +2535,10 @@ function openReportCompose(plantId, date, existingId) {
       <p class="text-xs text-slate-500">${content.amends
         ? `This is an <b>additional report</b> — it covers only the ${content.jobs.length} job${content.jobs.length === 1 ? '' : 's'} finished after the earlier report was signed. The signed report is untouched.`
         : `This covers <b>every job you finished at ${esc(plantName(plantId))} on ${date}</b> — ${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}, listed above. One report per plant per day.`}</p>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Anything else you did at the plant today? <span class="text-slate-400">(optional)</span></label>
+        <textarea name="dayNote" rows="2" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="e.g. Cleaned the dosing area, briefed the operator on the new valve.">${esc(r?.content?.day_note || '')}</textarea>
+      </div>
       <p class="text-xs text-slate-500">Submitting <b>signs this report as you</b> (${esc(currentUser()?.name || '')}) and sends it to your engineer. The client signs last, on your phone.</p>
       <div class="flex gap-2 justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700">Cancel</button>
@@ -2541,6 +2552,8 @@ async function submitServiceReport(ev, plantId, date, existingId) {
   ev.preventDefault();
   const unlock = lockSubmit(ev);
   const content = buildReportContent(plantId, date);
+  const dayNote = ev.target.querySelector('[name=dayNote]')?.value.trim();
+  if (dayNote) content.day_note = dayNote;
   const id = existingId || ('SR-' + String(Date.now()).slice(-8));
   const { error } = await SUPA.rpc('submit_service_report', {
     p_id: id, p_plant: plantId, p_date: date, p_content: content,
@@ -2647,6 +2660,7 @@ function openReportView(reportId) {
         ${(c.issues || []).length ? `<div class="px-3 py-2 bg-amber-50/50">
           ${(c.issues || []).map(i => `<div class="text-[11px] text-amber-800">• ${esc(i.tag)}: ${esc(i.description)}</div>`).join('')}
         </div>` : ''}
+        ${c.day_note ? `<div class="px-3 py-2"><div class="text-[11px] font-medium text-slate-700">Also done at the plant:</div><div class="text-[11px] text-slate-500 whitespace-pre-line">${esc(c.day_note)}</div></div>` : ''}
       </div>
       <div class="p-3 rounded-md bg-slate-50 border border-slate-200 space-y-1">
         <div class="text-xs"><span class="text-slate-500">Technician:</span> <b>${esc(r.technician_name)}</b>
@@ -2733,6 +2747,15 @@ async function downloadSignedReportPdf(reportId) {
     margin: { left: 14, right: 14 },
   });
   y = doc.lastAutoTable.finalY + 8;
+
+  if (c.day_note) {
+    if (y > 250) { doc.addPage(); y = 24; }
+    doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('Also done at the plant', 14, y);
+    doc.setFont(undefined,'normal'); doc.setFontSize(9);
+    const lines = doc.splitTextToSize(c.day_note, W - 28);
+    doc.text(lines, 14, y + 6);
+    y += 8 + lines.length * 4.5;
+  }
 
   if ((c.issues || []).length) {
     if (y > 240) { doc.addPage(); y = 24; }
@@ -4672,13 +4695,13 @@ function renderEngineer() {
     <p class="text-slate-500 mb-5">${isAdmin()
       ? "Your engineers' workspace — you have it as cover: review work, decide on issues, and sign reports when an engineer isn't available."
       : "For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports."}</p>
-    ${strip ? `<div class="flex gap-2 mb-4 flex-wrap items-center"><span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Needs your attention</span>${strip}</div>` : ''}
+    ${strip ? `<div class="flex gap-2 mb-4 flex-wrap items-center"><span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Needs your attention ${infoBtn('Needs your attention', 'One chip for each thing waiting on you. Tap a chip to open the right place. When nothing is waiting, the whole strip disappears.')}</span>${strip}</div>` : ''}
     <div class="flex gap-2 mb-5 flex-wrap">
       ${tabBtn('pending',  'To start', toStartDue.length + overdue.length)}
       ${tabBtn('ongoing',  'Ongoing', ongoing.length)}
       ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}
       ${SUPA ? tabBtn('wo-review', 'To review', reviewCount) : ''}
-      ${tabBtn('visits',   'Visit Reports', visits.length)}
+      ${tabBtn('visits',   'Service reports', visits.length)}
     </div>
     ${body}
   `;
@@ -4868,7 +4891,7 @@ function renderWoReviewTab(items) {
        + section(`Returned — waiting on the technician (${returned.length})`, returnedCards)
        + section(`Reported issues (${issues.length})`, issueCards)
        + section(`Service reports (${reports.length})`, reportCards)
-       + section(`Waiting for the client's signature (${awaitingClient.length})`, awaitingClientCards)
+       + section(`Waiting for the client's signature (${awaitingClient.length}) ${infoBtn("Waiting for the client's signature", 'These reports are fully signed on our side. The client usually signs on the technician\'s phone at the plant — use Client sign-off here only when you are the one with the client.')}`, awaitingClientCards)
        + section(`Visits ready for a report (${readyVisits.length})${readyVisits.length > 30 ? ' — showing the 30 most recent' : ''}`, readyCards);
 }
 async function triageIssue(id, action, note, followLog) {
@@ -4944,8 +4967,9 @@ function visitsReadyForReport() {
     .sort((a, b) => b.date.localeCompare(a.date));
     // Counts read .length off the full list; the render site caps the cards.
 }
-async function engineerCompileReport(plantId, date, techId) {
+async function engineerCompileReport(plantId, date, techId, dayNote) {
   const content = buildReportContent(plantId, date, techId);
+  if (dayNote && dayNote.trim()) content.day_note = dayNote.trim();
   const id = 'SR-' + String(Date.now()).slice(-8);
   const { error } = await SUPA.rpc('engineer_create_report', {
     p_id: id, p_plant: plantId, p_date: date, p_tech: techId, p_content: content,
@@ -4959,7 +4983,7 @@ function openCompileReportModal(plantId, date, techId) {
   const content = buildReportContent(plantId, date, techId);
   document.getElementById('modalTitle').textContent = `Service report — ${esc(plantName(plantId))}, ${date}`;
   document.getElementById('modalBody').innerHTML = `
-    <form onsubmit="event.preventDefault(); engineerCompileReport('${plantId}', '${date}', '${techId}')" class="space-y-3 text-sm">
+    <form onsubmit="event.preventDefault(); engineerCompileReport('${plantId}', '${date}', '${techId}', this.querySelector('[name=dayNote]')?.value)" class="space-y-3 text-sm">
       <div class="border border-slate-200 rounded-md divide-y divide-slate-100 max-h-[36vh] overflow-y-auto">
         ${content.jobs.map(j => `<div class="px-3 py-2">
           <div class="text-xs font-medium text-slate-800">${esc(j.tag)} <span class="text-slate-500 font-normal">· ${esc(j.reason)}</span>${j.wo_no ? ` <span class="font-mono text-[10px] text-slate-400">${esc(j.wo_no)}</span>` : ''}</div>
@@ -4968,6 +4992,10 @@ function openCompileReportModal(plantId, date, techId) {
         ${content.issues.length ? `<div class="px-3 py-2 bg-amber-50/50">
           ${content.issues.map(i => `<div class="text-[11px] text-amber-800">• ${esc(i.tag)}: ${esc(i.description)} (${ISSUE_NEED_LABEL[i.need] || i.need})</div>`).join('')}
         </div>` : ''}
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Anything else done at the plant that day? <span class="text-slate-400">(optional)</span></label>
+        <textarea name="dayNote" rows="2" class="w-full border border-slate-300 rounded-md px-2 py-1.5" placeholder="Other work worth telling the client about."></textarea>
       </div>
       <div class="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
         Covers <b>${content.jobs.length} machine${content.jobs.length === 1 ? '' : 's'}</b> ${esc(content.technician)} finished
@@ -5056,7 +5084,7 @@ function renderToStartTab(toStart, overdue) {
   const comingSection = comingRows ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
-        <span>Coming up — scheduled for a later day <span class="text-slate-500 font-normal">(${fComing.length})</span></span>
+        <span>Coming up — scheduled for a later day <span class="text-slate-500 font-normal">(${fComing.length})</span> ${infoBtn('Coming up', 'Planned jobs for a later day. The machine keeps running, and whoever is assigned already sees the job in My Work marked with its start day. Work begins when someone presses Start Work — that stamps the real start date.')}</span>
         <span class="ml-auto text-xs text-slate-500 font-normal">Assigned people already see these in My Work</span>
       </div>
       <div class="overflow-x-auto"><table class="list-table">
@@ -5103,20 +5131,23 @@ function renderOngoingTab(ongoing) {
   if (!fOngoing.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing ongoing — no job is being worked on right now.</div>`;
 
   const ongoingRows = fOngoing.map(({l, e}) => {
-    const et = ecStatus(l.etr, null);
+    const et = onHold(l) ? { cls: 'text-slate-500', label: 'On hold · check back ' + l.holdUntil } : ecStatus(l.etr, null);
+    const quick = SUPA && !isTechnician() ? `
+      ${technicianAccounts().length ? `<button onclick="openReassignModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">Reassign</button>` : ''}
+      <button onclick="openHoldModal('${l.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">${onHold(l) ? 'Extend hold' : 'Put on hold'}</button>` : '';
     return `<tr>
       <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
       <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
       <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">Tech: ${esc(l.technician)}</div></td>
       <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">Expected: ${l.etr||'—'}</div></td>
       <td><span class="${et.cls}">${et.label}</span></td>
-      <td class="col-center"><button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium">Mark Complete</button></td>
+      <td class="col-center"><div class="inline-flex gap-1.5 flex-wrap justify-center">${quick}<button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium whitespace-nowrap">Mark Complete</button></div></td>
     </tr>`;
   }).join('');
 
   return `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-500 font-normal">(${fOngoing.length})</span></div>
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-500 font-normal">(${fOngoing.length})</span> ${infoBtn('Ongoing maintenance', 'Jobs being worked on right now. The machine is out of service until the job is completed.\n\nReassign hands the job to another technician. Put on hold pauses its overdue clock when it is genuinely waiting on something — a part, a shutdown window — with a date you will check back on.')}</div>
       <div class="overflow-x-auto"><table class="list-table">
         <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
         <tbody>${ongoingRows}</tbody>
@@ -5198,7 +5229,7 @@ function renderUpcomingTab(upcoming) {
   }).join('');
   return `<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
     <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
-      <span>Upcoming PPM tasks — next 30 days</span>
+      <span>Upcoming PPM tasks — next 30 days ${infoBtn('Upcoming PPM', 'The next 30 days from each plant\'s planned maintenance schedule. Schedule & assign creates the job early so a technician can be assigned in advance; Put in Maintenance starts work right now instead.')}</span>
       <span class="ml-auto text-xs text-slate-500 font-normal">From the planned PPM schedule</span>
     </div>
     <div class="overflow-x-auto"><table class="list-table">
@@ -5228,6 +5259,44 @@ function computeVisitDateRange() {
   return { from: dstr(start), to: todayStr };
 }
 
+// Every co-signed service report for your plants — being prepared, waiting
+// on a signature, or signed and locked. This is the archive the signed PDF
+// lives in; the To review tab is only where verdicts happen.
+function serviceReportsSection() {
+  if (!SUPA) return '';
+  const ids = accessiblePlantIds();
+  const all = (cloudReports || [])
+    .filter(r => ids.includes(r.plant_id))
+    .filter(r => ui.plantFilter === 'all' || r.plant_id === ui.plantFilter)
+    .sort((a, b) => String(b.visit_date).localeCompare(String(a.visit_date)));
+  const CHIP = {
+    submitted:  '<span class="badge badge-mt">Awaiting your signature</span>',
+    changes:    '<span class="badge badge-bd">Changes requested</span>',
+    eng_signed: '<span class="badge badge-brand">Ready for client signature</span>',
+    signed:     '<span class="badge badge-op">Signed &amp; locked</span>',
+  };
+  const inFlight = all.filter(r => r.status !== 'signed');
+  const signed = all.filter(r => r.status === 'signed').slice(0, 50);
+  const row = r => `<tr>
+    <td><div class="cell-primary">${esc(plantName(r.plant_id))}</div><div class="cell-secondary">${r.visit_date}</div></td>
+    <td><div class="cell-primary">${esc(r.id)}</div><div class="cell-muted">${esc(r.technician_name)} · ${(r.content?.jobs || []).length} job${(r.content?.jobs || []).length === 1 ? '' : 's'}${r.amendment_of ? ' · additional report' : ''}</div></td>
+    <td class="col-center">${CHIP[r.status] || ''}</td>
+    <td class="col-center"><div class="inline-flex gap-1.5">
+      <button onclick="openReportView('${r.id}')" class="text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium whitespace-nowrap">View</button>
+      ${r.status === 'signed' ? `<button onclick="downloadSignedReportPdf('${r.id}')" class="text-xs px-3 py-1.5 rounded-md bg-brand hover:bg-brand-800 text-white font-medium whitespace-nowrap">PDF</button>` : ''}
+    </div></td>
+  </tr>`;
+  const table = rows => `<div class="overflow-x-auto"><table class="list-table">
+    <thead><tr><th>Plant / visit</th><th>Report</th><th class="col-center">Status</th><th class="col-center">Action</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+  return `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Co-signed service reports ${infoBtn('Service reports', 'One report covers everything one technician did at one plant on one day — the jobs, photos, problems found, and anything else they noted. Three signatures in order: technician, engineer, client. The client\'s signature locks it forever; work finished later that day goes into an additional report.')}</div>
+      ${all.length ? '' : '<div class="p-6 text-center text-slate-500 text-sm">No co-signed reports yet — they collect here as technician visits are signed off.</div>'}
+      ${inFlight.length ? `<div class="px-5 pt-3 pb-1 text-xs font-semibold text-slate-500 uppercase tracking-wide">Being signed (${inFlight.length})</div>${table(inFlight.map(row).join(''))}` : ''}
+      ${signed.length ? `<div class="px-5 pt-3 pb-1 text-xs font-semibold text-slate-500 uppercase tracking-wide">Signed &amp; locked (${signed.length}${all.filter(r => r.status === 'signed').length > 50 ? ' — newest 50' : ''})</div>${table(signed.map(row).join(''))}` : ''}
+    </div>`;
+}
 function renderVisitsTab(visits) {
   // Date filter UI
   const presets = [
@@ -5258,7 +5327,7 @@ function renderVisitsTab(visits) {
       (!range.from || v.date >= range.from) && (!range.to || v.date <= range.to)
     );
   }
-  return renderVisitsTabInner(dateFiltered, pills, customPanel);
+  return serviceReportsSection() + renderVisitsTabInner(dateFiltered, pills, customPanel);
 }
 function renderVisitsTabInner(visits, pills, customPanel) {
   // Filter visits by plant/type using contained equipment

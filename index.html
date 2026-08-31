@@ -66,6 +66,10 @@
     .login-card { position: relative; overflow: hidden; }
     .login-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
       background: linear-gradient(90deg, #193458, #3d5a83 55%, #7fa3d0); }
+    .info-dot { display:inline-grid; place-items:center; width:15px; height:15px; border-radius:9999px;
+      border:1px solid #94a3b8; color:#64748b; background:#f8fafc; font-size:10px; font-weight:700;
+      font-style:italic; font-family:Georgia,serif; line-height:1; vertical-align:1px; cursor:pointer; }
+    .info-dot:hover { border-color:#193458; color:#193458; background:#f1f4f9; }
     .badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:9999px; font-size:10.5px; font-weight:600; border:1px solid; white-space:nowrap; line-height:1.5; }
     .badge-op { background:#f0fdf4; color:#15803d; border-color:#86efac; }
     .badge-mt { background:#fffbeb; color:#b45309; border-color:#fcd34d; }
@@ -359,6 +363,6 @@
       document.write('<scr' + 'ipt src="seed-data.js?v=1"><\/scr' + 'ipt>');
     }
   </script>
-  <script src="app.js?v=112"></script>
+  <script src="app.js?v=113"></script>
 </body>
 </html>

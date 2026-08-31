@@ -321,7 +321,9 @@ T.append(callout('Do not wait to be asked',
 T += section('5. The service report', 'Your work, signed by three people.')
 T.append(Paragraph('At the end of a visit, the tool puts together a report of everything you did at that '
                    'plant that day — the jobs, your notes, your photos, and the problems you reported. '
-                   'Three people sign it, in this order:', st_body))
+                   'Before signing, there is a box for <b>anything else you did at the plant</b> that was '
+                   'not a listed job — cleaning, briefing the operator, a small adjustment. Write it '
+                   'there; the client sees it in the report. Three people sign, in this order:', st_body))
 T.append(Spacer(1, 3))
 T.append(table(['Who signs', 'How'],
     [['1. You', 'Go to <b>My Work → Reports</b>, find the day, press <b>Create &amp; sign</b>. '
@@ -494,8 +496,8 @@ E.append(Paragraph('A dark pit, a dead camera — sometimes the evidence rule ha
                    'record, not an oversight.', st_body))
 E.append(Paragraph('Doing a job yourself', st_h2))
 E.append(Paragraph('Work you complete yourself closes directly — the review ceremony exists for '
-                   'delegation, not for its own sake. Your Visit Reports tab still builds your own '
-                   'sign-off PDFs as before.', st_body))
+                   'delegation, not for its own sake. The <b>Service reports</b> tab still builds your own '
+                   'visit-summary PDFs as before.', st_body))
 
 E += section('3. The review loop', 'A technician\'s completed job lands with you before it counts.')
 E.append(Paragraph('When a technician completes a job it becomes <b>Awaiting review</b> in the '
@@ -567,6 +569,11 @@ E.append(table(['Path', 'How it goes'],
                         'day qualifies again — the extra report covers <b>only the new jobs</b> and is '
                         'marked as an addition to the signed one, which stays locked.']],
     [30 * mm, None]))
+E.append(Paragraph('Where reports live', st_h2))
+E.append(Paragraph('Every co-signed report — being signed or locked — sits under Engineering Corner '
+                   '\u2192 <b>Service reports</b>, newest first, with <b>View</b> and (once signed) '
+                   '<b>PDF</b>. The To review tab is only where verdicts happen; the Service reports '
+                   'tab is the archive.', st_body))
 E.append(Spacer(1, 4))
 E.append(Paragraph('Either way, the last step is the client signing — usually <b>on the technician\'s '
                    'phone</b> at the plant. If you are the one with the client, reports you have signed '
