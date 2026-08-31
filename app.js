@@ -1542,6 +1542,15 @@ function markNotifSeen(key) {
   const seen = loadSeenNotifs(); seen.add(key);
   localStorage.setItem(notifSeenKey(), JSON.stringify([...seen].slice(-1000)));
 }
+// One notification at a time, without opening it: reading the list is not
+// the same as dealing with the item, so both directions are allowed.
+function setNotifRead(key, read) {
+  const seen = loadSeenNotifs();
+  if (read) seen.add(key); else seen.delete(key);
+  localStorage.setItem(notifSeenKey(), JSON.stringify([...seen].slice(-1000)));
+  renderHeaderChrome();
+  refreshNotifPanel();
+}
 function notifGo(href, key, tab) {
   markNotifSeen(key);
   document.getElementById('notifPanel')?.remove();
@@ -1581,6 +1590,13 @@ function notifPanelBody() {
           <div class="n-msg">${esc(n.message)}</div>
           <div class="n-meta">${meta.filter(Boolean).join(' · ')}</div>
         </div>
+        <button type="button" class="n-read" title="${isSeen ? 'Mark as unread' : 'Mark as read'}"
+          aria-label="${isSeen ? 'Mark as unread' : 'Mark as read'}"
+          onclick="event.stopPropagation(); setNotifRead('${n.key}', ${isSeen ? 'false' : 'true'})">
+          ${isSeen
+            ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/></svg>'
+            : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>'}
+        </button>
         ${n.href ? '<svg class="n-go" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>' : ''}
         ${isSeen ? '' : '<span class="n-unread"></span>'}
       </div>`;
@@ -1607,6 +1623,8 @@ function notifPanelBody() {
 }
 function refreshNotifPanel() {
   const body = document.getElementById('notifPanelBody');
+  const keepScroll = body ? body.scrollTop : 0;
+  setTimeout(() => { const b = document.getElementById('notifPanelBody'); if (b) b.scrollTop = keepScroll; }, 0);
   if (body) body.innerHTML = notifPanelBody();
 }
 function toggleNotifPanel() {
@@ -1629,7 +1647,7 @@ function toggleNotifPanel() {
           <div class="font-semibold text-[15px]">Notifications</div>
           ${unread ? `<span class="nh-count">${unread} new</span>` : ''}
           <div class="ml-auto flex items-center gap-1.5">
-            ${unread ? '<button class="nh-action" onclick="markAllNotifsRead()">Mark all read</button>' : ''}
+            ${unread ? `<button class="nh-action" onclick="markAllNotifsRead()">${(ui.notifPlant !== 'all' || ui.notifTime !== 'all') ? 'Mark these read' : 'Mark all read'}</button>` : ''}
             <button onclick="document.getElementById('notifPanel').remove()" class="text-white/70 hover:text-white text-xl leading-none px-1.5" aria-label="Close">&times;</button>
           </div>
         </div>

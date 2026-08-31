@@ -347,6 +347,10 @@ T.append(Paragraph('After the client signs, the report is <b>locked</b>. Nobody 
                    'not your engineer. That is what makes it proof of the work. A signed report can be '
                    'saved as a PDF any time: open it and press <b>Download PDF</b>.', st_body))
 T.append(Spacer(1, 3))
+T.append(Paragraph('Dealt with something already? Tap the <b>tick</b> on that line to mark it read, or '
+                   '<b>Mark all read</b> at the top to clear the list. Tapping the circle on a read line '
+                   'puts it back to unread.', st_body))
+T.append(Spacer(1, 3))
 T.append(Paragraph('The <b>bell</b> keeps you on track without hunting: it rings when a job is sent '
                    'back to you, when your report needs changes, when a report is <b>ready for the '
                    'client\'s signature</b> (collect it before you leave the site), and when every job '
@@ -358,6 +362,10 @@ T.append(Paragraph('Did more work on a day whose report is already signed? The R
                    'day again with a <b>Report new work</b> button. It makes a <b>second</b> report '
                    'covering only the new jobs — the signed one is never touched, and the client signs '
                    'the new one the same way.', st_body))
+T.append(Spacer(1, 3))
+T.append(Paragraph('If the phone turns sideways while the client is signing, the pad resets and says '
+                   '<b>"The screen turned — please sign again."</b> Hold the phone one way and let them '
+                   'sign in one go.', st_body))
 T.append(Spacer(1, 3))
 T.append(callout('Client not there?',
                  'Leave it. The line stays at <b>Ready for client signature</b> and you can collect it on '
@@ -442,7 +450,7 @@ E.append(OFFLINE)
 E.append(Paragraph('What you own', st_h2))
 E.append(Paragraph('Signing in lands you straight in <b>Engineering Corner</b> — your workspace. '
                    'Across the top sits <b>Needs your attention</b>: one chip for each thing waiting on '
-                   'you (finished work to check, problems reported, reports to sign, overdue '
+                   'you (work to check, problems, reports to sign, overdue '
                    'maintenance…), and one tap opens the right place. When nothing waits, the strip '
                    'disappears. The Engineering Corner tab in the menu also carries a red count, and '
                    'every bell notification opens the exact tab the item lives in.', st_body))
@@ -673,7 +681,10 @@ A.append(table(['Role', 'What they do'],
 A.append(Paragraph('How the tool keeps you informed', st_h2))
 A.append(bullets([
     '<b>The bell</b> — overdue work, jobs due today, work awaiting review, reported issues, and reports '
-    'awaiting signatures. Every notification is a link.',
+    'awaiting signatures. Every notification is a link. Clear them as you go: the <b>tick</b> on a line '
+    'marks that one read (the circle on a read line puts it back), and <b>Mark all read</b> clears the '
+    'list — when a plant or time filter is on, that button says <b>Mark these read</b> and only clears '
+    'what you can see.',
     '<b>The daily email summary</b> — one email around 7:00 with what is overdue, due and scheduled, '
     'plus a <b>"Waiting on someone"</b> section: the same stuck items Oversight shows, using <b>your</b> '
     'clocks. Days with nothing outstanding send nothing.',

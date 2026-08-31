@@ -149,6 +149,10 @@
     .notif-item .n-unread { width: 7px; height: 7px; border-radius: 9999px; background: #2563eb; flex-shrink: 0; margin-top: 7px; }
     .notif-item.unseen { background: #f6f9ff; }
     .notif-item.unseen:hover { background: #eef4ff; }
+    .notif-item .n-read { flex-shrink: 0; align-self: center; width: 26px; height: 26px; border-radius: 9999px;
+      display: grid; place-items: center; color: #94a3b8; background: transparent; transition: background 0.12s, color 0.12s; }
+    .notif-item .n-read:hover { background: #e2e8f0; color: #193458; }
+    .notif-item.unseen .n-read { color: #64748b; }
     .notif-item .n-go { color: #cbd5e1; flex-shrink: 0; align-self: center; transition: transform 0.12s, color 0.12s; }
     .notif-item.clickable:hover .n-go { color: #193458; transform: translateX(2px); }
     .notif-empty { padding: 56px 24px; text-align: center; }
@@ -226,6 +230,7 @@
       #modalBody label.cursor-pointer { min-height: 38px; align-items: center; }
       /* Notification panel controls */
       .notif-head button { min-height: 40px; min-width: 36px; }
+      .notif-item .n-read { width: 40px; height: 40px; }
       .notif-seg button { padding: 8px 12px; }
       /* Slimmer sticky header — phones need the vertical space */
       header .max-w-7xl { padding-top: 8px; padding-bottom: 8px; }
@@ -382,6 +387,6 @@
       document.write('<scr' + 'ipt src="seed-data.js?v=1"><\/scr' + 'ipt>');
     }
   </script>
-  <script src="app.js?v=117"></script>
+  <script src="app.js?v=118"></script>
 </body>
 </html>
