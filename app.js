@@ -4430,13 +4430,16 @@ function renderEngineer() {
     </button>`;
 
   const pending  = getPendingTasks();
+  const toStart  = pending.filter(({ l }) => woStateOf(l) === 'open');
+  const ongoing  = pending.filter(({ l }) => woStateOf(l) !== 'open');
   const overdue  = getOverduePPM();
   const upcoming = getUpcomingPPM(30);
   const visits   = getVisits();
   const toReview = getSubmittedWOs();
 
   let body = '';
-  if (tab === 'pending') body = renderPendingTab(pending, overdue);
+  if (tab === 'pending') body = renderToStartTab(toStart, overdue);
+  else if (tab === 'ongoing') body = renderOngoingTab(ongoing);
   else if (tab === 'upcoming') body = renderUpcomingTab(upcoming);
   else if (tab === 'wo-review') body = renderWoReviewTab(toReview);
   else body = renderVisitsTab(visits);
@@ -4453,7 +4456,8 @@ function renderEngineer() {
       ? "Your engineers' workspace — you have it as cover: review work, decide on issues, and sign reports when an engineer isn't available."
       : "For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports."}</p>
     <div class="flex gap-2 mb-5 flex-wrap">
-      ${tabBtn('pending',  'Pending', pending.length + overdue.length)}
+      ${tabBtn('pending',  'To start', toStart.length + overdue.length)}
+      ${tabBtn('ongoing',  'Ongoing', ongoing.length)}
       ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}
       ${SUPA ? tabBtn('wo-review', 'To review', toReview.length) : ''}
       ${tabBtn('visits',   'Visit Reports', visits.length)}
@@ -4765,13 +4769,12 @@ function openReturnWoModal(logId) {
   pushOverlayState();
 }
 
-function renderPendingTab(pending, overdue) {
+function renderToStartTab(toStart, overdue) {
   const fEq = e => (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) && (ui.typeFilter === 'all' || e.type === ui.typeFilter);
-  const fOpen    = pending.filter(({l, e}) => fEq(e) && woStateOf(l) === 'open');
-  const fOngoing = pending.filter(({l, e}) => fEq(e) && woStateOf(l) !== 'open');
+  const fOpen    = toStart.filter(({e}) => fEq(e));
   const fOverdue = overdue.filter(({e}) => fEq(e));
 
-  if (!fOpen.length && !fOngoing.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing pending — every equipment is operational and no PPM is overdue.</div>`;
+  if (!fOpen.length && !fOverdue.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing to start — no scheduled work is waiting and no PPM is overdue.</div>`;
 
   const openRows = fOpen.map(({l, e}) => {
     const et = ecStatus(l.etr, null);
@@ -4797,18 +4800,6 @@ function renderPendingTab(pending, overdue) {
       </table></div>
     </div>` : '';
 
-  const ongoingRows = fOngoing.map(({l, e}) => {
-    const et = ecStatus(l.etr, null);
-    return `<tr>
-      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
-      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
-      <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">Tech: ${esc(l.technician)}</div></td>
-      <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">Expected: ${l.etr||'—'}</div></td>
-      <td><span class="${et.cls}">${et.label}</span></td>
-      <td class="col-center"><button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium">Mark Complete</button></td>
-    </tr>`;
-  }).join('');
-
   const todayD = new Date(today() + 'T00:00:00');
   const overdueRows = fOverdue.map(({e, date, slot}) => {
     const ds = dstr(date);
@@ -4823,15 +4814,6 @@ function renderPendingTab(pending, overdue) {
     </tr>`;
   }).join('');
 
-  const ongoingSection = fOngoing.length ? `
-    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
-      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-500 font-normal">(${fOngoing.length})</span></div>
-      <div class="overflow-x-auto"><table class="list-table">
-        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
-        <tbody>${ongoingRows}</tbody>
-      </table></div>
-    </div>` : '';
-
   const overdueSection = fOverdue.length ? `
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm flex items-center">
@@ -4844,7 +4826,37 @@ function renderPendingTab(pending, overdue) {
       </table></div>
     </div>` : '';
 
-  return openSection + ongoingSection + overdueSection;
+  return openSection + overdueSection;
+}
+
+// Jobs being worked on right now (active, or returned to the technician) —
+// monitoring, not assignment: who is on it, since when, is it running late.
+function renderOngoingTab(ongoing) {
+  const fEq = e => (ui.plantFilter === 'all' || e.plantId === ui.plantFilter) && (ui.typeFilter === 'all' || e.type === ui.typeFilter);
+  const fOngoing = ongoing.filter(({e}) => fEq(e));
+
+  if (!fOngoing.length) return `<div class="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500 text-sm">Nothing ongoing — no job is being worked on right now.</div>`;
+
+  const ongoingRows = fOngoing.map(({l, e}) => {
+    const et = ecStatus(l.etr, null);
+    return `<tr>
+      <td><div class="cell-primary">${tagLink(e)}</div><div class="cell-secondary">${esc(plantName(e.plantId))}</div></td>
+      <td><div class="cell-primary">${e.type}</div><div class="cell-muted">${esc(e.make)} ${esc(e.model)}</div></td>
+      <td><div class="cell-primary">${l.reason} ${priorityChip(l.priority)}</div><div class="cell-muted">Tech: ${esc(l.technician)}</div></td>
+      <td><div class="cell-primary">${l.startDate}</div><div class="cell-muted">Expected: ${l.etr||'—'}</div></td>
+      <td><span class="${et.cls}">${et.label}</span></td>
+      <td class="col-center"><button onclick="openCompleteModal('${e.id}')" class="text-xs px-3 py-1.5 rounded-md border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 font-medium">Mark Complete</button></td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
+      <div class="px-5 py-3 border-b border-slate-200 font-semibold text-sm">Ongoing maintenance <span class="text-slate-500 font-normal">(${fOngoing.length})</span></div>
+      <div class="overflow-x-auto"><table class="list-table">
+        <thead><tr><th>Equipment</th><th>Type / Model</th><th>Reason</th><th>Start / Expected</th><th>Due status</th><th class="col-center">Action</th></tr></thead>
+        <tbody>${ongoingRows}</tbody>
+      </table></div>
+    </div>`;
 }
 
 // Start an auto-generated (open) work-order: flags the equipment and stamps
@@ -7457,10 +7469,16 @@ const TOURS = {
                  'es-ES':"Bienvenido al rincón de ingeniería. Este es el espacio diseñado para los ingenieros de servicio en campo." } },
       { setup: () => { ui.engineerTab='pending'; route(); },
         target: '[data-tour="tab-pending"]',
-        title: { 'en-US':'Pending tasks', 'hi-IN':'Pending tasks', 'es-ES':'Tareas pendientes' },
-        body:  { 'en-US':"Pending shows what needs your attention today — ongoing maintenance plus any scheduled work that's now overdue.",
-                 'hi-IN':"Pending tab में आज जो काम करने हैं वो सब हैं — चल रहा maintenance और कोई भी delayed scheduled काम।",
-                 'es-ES':"Pendientes muestra lo urgente del día: mantenimiento en curso y tareas programadas atrasadas." } },
+        title: { 'en-US':'To start', 'hi-IN':'To start', 'es-ES':'Por iniciar' },
+        body:  { 'en-US':"To start shows work waiting to begin — scheduled tasks ready to start, plus any planned service that's now overdue.",
+                 'hi-IN':"To start tab में वो काम है जो शुरू होना बाकी है — scheduled tasks और कोई भी delayed planned service।",
+                 'es-ES':"Por iniciar muestra el trabajo pendiente de comenzar: tareas programadas listas y servicios planificados atrasados." } },
+      { setup: () => { ui.engineerTab='ongoing'; route(); },
+        target: '[data-tour="tab-ongoing"]',
+        title: { 'en-US':'Ongoing', 'hi-IN':'Ongoing', 'es-ES':'En curso' },
+        body:  { 'en-US':"Ongoing shows jobs being worked on right now — who is on each one, since when, and whether it is running late.",
+                 'hi-IN':"Ongoing tab में अभी चल रहे jobs हैं — किस पर कौन काम कर रहा है, कब से, और late तो नहीं चल रहा।",
+                 'es-ES':"En curso muestra los trabajos activos: quién está en cada uno, desde cuándo y si va con retraso." } },
       { setup: () => { ui.engineerTab='upcoming'; route(); },
         target: '[data-tour="tab-upcoming"]',
         title: { 'en-US':'Upcoming PPM', 'hi-IN':'Upcoming PPM', 'es-ES':'Próximo PPM' },
