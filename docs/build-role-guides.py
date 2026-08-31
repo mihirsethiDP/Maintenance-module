@@ -771,7 +771,7 @@ A.append(table(['Task', 'Where'],
      ['Give an engineer their sites', 'Team → <b>Assign plants</b>'],
      ['Turn someone\'s emails on or off', 'Team → <b>Edit</b> on that person'],
      ['Remove someone\'s access', 'Team → <b>Deactivate</b>'],
-     ['Export records or reports', 'Maintenance Log → <b>Export</b> or <b>Report</b>']],
+     ['Export records or a summary PDF', 'Maintenance Log → <b>Export</b> or <b>Summary PDF</b>']],
     [62 * mm, None]))
 A.append(Paragraph('Common questions', st_h2))
 for q, a in [
