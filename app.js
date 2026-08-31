@@ -4449,7 +4449,9 @@ function renderEngineer() {
         options: [...pending.map(x => x.e), ...overdue.map(x => x.e), ...upcoming.map(x => x.e)].flatMap(e => [e.tag, e.make, e.model]),
         oninput: "filterRows('#view .list-table tbody tr', this.value)", width: 'w-44' })}</div>
     </div>
-    <p class="text-slate-500 mb-5">For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports.</p>
+    <p class="text-slate-500 mb-5">${isAdmin()
+      ? "Your engineers' workspace — you have it as cover: review work, decide on issues, and sign reports when an engineer isn't available."
+      : "For site service engineers: see what's pending, what's coming up, and generate visit-wise sign-off reports."}</p>
     <div class="flex gap-2 mb-5 flex-wrap">
       ${tabBtn('pending',  'Pending', pending.length + overdue.length)}
       ${tabBtn('upcoming', 'Upcoming PPM', upcoming.length)}

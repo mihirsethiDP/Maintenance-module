@@ -25,6 +25,7 @@ bottom table with its version.
 
 | Version | What |
 |---------|------|
+| v=108 | Role-aware Engineering Corner subtitle: admins see "your engineers' workspace — you have it as cover", engineers keep the original line. Prompted by Mihir questioning why admins see the page at all — the page stays (admin is the engineer of last resort; Oversight links point into it) |
 | docs | PRD (`docs/PRD.md`) and developer guide (`docs/DEVELOPMENT.md`) written; both also published as private artifact pages. Keep both current: PRD on any scope change, DEVELOPMENT.md on any convention/gotcha change |
 | cleanup run | Live-test leftovers removed (executed by Mihir 2026-08-30, verified 0/0/0): test WO L-1787824767113, report SR-45328580, issue "Bearing not OK"; PL-01-E001 back to Operational. Orphaned test photos to be swept via Oversight → Clean up after the 24h guard |
 | readiness check | `supabase/CHECK_monday_readiness.sql` — read-only pre-flight for Devid's first field week (account state, his Monday work list, live-test leftovers, storage) |
