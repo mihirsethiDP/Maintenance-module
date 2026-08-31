@@ -8,7 +8,10 @@ bottom table with its version.
 
 | # | Item | Why it matters | Size |
 |---|------|----------------|------|
-| — | (empty — next items come from the field, or from the next adversarial sweep) | | |
+| 1 | Field-QA leftovers (deliberately not shipped before the field week): login + header thumb targets are 20–36px; a photo that fails to compress vanishes with no message; a server-refused offline completion shows raw server text and offers only Discard; abandoning a completion leaks its compressed photo blobs | Each is a small, self-contained fix; none blocks a field day | S |
+| 2 | Android Back swallows one press while a modal is open (overlay history entry never popped) | Devid is on Android all day | S |
+| 3 | Shell minors: CORE precaches both './' and 'index.html' but only './' is refreshed; the same-origin branch deletes stale ?v= variants before storing the new one, so a worker kill in that window leaves no cached copy | Offline boot resilience | S |
+| 4 | PDF polish: 7pt footer at 3.36:1, signature labels 4.42:1, band heights differ (22 vs 24) between builders | Client-facing documents | S |
 
 ## Waiting on the world (not on code)
 
