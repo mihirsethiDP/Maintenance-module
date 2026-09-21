@@ -121,7 +121,7 @@ script tags carry `crossorigin="anonymous"`. Bump the cache name
 
 ## 6. Testing
 
-`supabase/TEST_field_service_flow.sql` is a 37-assertion harness covering the
+`supabase/TEST_field_service_flow.sql` is a 43-assertion harness covering the
 full field loop: assignment boundaries, state machine, photos and waivers,
 issues, holds, report signature order and locking, honest-date bounds,
 deactivation handover, amendments.
