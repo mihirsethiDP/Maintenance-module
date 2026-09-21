@@ -37,7 +37,7 @@ GitHub Pages (static)                      Supabase (project agkdhkolqisulbgwzkt
 | `app.js` | The entire application |
 | `tailwind.css` | **Generated** — never edit by hand (see §4) |
 | `tailwind.config.js`, `tw-input.css` | Tailwind build inputs |
-| `sw.js` | Service worker (`mm-shell-v3`); caches shell + fonts only |
+| `sw.js` | Service worker (`mm-shell-v4`); caches shell + fonts only |
 | `supabase/NN_*.sql` | Numbered migrations, run manually in the SQL Editor, in order |
 | `supabase/TEST_field_service_flow.sql` | The test harness (see §6) |
 | `supabase/functions/` | Edge Functions (Deno) |
@@ -134,7 +134,7 @@ deactivation handover, amendments.
   (the latter parses as an array literal and dies).
 - Fixtures use relative dates (`today - 20`) — migration 46's bounds killed
   the old 200-day fixtures; keep fixtures inside real-world constraints.
-- Run it after any change to the field loop. All 37 must pass.
+- Run it after any change to the field loop. All 43 must pass.
 
 Client-side verification: the app is exercised live in the browser (roles
 impersonated by signing in as each account). No JS test framework exists —
